@@ -31,7 +31,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "examples": "tsx src/melody-examples.ts"
+    "examples": "tsx src/run-examples.ts"
   },
   "dependencies": {
     "@moeru/std": "catalog:",

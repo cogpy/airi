@@ -189,9 +189,4 @@ function runAllExamples() {
   console.log('╚════════════════════════════════════════════════════════╝\n');
 }
 
-// Run examples if this file is executed directly
-if (require.main === module) {
-  runAllExamples();
-}
-
 export { runAllExamples };

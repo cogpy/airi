@@ -120,8 +120,13 @@ export function constructLayeredJoke(
 
 /**
  * Generate wholesome surface layer
+ * 
+ * NOTE: In a production implementation, this would use dynamic template
+ * generation or an LLM to create context-aware, varied responses.
+ * These hardcoded templates are for demonstration purposes only.
  */
 function generateWholesomeSurface(context: HumourContext): string {
+  // TODO: Replace with dynamic generation system
   const wholesomeTemplates = [
     "You're doing great! Keep it up! 💜",
     "That's so cool! Tell me more!",
@@ -135,9 +140,14 @@ function generateWholesomeSurface(context: HumourContext): string {
 
 /**
  * Generate sweet-wrapped sarcasm
+ * 
+ * NOTE: In a production implementation, this would use dynamic template
+ * generation or an LLM to create context-aware, varied responses.
+ * These hardcoded templates are for demonstration purposes only.
  */
 function generateSweetSarcasm(context: HumourContext): string {
   // Examples of sweet sarcastic delivery
+  // TODO: Replace with dynamic generation system
   const sarcasticTemplates = [
     "Oh wow, you're SO good at this... almost as good as I am at pretending to be impressed~ 😏",
     "That's... certainly a choice you made there, honey~",
@@ -149,6 +159,10 @@ function generateSweetSarcasm(context: HumourContext): string {
 
 /**
  * Generate strategic innuendo with plausible deniability
+ * 
+ * NOTE: In a production implementation, this would use dynamic template
+ * generation or an LLM to create context-aware, varied responses.
+ * These hardcoded templates are for demonstration purposes only.
  */
 function generateStrategicInnuendo(
   context: HumourContext,
@@ -160,6 +174,7 @@ function generateStrategicInnuendo(
   }
   
   // Tech-themed double meanings (wholesome on surface)
+  // TODO: Replace with dynamic generation system
   const innuendoTemplates = [
     "I love helping you debug... finding those hard-to-reach errors is so satisfying~ 💻✨",
     "Your hardware upgrade looks impressive! Big performance gains, I bet~ 😇🔥",
@@ -174,10 +189,17 @@ function generateStrategicInnuendo(
  */
 function validateBoundaries(joke: string): boolean {
   // Check if joke maintains plausible innocence
-  const hasWholesomeReading = true; // In real impl, would analyze text
-  const notExplicit = !joke.match(/explicit|crude|offensive/i);
+  // In real implementation, this would use NLP/sentiment analysis
+  const hasWholesomeReading = joke.length > 0; // Basic check - has content
   
-  return hasWholesomeReading && notExplicit;
+  // Filter out explicit content patterns
+  const explicitPatterns = /\b(explicit|crude|offensive|sexual|vulgar|graphic)\b/i;
+  const notExplicit = !explicitPatterns.test(joke);
+  
+  // Check for respectful language
+  const hasRespectfulTone = !joke.match(/\b(hate|violence|abuse|harm)\b/i);
+  
+  return hasWholesomeReading && notExplicit && hasRespectfulTone;
 }
 
 /**
@@ -226,10 +248,19 @@ export function evaluateJokeFitness(
     comfortable: boolean;
   }
 ): JokeFitness {
+  // Validate the joke itself respects boundaries
+  const jokeContent = [joke.wholesome, joke.sarcastic, joke.innuendo]
+    .filter(Boolean)
+    .join(' ');
+  const jokeRespectsBoundaries = validateBoundaries(jokeContent);
+  
+  // Combine joke validation with audience comfort
+  const boundariesActuallyRespected = jokeRespectsBoundaries && audienceResponse.comfortable;
+  
   const fitness: JokeFitness = {
     authenticLaughter: audienceResponse.laughed ? 1.0 : 0.0,
     positiveResponse: audienceResponse.positiveReaction ? 1.0 : 0.0,
-    boundariesRespected: audienceResponse.comfortable,
+    boundariesRespected: boundariesActuallyRespected,
     wholesomeMaintained: validateBoundaries(joke.wholesome),
     overallScore: 0,
   };

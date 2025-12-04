@@ -1,0 +1,59 @@
+{
+  "name": "@proj-airi/cognitive-airicog",
+  "type": "module",
+  "version": "0.8.0-alpha.4",
+  "private": true,
+  "description": "AiriCog - OpenCog-inspired cognitive architecture for AIRI featuring hypergraph knowledge representation, attention allocation, pattern matching, and ontogenetic evolution",
+  "author": {
+    "name": "Moeru AI Project AIRI Team",
+    "email": "airi@moeru.ai",
+    "url": "https://github.com/moeru-ai"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moeru-ai/airi.git",
+    "directory": "packages/cognitive-airicog"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./atomspace": {
+      "types": "./dist/atomspace/index.d.mts",
+      "default": "./dist/atomspace/index.mjs"
+    },
+    "./attention": {
+      "types": "./dist/attention/index.d.mts",
+      "default": "./dist/attention/index.mjs"
+    },
+    "./reasoning": {
+      "types": "./dist/reasoning/index.d.mts",
+      "default": "./dist/reasoning/index.mjs"
+    },
+    "./orchestration": {
+      "types": "./dist/orchestration/index.d.mts",
+      "default": "./dist/orchestration/index.mjs"
+    }
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "README.md",
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "examples": "tsx src/examples.ts"
+  },
+  "dependencies": {
+    "@moeru/std": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
+  }
+}

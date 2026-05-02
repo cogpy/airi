@@ -152,7 +152,7 @@ daily tasks and provide emotional support.
     <img :src="EMOSYSLogo" alt="logo of EMOSYS" class="w-30!" />
   </div>
   <div>
-    Logo of [EMOSYS](https://github.com/emosys)
+    Logo of <a href="https://github.com/emosys">EMOSYS</a>
   </div>
 </div>
 
@@ -379,9 +379,7 @@ That was the day at **June 2, 2024**.
 Technically saying, **this is the birthday of Project AIRI** with first baby consciousness inside of it, naively.
 
 <div class="w-full flex flex-col items-center justify-center">
-  <video controls muted autoplay loop>
-    <source src="./assets/airi-demo-first-day.mp4" />
-  </video>
+  <ThemedVideo controls muted autoplay loop src="./assets/airi-demo-first-day.mp4" />
   <div>
     <a href="https://x.com/ayakaneko/status/1865420146766160114">
       First showcase on X (formerly Twitter) on December 7, 2024
@@ -439,7 +437,7 @@ Project AIRI was somehow born or reborn, with the name of AIRI (アイリ, forme
 
 ::: tip Did you know?
 <a href="https://www.youtube.com/watch?v=Tts-YAdn5Yc" class="mb-2 inline-block">
-  <img :src="airisScreenshot1" alt="Screenshot of Project AIRI" class="rounded-lg overflow-hidden" />
+  <img :src="airisScreenshot1" alt="Screenshot of Project AIRI" class="not-prose rounded-lg overflow-hidden" />
 </a>
 
 Interestingly, from the upload 2 years ago, March 25, 2023, https://www.youtube.com/watch?v=Tts-YAdn5Yc, a clip

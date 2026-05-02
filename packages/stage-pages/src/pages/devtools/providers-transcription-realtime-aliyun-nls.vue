@@ -3,10 +3,8 @@ import type { ServerEvent, ServerEvents } from '@proj-airi/stage-ui/stores/provi
 
 import vadWorkletUrl from '@proj-airi/stage-ui/workers/vad/process.worklet?worker&url'
 
-import { Button } from '@proj-airi/stage-ui/components'
-import { createAliyunNLSProvider } from '@proj-airi/stage-ui/stores/providers/aliyun/stream-transcription'
-import { FieldInput, FieldSelect } from '@proj-airi/ui'
-import { streamTranscription } from '@xsai/stream-transcription'
+import { createAliyunNLSProvider, streamAliyunTranscription } from '@proj-airi/stage-ui/stores/providers/aliyun/stream-transcription'
+import { Button, FieldCombobox, FieldInput } from '@proj-airi/ui'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 
 type AliyunRegion
@@ -160,7 +158,7 @@ async function startRecording() {
 
   appendLog('Initializing realtime transcription session')
 
-  const transcriptionResult = streamTranscription({
+  const transcriptionResult = streamAliyunTranscription({
     ...createAliyunNLSProvider(
       credentials.accessKeyId.trim(),
       credentials.accessKeySecret.trim(),
@@ -184,9 +182,8 @@ async function startRecording() {
         }
       },
     }),
-    inputStream: audioStream,
     inputAudioStream: audioStream,
-  } as unknown as Parameters<typeof streamTranscription>[0])
+  } as unknown as Parameters<typeof streamAliyunTranscription>[0])
   transcriptionTextPromise.value = transcriptionResult.text
   isTranscribing.value = true
 
@@ -390,7 +387,7 @@ onBeforeUnmount(async () => {
           placeholder="请输入 AppKey"
         />
 
-        <FieldSelect
+        <FieldCombobox
           v-model="credentials.region"
           label="Region"
           description="Match the region used when issuing the token."
@@ -506,4 +503,6 @@ onBeforeUnmount(async () => {
 <route lang="yaml">
 meta:
   layout: settings
+  title: Aliyun NLS Realtime Transcription
+  subtitleKey: tamagotchi.settings.devtools.title
 </route>

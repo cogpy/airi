@@ -15,6 +15,18 @@ const menu = computed(() => [
     to: '/devtools/audio-record',
   },
   {
+    title: t('settings.pages.system.sections.section.developer.sections.section.performance-visualizer.title'),
+    description: t('settings.pages.system.sections.section.developer.sections.section.performance-visualizer.description'),
+    icon: 'i-solar:sledgehammer-bold-duotone',
+    to: '/devtools/performance-visualizer',
+  },
+  {
+    title: t('settings.pages.system.sections.section.developer.sections.section.markdown-stress.title'),
+    description: t('settings.pages.system.sections.section.developer.sections.section.markdown-stress.description'),
+    icon: 'i-solar:sledgehammer-bold-duotone',
+    to: '/devtools/markdown-stress',
+  },
+  {
     title: 'Background Theme color blending',
     description: 'Test blending & theme',
     icon: 'i-solar:sledgehammer-bold-duotone',
@@ -51,6 +63,30 @@ const menu = computed(() => [
     to: '/devtools/polaroid',
   },
   {
+    title: t('tamagotchi.settings.devtools.pages.context-flow.title'),
+    description: 'Inspect incoming context updates and outgoing chat stream events',
+    icon: 'i-solar:chat-square-call-bold-duotone',
+    to: '/devtools/context-flow',
+  },
+  {
+    title: 'WebSocket Inspector',
+    description: 'Inspect raw WebSocket traffic',
+    icon: 'i-solar:transfer-horizontal-bold-duotone',
+    to: '/devtools/websocket-inspector',
+  },
+  {
+    title: 'Web Haptics',
+    description: 'Trigger built-in haptic presets and custom pulse patterns',
+    icon: 'i-solar:bolt-circle-bold-duotone',
+    to: '/devtools/web-haptics',
+  },
+  {
+    title: 'Plugin Host Debug',
+    description: 'Inspect plugin host registry and capability state (desktop runtime)',
+    icon: 'i-solar:bug-bold-duotone',
+    to: '/devtools/plugin-host',
+  },
+  {
     title: t('settings.pages.system.sections.section.developer.sections.section.use-magic-keys.title'),
     description: t('settings.pages.system.sections.section.developer.sections.section.use-magic-keys.description'),
     icon: 'i-solar:sledgehammer-bold-duotone',
@@ -67,6 +103,18 @@ const menu = computed(() => [
     description: 'Stream microphone audio to Aliyun NLS and inspect live transcripts',
     icon: 'i-solar:sledgehammer-bold-duotone',
     to: '/devtools/providers-transcription-realtime-aliyun-nls',
+  },
+  {
+    title: 'Performance Playground',
+    description: 'VRM expressions + TTS lip sync playground',
+    icon: 'i-solar:sledgehammer-bold-duotone',
+    to: '/devtools/performance-playground',
+  },
+  {
+    title: 'MediaPipe Workshop',
+    description: 'Single-person mocap playground (MediaPipe backend) with scheduling knobs',
+    icon: 'i-solar:sledgehammer-bold-duotone',
+    to: '/devtools/model-driver-mediapipe',
   },
 ])
 </script>
@@ -134,6 +182,8 @@ const menu = computed(() => [
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: settings.pages.system.developer.title
+  subtitleKey: settings.title
   stageTransition:
     name: slide
 </route>

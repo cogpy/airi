@@ -1,17 +1,9 @@
-import cropImg from '@lemonneko/crop-empty-pixels'
 import localforage from 'localforage'
 
-import { Application } from '@pixi/app'
-import { extensions } from '@pixi/extensions'
-import { Ticker, TickerPlugin } from '@pixi/ticker'
 import { until } from '@vueuse/core'
 import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
-import { Live2DFactory, Live2DModel } from 'pixi-live2d-display/cubism4'
 import { ref } from 'vue'
-
-import '../utils/live2d-zip-loader'
-import '../utils/live2d-opfs-registration'
 
 export enum DisplayModelFormat {
   Live2dZip = 'live2d-zip',
@@ -25,6 +17,14 @@ export enum DisplayModelFormat {
 export type DisplayModel
   = | DisplayModelFile
     | DisplayModelURL
+
+const presetLive2dProUrl = new URL('../assets/live2d/models/hiyori_pro_zh.zip', import.meta.url).href
+const presetLive2dFreeUrl = new URL('../assets/live2d/models/hiyori_free_zh.zip', import.meta.url).href
+const presetLive2dPreview = new URL('../assets/live2d/models/hiyori/preview.png', import.meta.url).href
+const presetVrmAvatarAUrl = new URL('../assets/vrm/models/AvatarSample-A/AvatarSample_A.vrm', import.meta.url).href
+const presetVrmAvatarAPreview = new URL('../assets/vrm/models/AvatarSample-A/preview.png', import.meta.url).href
+const presetVrmAvatarBUrl = new URL('../assets/vrm/models/AvatarSample-B/AvatarSample_B.vrm', import.meta.url).href
+const presetVrmAvatarBPreview = new URL('../assets/vrm/models/AvatarSample-B/preview.png', import.meta.url).href
 
 export interface DisplayModelFile {
   id: string
@@ -47,14 +47,17 @@ export interface DisplayModelURL {
 }
 
 const displayModelsPresets: DisplayModel[] = [
-  { id: 'preset-live2d-1', format: DisplayModelFormat.Live2dZip, type: 'url', url: '/assets/live2d/models/hiyori_pro_zh.zip', name: 'Hiyori (Pro)', previewImage: '/assets/live2d/models/hiyori/preview.png', importedAt: 1733113886840 },
-  { id: 'preset-live2d-2', format: DisplayModelFormat.Live2dZip, type: 'url', url: '/assets/live2d/models/hiyori_free_zh.zip', name: 'Hiyori (Free)', previewImage: '/assets/live2d/models/hiyori/preview.png', importedAt: 1733113886840 },
-  { id: 'preset-vrm-1', format: DisplayModelFormat.VRM, type: 'url', url: '/assets/vrm/models/AvatarSample-A/AvatarSample_A.vrm', name: 'AvatarSample_A', previewImage: '/assets/vrm/models/AvatarSample-A/preview.png', importedAt: 1733113886840 },
-  { id: 'preset-vrm-2', format: DisplayModelFormat.VRM, type: 'url', url: '/assets/vrm/models/AvatarSample-B/AvatarSample_B.vrm', name: 'AvatarSample_B', previewImage: '/assets/vrm/models/AvatarSample-B/preview.png', importedAt: 1733113886840 },
+  { id: 'preset-live2d-1', format: DisplayModelFormat.Live2dZip, type: 'url', url: presetLive2dProUrl, name: 'Hiyori (Pro)', previewImage: presetLive2dPreview, importedAt: 1733113886840 },
+  { id: 'preset-live2d-2', format: DisplayModelFormat.Live2dZip, type: 'url', url: presetLive2dFreeUrl, name: 'Hiyori (Free)', previewImage: presetLive2dPreview, importedAt: 1733113886840 },
+  { id: 'preset-vrm-1', format: DisplayModelFormat.VRM, type: 'url', url: presetVrmAvatarAUrl, name: 'AvatarSample_A', previewImage: presetVrmAvatarAPreview, importedAt: 1733113886840 },
+  { id: 'preset-vrm-2', format: DisplayModelFormat.VRM, type: 'url', url: presetVrmAvatarBUrl, name: 'AvatarSample_B', previewImage: presetVrmAvatarBPreview, importedAt: 1733113886840 },
 ]
 
 export const useDisplayModelsStore = defineStore('display-models', () => {
   const displayModels = ref<DisplayModel[]>([])
+
+  let generateLive2DPreview: (file: File) => Promise<string | undefined>
+  let generateVrmPreview: (file: File) => Promise<string | undefined>
 
   const displayModelsFromIndexedDBLoading = ref(false)
 
@@ -90,78 +93,8 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     return displayModelsPresets.find(model => model.id === id)
   }
 
-  async function loadLive2DModelPreview(file: File) {
-    Live2DModel.registerTicker(Ticker)
-    extensions.add(TickerPlugin)
-
-    const offscreenCanvas = document.createElement('canvas')
-    offscreenCanvas.width = 720
-    offscreenCanvas.height = 1280
-    offscreenCanvas.style.position = 'absolute'
-    offscreenCanvas.style.top = '0'
-    offscreenCanvas.style.left = '0'
-    offscreenCanvas.style.objectFit = 'cover'
-    offscreenCanvas.style.display = 'block'
-    offscreenCanvas.style.zIndex = '10000000000'
-    offscreenCanvas.style.opacity = '0'
-    document.body.appendChild(offscreenCanvas)
-
-    const app = new Application({
-      view: offscreenCanvas,
-      // Ensure the drawing buffer persists so toDataURL() can read pixels
-      preserveDrawingBuffer: true,
-      backgroundAlpha: 0,
-      resizeTo: window,
-    })
-
-    const modelInstance = new Live2DModel()
-    const objUrl = URL.createObjectURL(file)
-    const res = await fetch(objUrl)
-    const blob = await res.blob()
-
-    try {
-      await Live2DFactory.setupLive2DModel(modelInstance, [new File([blob], file.name)], { autoInteract: false })
-    }
-    catch (error) {
-      app.destroy()
-      document.body.removeChild(offscreenCanvas)
-      URL.revokeObjectURL(objUrl)
-      console.error(error)
-      return
-    }
-
-    app.stage.addChild(modelInstance)
-
-    // transforms
-    modelInstance.x = 275
-    modelInstance.y = 450
-    modelInstance.width = offscreenCanvas.width
-    modelInstance.height = offscreenCanvas.height
-    modelInstance.scale.set(0.1, 0.1)
-    modelInstance.anchor.set(0.5, 0.5)
-
-    await new Promise(resolve => setTimeout(resolve, 500))
-    // Force a render to ensure the latest frame is in the drawing buffer
-    app.renderer.render(app.stage)
-
-    const croppedCanvas = cropImg(offscreenCanvas)
-
-    // padding to 12:16
-    const paddingCanvas = document.createElement('canvas')
-    paddingCanvas.width = croppedCanvas.width > croppedCanvas.height / 16 * 12 ? croppedCanvas.width : croppedCanvas.height / 16 * 12
-    paddingCanvas.height = paddingCanvas.width / 12 * 16
-    const paddingCanvasCtx = paddingCanvas.getContext('2d')!
-
-    paddingCanvasCtx.drawImage(croppedCanvas, (paddingCanvas.width - croppedCanvas.width) / 2, (paddingCanvas.height - croppedCanvas.height) / 2, croppedCanvas.width, croppedCanvas.height)
-    const paddingDataUrl = paddingCanvas.toDataURL()
-
-    app.destroy()
-    document.body.removeChild(offscreenCanvas)
-    URL.revokeObjectURL(objUrl)
-
-    // return dataUrl
-    return paddingDataUrl
-  }
+  const loadLive2DModelPreview = (file: File) => generateLive2DPreview(file)
+  const loadVrmModelPreview = (file: File) => generateVrmPreview(file)
 
   async function addDisplayModel(format: DisplayModelFormat, file: File) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
@@ -169,9 +102,10 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
 
     if (format === DisplayModelFormat.Live2dZip) {
       const previewImage = await loadLive2DModelPreview(file)
-      if (!previewImage)
-        return
-
+      newDisplayModel.previewImage = previewImage
+    }
+    else if (format === DisplayModelFormat.VRM) {
+      const previewImage = await loadVrmModelPreview(file)
       newDisplayModel.previewImage = previewImage
     }
 
@@ -183,11 +117,25 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
 
   async function renameDisplayModel(id: string, name: string) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
-    const displayModel = await localforage.getItem<DisplayModelFile>(id)
+    const displayModel = id.startsWith('display-model-')
+      ? await localforage.getItem<DisplayModelFile>(id)
+      : displayModels.value.find(m => m.id === id)
+
     if (!displayModel)
       return
 
     displayModel.name = name
+
+    // Update reactive state
+    const index = displayModels.value.findIndex(m => m.id === id)
+    if (index !== -1) {
+      displayModels.value[index].name = name
+    }
+
+    // Persist if it's a file-based model
+    if (id.startsWith('display-model-')) {
+      await localforage.setItem(id, displayModel)
+    }
   }
 
   async function removeDisplayModel(id: string) {
@@ -196,14 +144,37 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     displayModels.value = displayModels.value.filter(model => model.id !== id)
   }
 
+  async function resetDisplayModels() {
+    await loadDisplayModelsFromIndexedDB()
+    const userModelIds = displayModels.value.filter(model => model.type === 'file').map(model => model.id)
+    for (const id of userModelIds) {
+      await removeDisplayModel(id)
+    }
+
+    displayModels.value = [...displayModelsPresets].sort((a, b) => b.importedAt - a.importedAt)
+  }
+
+  async function initialize() {
+    await import('@proj-airi/stage-ui-live2d/utils/live2d-zip-loader')
+    await import('@proj-airi/stage-ui-live2d/utils/live2d-opfs-registration')
+
+    const { loadLive2DModelPreview } = await import('@proj-airi/stage-ui-live2d/utils/live2d-preview')
+    const { loadVrmModelPreview } = await import('@proj-airi/stage-ui-three/utils/vrm-preview')
+
+    generateLive2DPreview = loadLive2DModelPreview
+    generateVrmPreview = loadVrmModelPreview
+  }
+
   return {
     displayModels,
     displayModelsFromIndexedDBLoading,
 
+    initialize,
     loadDisplayModelsFromIndexedDB,
     getDisplayModel,
     addDisplayModel,
     renameDisplayModel,
     removeDisplayModel,
+    resetDisplayModels,
   }
 })

@@ -1,38 +1,45 @@
 <script setup lang="ts">
-import type { DuckDBWasmDrizzleDatabase } from '@proj-airi/drizzle-duckdb-wasm'
-import type { SpeechProviderWithExtraOptions } from '@xsai-ext/shared-providers'
+import type { Live2DLipSync, Live2DLipSyncOptions } from '@proj-airi/model-driver-lipsync'
+import type { Profile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
+import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { UnElevenLabsOptions } from 'unspeech'
 
-import type { TextSegmentationItem } from '../../composables/queues'
-import type { Emotion } from '../../constants/emotions'
-import type { TTSChunkItem } from '../../utils/tts'
+import type { EmotionPayload } from '../../constants/emotions'
 
-import { drizzle } from '@proj-airi/drizzle-duckdb-wasm'
-import { getImportUrlBundles } from '@proj-airi/drizzle-duckdb-wasm/bundles/import-url-browser'
-import { withBase } from '@proj-airi/stage-shared'
-import { ThreeScene, useModelStore } from '@proj-airi/stage-ui-three'
+import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
+import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
+import { createPlaybackManager, createSpeechPipeline } from '@proj-airi/pipelines-audio'
+import { Live2DScene, useLive2d } from '@proj-airi/stage-ui-live2d'
+import { ThreeScene } from '@proj-airi/stage-ui-three'
+import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
+import { createQueue } from '@proj-airi/stream-kit'
+import { Callout } from '@proj-airi/ui'
 import { useBroadcastChannel } from '@vueuse/core'
 // import { createTransformers } from '@xsai-transformers/embed'
 // import embedWorkerURL from '@xsai-transformers/embed/worker?worker&url'
 // import { embed } from '@xsai/embed'
 import { generateSpeech } from '@xsai/generate-speech'
 import { storeToRefs } from 'pinia'
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import Live2DScene from './Live2D.vue'
-
-import { useDelayMessageQueue, useEmotionsMessageQueue, usePipelineCharacterSpeechPlaybackQueueStore, usePipelineWorkflowTextSegmentationStore } from '../../composables/queues'
+import { useDelayMessageQueue, useEmotionsMessageQueue } from '../../composables/queues'
+import { useAuthProviderSync } from '../../composables/use-auth-provider-sync'
+import { useDuckDb } from '../../composables/use-duck-db'
+import { useIOTraceBridge } from '../../composables/use-io-trace-bridge'
+import { initIOTracer } from '../../composables/use-io-tracer'
 import { llmInferenceEndToken } from '../../constants'
 import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
-import { useChatStore } from '../../stores/chat'
-import { useLive2d } from '../../stores/live2d'
+import { useBackgroundStore } from '../../stores/background'
+import { useChatOrchestratorStore } from '../../stores/chat'
+import { useAiriCardStore } from '../../stores/modules'
 import { useSpeechStore } from '../../stores/modules/speech'
 import { useProvidersStore } from '../../stores/providers'
 import { useSettings } from '../../stores/settings'
-import { createQueue } from '../../utils/queue'
+import { useSpeechRuntimeStore } from '../../stores/speech-runtime'
+import { shouldRunLive2dLipSyncLoop } from './runtime'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   paused?: boolean
   focusAt: { x: number, y: number }
   xOffset?: number | string
@@ -42,51 +49,44 @@ withDefaults(defineProps<{
 
 const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
 
-const db = ref<DuckDBWasmDrizzleDatabase>()
+const { getDb } = useDuckDb()
 // const transformersProvider = createTransformers({ embedWorkerURL })
 
 const vrmViewerRef = ref<InstanceType<typeof ThreeScene>>()
 const live2dSceneRef = ref<InstanceType<typeof Live2DScene>>()
 
-const textSegmentationStore = usePipelineWorkflowTextSegmentationStore()
-const { onTextSegmented, clearHooks: clearTextSegmentationHooks } = textSegmentationStore
-const { textSegmentationQueue } = storeToRefs(textSegmentationStore)
-// WORKAROUND: clear previous hooks to avoid duplicate calls
-//             due to re-mounting of this component when switching routes and stages.
-//             We may need to find a way to better orchestrate the lifecycle of the event
-//             listeners within specific scopes, e.g., perhaps, addEventListener with
-//             group tag, then we can remove them all once, or perhaps, we could implement
-//             every non-deterministic onXXX register function to remove registered listeners
-//             when the onUnmounted lifecycle hook is called.
-//             Another possible approach but not really work for every cases (such as character
-//             pipeline here, we may have multiple characters? Or multiple chat instances?, etc.)
-//             is to orchestrate the lifecycle of events for specific Character, sub-module like
-//             Dreaming procedure, etc. in each entity's own store with all lifecycle contained.
-//             We need better pattern (maybe learn from game engine) to power this kind of pipeline/
-//             event-driven workflow to avoid unexpected behaviors while maintain flexibility.
-clearTextSegmentationHooks()
-
-const characterSpeechPlaybackQueue = usePipelineCharacterSpeechPlaybackQueueStore()
-const { connectAudioContext, connectAudioAnalyser, clearAll, onPlaybackStarted, onPlaybackFinished } = characterSpeechPlaybackQueue
-const { currentAudioSource, playbackQueue } = storeToRefs(characterSpeechPlaybackQueue)
-
 const settingsStore = useSettings()
-const { stageModelRenderer, stageViewControlsEnabled, live2dDisableFocus, stageModelSelectedUrl, stageModelSelected } = storeToRefs(settingsStore)
+const {
+  stageModelRenderer,
+  stageViewControlsEnabled,
+  live2dDisableFocus,
+  stageModelSelectedUrl,
+  stageModelSelected,
+  themeColorsHue,
+  themeColorsHueDynamic,
+  live2dIdleAnimationEnabled,
+  live2dAutoBlinkEnabled,
+  live2dForceAutoBlinkEnabled,
+  live2dExpressionEnabled,
+  live2dShadowEnabled,
+  live2dMaxFps,
+  live2dRenderScale,
+} = storeToRefs(settingsStore)
 const { mouthOpenSize } = storeToRefs(useSpeakingStore())
-const { audioContext, calculateVolume } = useAudioContext()
-connectAudioContext(audioContext)
+const { audioContext } = useAudioContext()
+const currentAudioSource = ref<AudioBufferSourceNode>()
 
-const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd, clearHooks } = useChatStore()
-// WORKAROUND: clear previous hooks to avoid duplicate calls
-//             due to re-mounting of this component when switching routes and stages.
-//            See the comment above for more details.
-clearHooks()
+const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatOrchestratorStore()
+const chatHookCleanups: Array<() => void> = []
+// WORKAROUND: clear previous handlers on unmount to avoid duplicate calls when this component remounts.
+//             We keep per-hook disposers instead of wiping the global chat hooks to play nicely with
+//             cross-window broadcast wiring.
 
 const providersStore = useProvidersStore()
+useAuthProviderSync()
 const live2dStore = useLive2d()
-const vrmStore = useModelStore()
-
 const showStage = ref(true)
+const viewUpdateCleanups: Array<() => void> = []
 
 // Caption + Presentation broadcast channels
 type CaptionChannelEvent
@@ -100,46 +100,44 @@ type PresentEvent
     | { type: 'assistant-append', text: string }
 const { post: postPresent } = useBroadcastChannel<PresentEvent, PresentEvent>({ name: 'airi-chat-present' })
 
-// TODO: duplicate calls may happen if this component mounted multiple times
-live2dStore.onShouldUpdateView(async () => {
+viewUpdateCleanups.push(live2dStore.onShouldUpdateView(async () => {
   showStage.value = false
   await settingsStore.updateStageModel()
   setTimeout(() => {
     showStage.value = true
   }, 100)
-})
-
-// TODO: duplicate calls may happen if this component mounted multiple times
-vrmStore.onShouldUpdateView(async () => {
-  showStage.value = false
-  await settingsStore.updateStageModel()
-  setTimeout(() => {
-    showStage.value = true
-  }, 100)
-})
+}))
 
 const audioAnalyser = ref<AnalyserNode>()
 const nowSpeaking = ref(false)
 const lipSyncStarted = ref(false)
+const lipSyncLoopId = ref<number>()
+const live2dLipSync = ref<Live2DLipSync>()
+const live2dLipSyncOptions: Live2DLipSyncOptions = { mouthUpdateIntervalMs: 50, mouthLerpWindowMs: 50 }
 
+const { activeCard } = storeToRefs(useAiriCardStore())
 const speechStore = useSpeechStore()
 const { ssmlEnabled, activeSpeechProvider, activeSpeechModel, activeSpeechVoice, pitch } = storeToRefs(speechStore)
+const activeCardId = computed(() => activeCard.value?.name ?? 'default')
+const speechRuntimeStore = useSpeechRuntimeStore()
+const backgroundStore = useBackgroundStore()
+const { activeBackgroundUrl } = storeToRefs(backgroundStore)
 
 const { currentMotion } = storeToRefs(useLive2d())
 
-const emotionsQueue = createQueue<Emotion>({
+const emotionsQueue = createQueue<EmotionPayload>({
   handlers: [
     async (ctx) => {
       if (stageModelRenderer.value === 'vrm') {
-        // console.debug("VRM emotion anime: ", ctx.data)
-        const value = EMOTION_VRMExpressionName_value[ctx.data]
+        // console.debug('VRM emotion anime: ', ctx.data)
+        const value = EMOTION_VRMExpressionName_value[ctx.data.name]
         if (!value)
           return
 
-        await vrmViewerRef.value!.setExpression(value)
+        await vrmViewerRef.value!.setExpression(value, ctx.data.intensity)
       }
       else if (stageModelRenderer.value === 'live2d') {
-        currentMotion.value = { group: EMOTION_EmotionMotionName_value[ctx.data] }
+        currentMotion.value = { group: EMOTION_EmotionMotionName_value[ctx.data.name] }
       }
     },
   ],
@@ -162,138 +160,390 @@ function playSpecialToken(special: string) {
   delaysQueue.enqueue(special)
   emotionMessageContentQueue.enqueue(special)
 }
-onPlaybackFinished(({ special }) => {
-  playSpecialToken(special)
+const lipSyncNode = ref<AudioNode>()
+
+async function playFunction(item: Parameters<Parameters<typeof createPlaybackManager<AudioBuffer>>[0]['play']>[0], signal: AbortSignal): Promise<void> {
+  if (!audioContext || !item.audio)
+    return
+
+  // Ensure audio context is resumed (browsers suspend it by default until user interaction)
+  if (audioContext.state === 'suspended') {
+    try {
+      await audioContext.resume()
+    }
+    catch {
+      return
+    }
+  }
+
+  const source = audioContext.createBufferSource()
+  currentAudioSource.value = source
+  source.buffer = item.audio
+
+  source.connect(audioContext.destination)
+  if (audioAnalyser.value)
+    source.connect(audioAnalyser.value)
+  if (lipSyncNode.value)
+    source.connect(lipSyncNode.value)
+
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const resolveOnce = () => {
+      if (settled)
+        return
+      settled = true
+      resolve()
+    }
+
+    const stopPlayback = () => {
+      try {
+        source.stop()
+        source.disconnect()
+      }
+      catch {}
+      if (currentAudioSource.value === source)
+        currentAudioSource.value = undefined
+      resolveOnce()
+    }
+
+    if (signal.aborted) {
+      stopPlayback()
+      return
+    }
+
+    signal.addEventListener('abort', stopPlayback, { once: true })
+    source.onended = () => {
+      signal.removeEventListener('abort', stopPlayback)
+      stopPlayback()
+    }
+
+    try {
+      source.start(0)
+    }
+    catch {
+      stopPlayback()
+    }
+  })
+}
+
+const playbackManager = createPlaybackManager<AudioBuffer>({
+  play: playFunction,
+  maxVoices: 1,
+  maxVoicesPerOwner: 1,
+  overflowPolicy: 'queue',
+  ownerOverflowPolicy: 'steal-oldest',
 })
 
-async function handleSpeechGeneration(ctx: { data: TTSChunkItem }) {
-  try {
-    if (!activeSpeechProvider.value) {
-      console.warn('No active speech provider configured')
-      return
-    }
+const speechPipeline = createSpeechPipeline<AudioBuffer>({
+  tts: async (request, signal) => {
+    if (signal.aborted)
+      return null
 
-    if (!activeSpeechVoice.value) {
-      console.warn('No active speech voice configured')
-      return
-    }
+    if (activeSpeechProvider.value === 'speech-noop')
+      return null
+
+    if (!activeSpeechProvider.value)
+      return null
 
     const provider = await providersStore.getProviderInstance(activeSpeechProvider.value) as SpeechProviderWithExtraOptions<string, UnElevenLabsOptions>
     if (!provider) {
       console.error('Failed to initialize speech provider')
-      return
+      return null
     }
 
-    // console.debug("ctx.data.chunk is empty? ", ctx.data.chunk === "")
-    // console.debug("ctx.data.special: ", ctx.data.special)
-    if (ctx.data.chunk === '' && !ctx.data.special)
-      return
-    // If special token only and chunk = ""
-    if (ctx.data.chunk === '' && ctx.data.special) {
-      playSpecialToken(ctx.data.special)
-      return
-    }
+    if (!request.text && !request.special)
+      return null
 
     const providerConfig = providersStore.getProviderConfig(activeSpeechProvider.value)
 
+    // For OpenAI Compatible providers, always use provider config for model and voice
+    // since these are manually configured in provider settings
+    let model = activeSpeechModel.value
+    let voice = activeSpeechVoice.value
+
+    if (activeSpeechProvider.value === 'openai-compatible-audio-speech') {
+      // Always prefer provider config for OpenAI Compatible (user configured it there)
+      if (providerConfig?.model) {
+        model = providerConfig.model as string
+      }
+      else {
+        // Fallback to default if not in provider config
+        model = 'tts-1'
+        console.warn('[Speech Pipeline] OpenAI Compatible: No model in provider config, using default', { providerConfig })
+      }
+
+      if (providerConfig?.voice) {
+        voice = {
+          id: providerConfig.voice as string,
+          name: providerConfig.voice as string,
+          description: providerConfig.voice as string,
+          previewURL: '',
+          languages: [{ code: 'en', title: 'English' }],
+          provider: activeSpeechProvider.value,
+          gender: 'neutral',
+        }
+      }
+      else {
+        // Fallback to default if not in provider config
+        voice = {
+          id: 'alloy',
+          name: 'alloy',
+          description: 'alloy',
+          previewURL: '',
+          languages: [{ code: 'en', title: 'English' }],
+          provider: activeSpeechProvider.value,
+          gender: 'neutral',
+        }
+        console.warn('[Speech Pipeline] OpenAI Compatible: No voice in provider config, using default', { providerConfig })
+      }
+    }
+
+    if (!model || !voice)
+      return null
+
     const input = ssmlEnabled.value
-      ? speechStore.generateSSML(ctx.data.chunk, activeSpeechVoice.value, { ...providerConfig, pitch: pitch.value })
-      : ctx.data.chunk
+      ? speechStore.generateSSML(request.text, voice, { ...providerConfig, pitch: pitch.value })
+      : request.text
 
-    const res = await generateSpeech({
-      ...provider.speech(activeSpeechModel.value, providerConfig),
-      input,
-      voice: activeSpeechVoice.value.id,
-    })
+    try {
+      const res = await generateSpeech({
+        ...provider.speech(model, providerConfig),
+        input,
+        voice: voice.id,
+      })
 
-    const audioBuffer = await audioContext.decodeAudioData(res)
-    playbackQueue.value.enqueue({ audioBuffer, text: ctx.data.chunk, special: ctx.data.special })
-  }
-  catch (error) {
-    console.error('Speech generation failed:', error)
-  }
-}
+      if (signal.aborted || !res || res.byteLength === 0)
+        return null
 
-const ttsQueue = createQueue<TTSChunkItem>({
-  handlers: [
-    handleSpeechGeneration,
-  ],
+      const audioBuffer = await audioContext.decodeAudioData(res)
+      return audioBuffer
+    }
+    catch {
+      return null
+    }
+  },
+  playback: playbackManager,
 })
 
-onTextSegmented((chunkItem) => {
-  ttsQueue.enqueue(chunkItem)
+initIOTracer()
+useIOTraceBridge(speechPipeline)
+void speechRuntimeStore.registerHost(speechPipeline)
+
+speechPipeline.on('onSpecial', (segment) => {
+  if (segment.special)
+    playSpecialToken(segment.special)
 })
 
-function getVolumeWithMinMaxNormalizeWithFrameUpdates() {
-  requestAnimationFrame(getVolumeWithMinMaxNormalizeWithFrameUpdates)
-  if (!nowSpeaking.value)
+playbackManager.onEnd(({ item }) => {
+  if (item.special)
+    playSpecialToken(item.special)
+
+  nowSpeaking.value = false
+  mouthOpenSize.value = 0
+})
+
+playbackManager.onStart(({ item }) => {
+  nowSpeaking.value = true
+  // NOTICE: postCaption and postPresent may throw errors if the BroadcastChannel is closed
+  // (e.g., when navigating away from the page). We wrap these in try-catch to prevent
+  // breaking playback when the channel is unavailable.
+  assistantCaption.value += ` ${item.text}`
+  try {
+    postCaption({ type: 'caption-assistant', text: assistantCaption.value })
+  }
+  catch {
+    // BroadcastChannel may be closed - don't break playback
+  }
+  try {
+    postPresent({ type: 'assistant-append', text: item.text })
+  }
+  catch {
+    // BroadcastChannel may be closed - don't break playback
+  }
+})
+
+function startLipSyncLoop() {
+  if (lipSyncLoopId.value)
     return
 
-  mouthOpenSize.value = calculateVolume(audioAnalyser.value!, 'linear')
+  const tick = () => {
+    if (!nowSpeaking.value || !live2dLipSync.value) {
+      mouthOpenSize.value = 0
+    }
+    else {
+      mouthOpenSize.value = live2dLipSync.value.getMouthOpen()
+    }
+    lipSyncLoopId.value = requestAnimationFrame(tick)
+  }
+
+  lipSyncLoopId.value = requestAnimationFrame(tick)
 }
 
-function setupLipSync() {
-  if (!lipSyncStarted.value) {
-    getVolumeWithMinMaxNormalizeWithFrameUpdates()
-    audioContext.resume()
+function stopLipSyncLoop() {
+  if (lipSyncLoopId.value) {
+    cancelAnimationFrame(lipSyncLoopId.value)
+    lipSyncLoopId.value = undefined
+  }
+
+  mouthOpenSize.value = 0
+}
+
+function resetLive2dLipSync() {
+  stopLipSyncLoop()
+
+  try {
+    lipSyncNode.value?.disconnect()
+  }
+  catch {
+
+  }
+
+  lipSyncNode.value = undefined
+  live2dLipSync.value = undefined
+  lipSyncStarted.value = false
+}
+
+function syncLipSyncLoop() {
+  if (shouldRunLive2dLipSyncLoop({
+    stageModelRenderer: stageModelRenderer.value,
+    paused: Boolean(props.paused),
+  }) && lipSyncStarted.value) {
+    startLipSyncLoop()
+    return
+  }
+
+  stopLipSyncLoop()
+}
+
+async function setupLipSync() {
+  if (stageModelRenderer.value !== 'live2d') {
+    resetLive2dLipSync()
+    return
+  }
+
+  if (lipSyncStarted.value)
+    return
+
+  try {
+    const lipSync = await createLive2DLipSync(audioContext, wlipsyncProfile as Profile, live2dLipSyncOptions)
+    live2dLipSync.value = lipSync
+    lipSyncNode.value = lipSync.node
+    await audioContext.resume()
     lipSyncStarted.value = true
+    syncLipSyncLoop()
+  }
+  catch (error) {
+    resetLive2dLipSync()
+    console.error('Failed to setup Live2D lip sync', error)
   }
 }
 
 function setupAnalyser() {
   if (!audioAnalyser.value) {
     audioAnalyser.value = audioContext.createAnalyser()
-    connectAudioAnalyser(audioAnalyser.value)
   }
 }
 
-onBeforeMessageComposed(async () => {
-  clearAll()
+let currentChatIntent: ReturnType<typeof speechRuntimeStore.openIntent> | null = null
+
+chatHookCleanups.push(onBeforeMessageComposed(async () => {
+  playbackManager.stopAll('new-message')
+
   setupAnalyser()
-  setupLipSync()
+  await setupLipSync()
   // Reset assistant caption for a new message
   assistantCaption.value = ''
-  postCaption({ type: 'caption-assistant', text: '' })
-  postPresent({ type: 'assistant-reset' })
-})
+  try {
+    postCaption({ type: 'caption-assistant', text: '' })
+  }
+  catch (error) {
+    // BroadcastChannel may be closed if user navigated away - don't break flow
+    console.warn('[Stage] Failed to post caption reset (channel may be closed)', { error })
+  }
+  try {
+    postPresent({ type: 'assistant-reset' })
+  }
+  catch (error) {
+    // BroadcastChannel may be closed if user navigated away - don't break flow
+    console.warn('[Stage] Failed to post present reset (channel may be closed)', { error })
+  }
 
-onBeforeSend(async () => {
+  if (currentChatIntent) {
+    currentChatIntent.cancel('new-message')
+    currentChatIntent = null
+  }
+
+  currentChatIntent = speechRuntimeStore.openIntent({
+    ownerId: activeCardId.value,
+    priority: 'normal',
+    behavior: 'queue',
+  })
+}))
+
+chatHookCleanups.push(onBeforeSend(async () => {
   currentMotion.value = { group: EmotionThinkMotionName }
-})
+}))
 
-onTokenLiteral(async (literal) => {
-  // Only push to segmentation; visual presentation happens on playback start
-  textSegmentationQueue.value.enqueue({ type: 'literal', value: literal } as TextSegmentationItem)
-})
+chatHookCleanups.push(onTokenLiteral(async (literal) => {
+  currentChatIntent?.writeLiteral(literal)
+}))
 
-onTokenSpecial(async (special) => {
-  // delaysQueue.enqueue(special)
-  // emotionMessageContentQueue.enqueue(special)
-  // Also push special token to the queue for emotion animation/delay and TTS playback synchronisation
-  textSegmentationQueue.value.enqueue({ type: 'special', value: special } as TextSegmentationItem)
-})
+chatHookCleanups.push(onTokenSpecial(async (special) => {
+  // console.debug('Stage received special token:', special)
+  currentChatIntent?.writeSpecial(special)
+}))
 
-onStreamEnd(async () => {
+chatHookCleanups.push(onStreamEnd(async () => {
   delaysQueue.enqueue(llmInferenceEndToken)
-})
+  currentChatIntent?.writeFlush()
+}))
 
-onAssistantResponseEnd(async (_message) => {
+chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
+  currentChatIntent?.end()
+  currentChatIntent = null
   // const res = await embed({
   //   ...transformersProvider.embed('Xenova/nomic-embed-text-v1'),
   //   input: message,
   // })
 
   // await db.value?.execute(`INSERT INTO memory_test (vec) VALUES (${JSON.stringify(res.embedding)});`)
-})
+}))
 
-onUnmounted(() => {
-  lipSyncStarted.value = false
-})
+// Resume audio context on first user interaction (browser requirement)
+let audioContextResumed = false
+function resumeAudioContextOnInteraction() {
+  if (audioContextResumed || !audioContext)
+    return
+  audioContextResumed = true
+  audioContext.resume().catch(() => {
+    // Ignore errors - audio context will be resumed when needed
+  })
+}
+
+// Add event listeners for user interaction
+if (typeof window !== 'undefined') {
+  const events = ['click', 'touchstart', 'keydown']
+  events.forEach((event) => {
+    window.addEventListener(event, resumeAudioContextOnInteraction, { once: true, passive: true })
+  })
+}
 
 onMounted(async () => {
-  db.value = drizzle({ connection: { bundles: getImportUrlBundles() } })
-  await db.value.execute(`CREATE TABLE memory_test (vec FLOAT[768]);`)
+  await getDb() // stub for future update
 })
+
+watch([stageModelRenderer, () => props.paused], ([renderer]) => {
+  if (renderer === 'godot') {
+    componentState.value = 'mounted'
+  }
+
+  if (renderer !== 'live2d') {
+    resetLive2dLipSync()
+    return
+  }
+
+  syncLipSyncLoop()
+}, { immediate: true })
 
 function canvasElement() {
   if (stageModelRenderer.value === 'live2d')
@@ -303,25 +553,100 @@ function canvasElement() {
     return vrmViewerRef.value?.canvasElement()
 }
 
-defineExpose({
-  canvasElement,
+function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, radius: number) {
+  if (stageModelRenderer.value !== 'vrm')
+    return null
+
+  return vrmViewerRef.value?.readRenderTargetRegionAtClientPoint?.(clientX, clientY, radius) ?? null
+}
+
+async function captureFrame() {
+  const charBlob = await (stageModelRenderer.value === 'live2d'
+    ? live2dSceneRef.value?.captureFrame()
+    : vrmViewerRef.value?.captureFrame())
+
+  if (!activeBackgroundUrl.value || !charBlob)
+    return charBlob
+
+  try {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx)
+      return charBlob
+
+    // Load background image
+    const bgImg = new Image()
+    bgImg.crossOrigin = 'anonymous'
+    bgImg.src = activeBackgroundUrl.value
+    await new Promise((resolve, reject) => {
+      bgImg.onload = resolve
+      bgImg.onerror = reject
+    })
+
+    // Load character frame
+    const charImg = await createImageBitmap(charBlob)
+
+    // Match canvas size to the captured frame (respects DPI/Render Scale)
+    canvas.width = charImg.width
+    canvas.height = charImg.height
+
+    // Draw background with "cover" logic
+    const scale = Math.max(canvas.width / bgImg.width, canvas.height / bgImg.height)
+    const w = bgImg.width * scale
+    const h = bgImg.height * scale
+    const x = (canvas.width - w) / 2
+    const y = (canvas.height - h) / 2
+
+    ctx.drawImage(bgImg, x, y, w, h)
+
+    // Draw character on top
+    ctx.drawImage(charImg, 0, 0)
+
+    return new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+  }
+  catch (error) {
+    console.error('[Stage] Failed to composite photo with background:', error)
+    return charBlob // Fallback to character-only
+  }
+}
+
+onUnmounted(() => {
+  resetLive2dLipSync()
+  chatHookCleanups.forEach(dispose => dispose?.())
+  viewUpdateCleanups.forEach(dispose => dispose?.())
 })
 
-onPlaybackStarted(({ text }) => {
-  assistantCaption.value += ` ${text}`
-  postCaption({ type: 'caption-assistant', text: assistantCaption.value })
-  postPresent({ type: 'assistant-append', text })
+defineExpose({
+  canvasElement,
+  captureFrame,
+  readRenderTargetRegionAtClientPoint,
 })
 </script>
 
 <template>
-  <div relative>
-    <div h-full w-full>
+  <div relative h-full w-full>
+    <!-- Scene Background Layer -->
+    <div
+      v-if="activeBackgroundUrl"
+      :class="[
+        'absolute left-0 top-0 z-0 h-full w-full',
+        'transition-opacity duration-500',
+      ]"
+      :style="{
+        backgroundImage: `url(${activeBackgroundUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      }"
+    />
+
+    <div relative h-full w-full>
       <Live2DScene
         v-if="stageModelRenderer === 'live2d' && showStage"
         ref="live2dSceneRef"
-        v-model:state="componentState" min-w="50% <lg:full" min-h="100 sm:100" h-full w-full
-        flex-1
+        v-model:state="componentState"
+        min-w="50% <lg:full" min-h="100 sm:100"
+        h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
         :focus-at="focusAt"
@@ -331,18 +656,48 @@ onPlaybackStarted(({ text }) => {
         :y-offset="yOffset"
         :scale="scale"
         :disable-focus-at="live2dDisableFocus"
+        :theme-colors-hue="themeColorsHue"
+        :theme-colors-hue-dynamic="themeColorsHueDynamic"
+        :live2d-idle-animation-enabled="live2dIdleAnimationEnabled"
+        :live2d-auto-blink-enabled="live2dAutoBlinkEnabled"
+        :live2d-force-auto-blink-enabled="live2dForceAutoBlinkEnabled"
+        :live2d-expression-enabled="live2dExpressionEnabled"
+        :live2d-shadow-enabled="live2dShadowEnabled"
+        :live2d-max-fps="live2dMaxFps"
+        :live2d-render-scale="live2dRenderScale"
       />
       <ThreeScene
         v-if="stageModelRenderer === 'vrm' && showStage"
         ref="vrmViewerRef"
-        :model-src="stageModelSelectedUrl"
-        :idle-animation="withBase('/assets/vrm/animations/idle_loop.vrma')"
+        v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
+        :model-src="stageModelSelectedUrl"
+        :idle-animation="animations.idleLoop.toString()"
         :paused="paused"
         :show-axes="stageViewControlsEnabled"
         :current-audio-source="currentAudioSource"
         @error="console.error"
       />
+      <div
+        v-if="stageModelRenderer === 'godot'"
+        :class="[
+          'h-full w-full',
+          'flex items-center justify-center',
+          'px-4 py-6',
+        ]"
+      >
+        <div
+          :class="[
+            'w-96 max-w-full',
+            'min-h-32',
+            'flex items-center justify-center',
+          ]"
+        >
+          <Callout label="Godot Stage (Experimental)">
+            <p>Godot Stage (experimental) is running...</p>
+          </Callout>
+        </div>
+      </div>
     </div>
   </div>
 </template>

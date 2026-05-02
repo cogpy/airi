@@ -3,11 +3,12 @@ import type { ccv3 } from '@proj-airi/ccc'
 
 import { Alert } from '@proj-airi/stage-ui/components'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
-import { InputFile } from '@proj-airi/ui'
-import { Select } from '@proj-airi/ui/components/form'
+import { InputFileCard } from '@proj-airi/ui'
+import { ComboboxSelect } from '@proj-airi/ui/components/form'
 import { storeToRefs } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 
 import CardCreate from './components/CardCreate.vue'
 import CardCreationDialog from './components/CardCreationDialog.vue'
@@ -20,8 +21,15 @@ const cardStore = useAiriCardStore()
 const { addCard, removeCard } = cardStore
 const { cards, activeCardId } = storeToRefs(cardStore)
 
+const route = useRoute()
+const router = useRouter()
+
 // Currently selected card ID (different from active card ID)
 const selectedCardId = ref<string>('')
+// Currently editing card ID
+const editingCardId = ref<string>('')
+// Initial tab to open in the dialog
+const initialTabId = ref<string>('')
 // Dialog state
 const isCardDialogOpen = ref(false)
 const isCardCreationDialogOpen = ref(false)
@@ -116,11 +124,27 @@ function confirmDelete(id: string) {
 }
 
 function handleSelectCard(cardId: string) {
+  // Verify card exists before opening dialog
+  if (!cards.value.has(cardId)) {
+    console.error(`Card with id ${cardId} not found`)
+    return
+  }
   selectedCardId.value = cardId
   isCardDialogOpen.value = true
 }
 
+function handleEditCard(cardId: string) {
+  // Verify card exists before opening edit dialog
+  if (!cards.value.has(cardId)) {
+    console.error(`Card with id ${cardId} not found`)
+    return
+  }
+  editingCardId.value = cardId
+  isCardCreationDialogOpen.value = true
+}
+
 function handleCardCreationDialog() {
+  editingCardId.value = '' // Clear editing state for new card creation
   isCardCreationDialogOpen.value = true
 }
 
@@ -128,6 +152,51 @@ function handleCardCreationDialog() {
 function activateCard(id: string) {
   activeCardId.value = id
 }
+
+// Clear editing state when creation/edit dialog closes
+watch(isCardCreationDialogOpen, (isOpen) => {
+  if (!isOpen) {
+    editingCardId.value = ''
+    initialTabId.value = ''
+  }
+})
+
+// Clear initial tab when detail dialog closes
+watch(isCardDialogOpen, (isOpen) => {
+  if (!isOpen) {
+    initialTabId.value = ''
+  }
+})
+
+// Handle deep-linking from query params
+watch(() => [route.query.cardId, route.query.tab], ([cardId, tab]) => {
+  if (!cardId || typeof cardId !== 'string' || !cards.value.has(cardId))
+    return
+
+  const targetTab = typeof tab === 'string' ? tab : ''
+  selectedCardId.value = cardId
+  initialTabId.value = targetTab
+
+  // Gallery or other viewing tabs go to Detail dialog
+  if (['gallery', 'description', 'notes', 'character'].includes(targetTab)) {
+    isCardDialogOpen.value = true
+    isCardCreationDialogOpen.value = false
+  }
+  // Artistry or other editing tabs go to Creation/Edit dialog
+  else if (['artistry', 'identity', 'behavior', 'modules', 'settings'].includes(targetTab)) {
+    editingCardId.value = cardId
+    isCardCreationDialogOpen.value = true
+    isCardDialogOpen.value = false
+  }
+  else {
+    // Default to detail if tab is unknown
+    isCardDialogOpen.value = true
+    isCardCreationDialogOpen.value = false
+  }
+
+  // Clear query params to prevent re-triggering and keep URL clean
+  void router.replace({ query: {} })
+}, { immediate: true })
 
 // Card version number
 function getVersionNumber(id: string) {
@@ -179,7 +248,7 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
         <div class="top-[-32px] whitespace-nowrap text-sm text-neutral-500 leading-10 lg:absolute dark:text-neutral-400">
           {{ t('settings.pages.card.sort_by') }}:
         </div>
-        <Select
+        <ComboboxSelect
           v-model="sortOption"
           :options="[
             { value: 'nameAsc', label: t('settings.pages.card.name_asc') },
@@ -198,7 +267,7 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
       :class="{ 'grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 grid-auto-rows-[minmax(min-content,max-content)] grid-auto-flow-dense sm:grid-cols-[repeat(auto-fill,minmax(240px,1fr))] sm:gap-5 md:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(250px,1fr))]': cards.size > 0 }"
     >
       <!-- Upload card -->
-      <InputFile v-model="inputFiles" accept="*.json">
+      <InputFileCard v-model="inputFiles" accept="*.json">
         <template #default="{ isDragging }">
           <template v-if="!isDragging">
             <div flex flex-col items-center>
@@ -220,7 +289,7 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
             </div>
           </template>
         </template>
-      </InputFile>
+      </InputFileCard>
 
       <!-- Create card -->
       <CardCreate @click="handleCardCreationDialog" />
@@ -241,6 +310,7 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
           @select="handleSelectCard(item.id)"
           @activate="activateCard(item.id)"
           @delete="confirmDelete(item.id)"
+          @edit="handleEditCard(item.id)"
         />
       </template>
 
@@ -279,11 +349,14 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
   <CardDetailDialog
     v-model="isCardDialogOpen"
     :card-id="selectedCardId"
+    :initial-tab="initialTabId"
   />
 
-  <!-- Card detail dialog -->
+  <!-- Card creation/edit dialog -->
   <CardCreationDialog
     v-model="isCardCreationDialogOpen"
+    :card-id="editingCardId"
+    :initial-tab="initialTabId"
   />
 
   <!-- Background decoration -->
@@ -304,6 +377,12 @@ function getModuleShortName(id: string, module: 'consciousness' | 'voice') {
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: settings.pages.card.title
+  subtitleKey: settings.title
+  descriptionKey: settings.pages.card.description
+  icon: i-solar:emoji-funny-square-bold-duotone
+  settingsEntry: true
+  order: 1
   stageTransition:
     name: slide
 </route>

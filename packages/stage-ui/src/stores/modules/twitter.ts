@@ -1,4 +1,4 @@
-import { useLocalStorage } from '@vueuse/core'
+import { useLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
 
@@ -7,11 +7,11 @@ import { useConfiguratorByModsChannelServer } from '../configurator'
 export const useTwitterStore = defineStore('twitter', () => {
   const configurator = useConfiguratorByModsChannelServer()
 
-  const enabled = useLocalStorage('settings/twitter/enabled', false)
-  const apiKey = useLocalStorage('settings/twitter/api-key', '')
-  const apiSecret = useLocalStorage('settings/twitter/api-secret', '')
-  const accessToken = useLocalStorage('settings/twitter/access-token', '')
-  const accessTokenSecret = useLocalStorage('settings/twitter/access-token-secret', '')
+  const enabled = useLocalStorageManualReset<boolean>('settings/twitter/enabled', false)
+  const apiKey = useLocalStorageManualReset<string>('settings/twitter/api-key', '')
+  const apiSecret = useLocalStorageManualReset<string>('settings/twitter/api-secret', '')
+  const accessToken = useLocalStorageManualReset<string>('settings/twitter/access-token', '')
+  const accessTokenSecret = useLocalStorageManualReset<string>('settings/twitter/access-token-secret', '')
 
   function saveSettings() {
     // Data is automatically saved to localStorage via useLocalStorage
@@ -29,6 +29,15 @@ export const useTwitterStore = defineStore('twitter', () => {
     return !!(apiKey.value.trim() && apiSecret.value.trim() && accessToken.value.trim() && accessTokenSecret.value.trim())
   })
 
+  function resetState() {
+    enabled.reset()
+    apiKey.reset()
+    apiSecret.reset()
+    accessToken.reset()
+    accessTokenSecret.reset()
+    saveSettings()
+  }
+
   return {
     enabled,
     apiKey,
@@ -37,5 +46,6 @@ export const useTwitterStore = defineStore('twitter', () => {
     accessTokenSecret,
     configured,
     saveSettings,
+    resetState,
   }
 })

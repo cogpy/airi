@@ -4,14 +4,22 @@
     "jsx": "preserve",
     "lib": [
       "DOM",
+      "DOM.AsyncIterable",
       "ESNext"
     ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "paths": {
+      "@proj-airi/stage-ui/*": [
+        "../../packages/stage-ui/src/*"
+      ]
+    },
     "resolveJsonModule": true,
     "types": [
       "vitest",
-      "vite/client"
+      "vite/client",
+      "unplugin-info/client",
+      "@webgpu/types"
     ],
     "allowJs": true,
     "strict": true,

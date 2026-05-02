@@ -1,7 +1,7 @@
 {
   "name": "@proj-airi/ui",
   "type": "module",
-  "version": "0.8.0-alpha.4",
+  "version": "0.9.0",
   "description": "A collection of UI components that used by Project AIRI",
   "author": {
     "name": "Moeru AI Project AIRI Team",
@@ -16,21 +16,24 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./components/animations": "./src/components/Animations/index.ts",
-    "./components/form": "./src/components/Form/index.ts",
+    "./main.css": "./src/main.css",
+    "./components/animations": "./src/components/animations/index.ts",
+    "./components/form": "./src/components/form/index.ts",
+    "./components/layouts": "./src/components/layouts/index.ts",
     "./*": "./*"
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@vueuse/core": "^14.0.0",
+    "@moeru/std": "catalog:",
+    "@vueuse/core": "^14.2.1",
     "floating-vue": "^5.2.2",
-    "reka-ui": "^2.6.0",
-    "vue": "^3.5.24"
+    "reka-ui": "^2.9.6",
+    "vue": "catalog:"
   },
   "devDependencies": {
     "@vue-macros/volar": "3.0.0-beta.8",
-    "vue-tsc": "^3.1.4"
+    "vue-tsc": "^3.2.6"
   }
 }

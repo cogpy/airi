@@ -1,67 +1,52 @@
-export interface DiscordGuildMember {
-  nickname: string
-  displayName: string
-  id: string
+import type { ModuleIdentity, ProtocolEvents, RouteConfig, WebSocketEventSource } from '@proj-airi/plugin-protocol/types'
+
+export * from '@proj-airi/plugin-protocol/types'
+
+export interface WebSocketEventBaseMetadata {
+  source?: ModuleIdentity
+  event?: {
+    id?: string
+    parentId?: string
+  }
 }
 
-export interface Discord {
-  guildMember?: DiscordGuildMember
-  guildId?: string
-  channelId?: string
-}
-
-interface InputSource {
-  browser: string
-  discord: Discord
-}
-
-export interface WebSocketBaseEvent<T, D> {
+export interface WebSocketBaseEvent<T, D, S extends string = string> {
   type: T
   data: D
+  /**
+   * @deprecated Prefer metadata.source.
+   */
+  source?: WebSocketEventSource | S
+  metadata: {
+    source: ModuleIdentity
+    event: {
+      id: string
+      parentId?: string
+    }
+  }
+  route?: RouteConfig
 }
 
-export type WithInputSource<Source extends keyof InputSource> = {
-  [S in Source]: InputSource[S]
-}
+export interface WebSocketEvents<C = undefined> extends ProtocolEvents<C> {}
 
-// Thanks to:
-//
-// A little hack for creating extensible discriminated unions : r/typescript
-// https://www.reddit.com/r/typescript/comments/1064ibt/a_little_hack_for_creating_extensible/
-export interface WebSocketEvents<C = undefined> {
-  'error': {
-    message: string
-  }
-  'module:authenticate': {
-    token: string
-  }
-  'module:authenticated': {
-    authenticated: boolean
-  }
-  'module:announce': {
-    name: string
-    possibleEvents: Array<(keyof WebSocketEvents<C>)>
-  }
-  'module:configure': {
-    config: C
-  }
-  'ui:configure': {
-    moduleName: string
-    moduleIndex?: number
-    config: C | Record<string, unknown>
-  }
-  'input:text': {
-    text: string
-  } & Partial<WithInputSource<'browser' | 'discord'>>
-  'input:text:voice': {
-    transcription: string
-  } & Partial<WithInputSource<'browser' | 'discord'>>
-  'input:voice': {
-    audio: ArrayBuffer
-  } & Partial<WithInputSource<'browser' | 'discord'>>
-  'vscode:context': C
-}
+export type WebSocketEventDataInputs
+  = | WebSocketEvents['input:text']
+    | WebSocketEvents['input:text:voice']
+    | WebSocketEvents['input:voice']
 
 export type WebSocketEvent<C = undefined> = {
   [K in keyof WebSocketEvents<C>]: WebSocketBaseEvent<K, WebSocketEvents<C>[K]>;
 }[keyof WebSocketEvents<C>]
+
+export type WebSocketEventOptionalSource<C = undefined> = {
+  [K in keyof WebSocketEvents<C>]: Omit<WebSocketBaseEvent<K, WebSocketEvents<C>[K]>, 'metadata'> & { metadata?: WebSocketEventBaseMetadata };
+}[keyof WebSocketEvents<C>]
+
+export type WebSocketEventOf<E, C = undefined> = E extends keyof WebSocketEvents<C>
+  ? Omit<WebSocketBaseEvent<E, WebSocketEvents<C>[E]>, 'metadata'> & { metadata?: WebSocketEventBaseMetadata }
+  : never
+
+export type WebSocketEventInputs
+  = | WebSocketEventOf<'input:text'>
+    | WebSocketEventOf<'input:text:voice'>
+    | WebSocketEventOf<'input:voice'>

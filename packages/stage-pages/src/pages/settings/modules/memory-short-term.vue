@@ -1,16 +1,16 @@
 <script setup lang="ts">
-// import { useServerStore } from '@proj-airi/stage-ui/stores/servers'
-
-// const serverStore = useServerStore()
+import { WIP } from '@proj-airi/stage-ui/components'
 </script>
 
 <template>
-  <div />
+  <WIP />
 </template>
 
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: settings.pages.modules.memory-short-term.title
+  subtitleKey: settings.title
   stageTransition:
     name: slide
 </route>

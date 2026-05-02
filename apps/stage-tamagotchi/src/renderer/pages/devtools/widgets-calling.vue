@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { Button } from '@proj-airi/stage-ui/components'
-import { FieldInput, FieldSelect, FieldTextArea } from '@proj-airi/ui'
+import { useElectronEventaInvoke } from '@proj-airi/electron-vueuse'
+import { Button, FieldCombobox, FieldInput, FieldTextArea } from '@proj-airi/ui'
 import { computed, reactive, ref } from 'vue'
 
 import { widgetsAdd, widgetsClear, widgetsOpenWindow, widgetsPrepareWindow, widgetsRemove, widgetsUpdate } from '../../../shared/eventa'
-import { useElectronEventaInvoke } from '../../composables/electron-vueuse/use-electron-eventa-context'
 
 type SizePreset = 's' | 'm' | 'l' | 'custom'
 
@@ -28,7 +27,39 @@ const clearWidgets = useElectronEventaInvoke(widgetsClear)
 const defaultWeatherProps = {
   city: 'Tokyo',
   temperature: '15°C',
-  condition: 'Sunny',
+  condition: 'Light rain',
+  high: '18°C',
+  low: '12°C',
+  humidity: '72%',
+  wind: '3 m/s',
+  precipitation: '40%',
+}
+
+const defaultMapProps = {
+  title: 'To Haneda Airport',
+  eta: '38 min',
+  distance: '27 km',
+  mode: 'Transit',
+  status: 'Light traffic',
+  originLabel: 'You',
+  destinationLabel: 'HND',
+  accent: '#22c55e',
+  origin: { x: 18, y: 70 },
+  destination: { x: 82, y: 26 },
+  route: [
+    { x: 18, y: 70 },
+    { x: 28, y: 62 },
+    { x: 42, y: 58 },
+    { x: 54, y: 50 },
+    { x: 64, y: 42 },
+    { x: 74, y: 34 },
+    { x: 82, y: 26 },
+  ],
+  stops: [
+    { x: 28, y: 62, label: 'Mita' },
+    { x: 54, y: 50, label: 'Shinagawa' },
+    { x: 74, y: 34, label: 'Tenkubashi' },
+  ],
 }
 
 const form = reactive<FormState>({
@@ -202,6 +233,26 @@ function applyWeatherPreset() {
   form.ttlSeconds = ''
   resetFeedback()
 }
+
+function applyMapPreset() {
+  form.componentName = 'map'
+  form.sizePreset = 'custom'
+  form.customCols = '3'
+  form.customRows = '2'
+  form.componentProps = JSON.stringify(defaultMapProps, null, 2)
+  form.ttlSeconds = ''
+  resetFeedback()
+}
+
+function applyExtensionUiPreset() {
+  form.componentName = 'extension-ui'
+  form.sizePreset = 'custom'
+  form.customCols = '4'
+  form.customRows = '3'
+  form.componentProps = JSON.stringify({}, null, 2)
+  form.ttlSeconds = ''
+  resetFeedback()
+}
 </script>
 
 <template>
@@ -215,12 +266,60 @@ function applyWeatherPreset() {
           Provide an existing id to mutate a widget or leave blank to spawn a new one.
         </p>
       </div>
+      <div class="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          :disabled="busy"
+          @click="applyWeatherPreset"
+        >
+          Weather Preset
+        </Button>
+        <Button
+          variant="secondary"
+          :disabled="busy"
+          @click="applyMapPreset"
+        >
+          Map Preset
+        </Button>
+        <Button
+          variant="secondary"
+          :disabled="busy"
+          @click="applyExtensionUiPreset"
+        >
+          Extension UI Preset
+        </Button>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap gap-3">
+      <Button
+        variant="primary"
+        :disabled="busy"
+        @click="handleAdd"
+      >
+        Spawn / Replace
+      </Button>
       <Button
         variant="secondary"
         :disabled="busy"
-        @click="applyWeatherPreset"
+        @click="handleUpdate"
       >
-        Weather Preset
+        Update Props
+      </Button>
+      <Button
+        variant="secondary"
+        :disabled="busy"
+        @click="handleRemove"
+      >
+        Remove Widget
+      </Button>
+      <Button
+        class="ml-auto"
+        variant="danger"
+        :disabled="busy"
+        @click="handleClear"
+      >
+        Clear All
       </Button>
     </div>
 
@@ -241,7 +340,7 @@ function applyWeatherPreset() {
     </div>
 
     <div class="grid gap-4 md:grid-cols-3">
-      <FieldSelect
+      <FieldCombobox
         v-model="form.sizePreset"
         label="Size Preset"
         description="Choose a preset or opt into custom spans."
@@ -283,38 +382,6 @@ function applyWeatherPreset() {
       :rows="8"
     />
 
-    <div class="flex flex-wrap gap-3">
-      <Button
-        variant="primary"
-        :disabled="busy"
-        @click="handleAdd"
-      >
-        Spawn / Replace
-      </Button>
-      <Button
-        variant="secondary"
-        :disabled="busy"
-        @click="handleUpdate"
-      >
-        Update Props
-      </Button>
-      <Button
-        variant="secondary"
-        :disabled="busy"
-        @click="handleRemove"
-      >
-        Remove Widget
-      </Button>
-      <Button
-        class="ml-auto"
-        variant="danger"
-        :disabled="busy"
-        @click="handleClear"
-      >
-        Clear All
-      </Button>
-    </div>
-
     <div class="text-sm space-y-1">
       <p v-if="lastAction" class="text-primary-200/90">
         {{ lastAction }}
@@ -329,4 +396,6 @@ function applyWeatherPreset() {
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: tamagotchi.settings.devtools.pages.widgets-calling.title
+  subtitleKey: tamagotchi.settings.devtools.title
 </route>

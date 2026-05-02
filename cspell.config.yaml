@@ -3,8 +3,10 @@ ignorePaths: []
 dictionaryDefinitions: []
 dictionaries: []
 words:
+  - 433DLLA855
   - acubismmotion
   - Aerisita
+  - aihubmix
   - airi
   - airi-vtuber
   - Alaya
@@ -15,6 +17,9 @@ words:
   - allseto
   - animejs
   - APNG
+  - APPSTORE
+  - Armbruster
+  - asar
   - astrojs
   - Attributify
   - attw
@@ -23,27 +28,35 @@ words:
   - autoplay
   - awilix
   - Ayaka
+  - Backquote
   - baichuan
   - baiducloud
   - bailian
+  - bestmove
   - bigserial
+  - bilibili
   - Bitstream
   - bootkit
   - browserbasehq
   - buildless
   - bumpp
   - byteorder
+  - Catap
   - catppuccin
   - cdylib
   - cerebras
+  - chillroundm
   - cientos
   - cjkfonts
   - clippy
   - clustr
+  - cmdorctrl
+  - codesign
   - collectblock
   - colorjs
   - cometapi
   - Comfortaa
+  - commandorcontrol
   - composables
   - cooldown
   - coreml
@@ -75,6 +88,7 @@ words:
   - devlog
   - devlogs
   - directml
+  - Dismissable
   - dokidoki
   - dompurify
   - dotenvx
@@ -100,6 +114,8 @@ words:
   - flexsearch
   - formkit
   - frontmatter
+  - gamelet
+  - gamelets
   - Genshin
   - giteeai
   - gltf
@@ -118,6 +134,7 @@ words:
   - histoire
   - hiyori
   - Holo
+  - homeassistant
   - huggingface
   - huggingspace
   - hunyuan
@@ -126,6 +143,8 @@ words:
   - injeca
   - injecta
   - intlify
+  - ITCHIO
+  - itmstransporter
   - jlumbroso
   - jszip
   - Kawaii
@@ -133,17 +152,22 @@ words:
   - keyup
   - Keyyable
   - kirakira
+  - knip
   - kwaa
+  - Landmarker
   - lemonneko
   - lemonnekogh
   - lerp
   - libsamplerate
   - libsodium
   - lightningcss
+  - lipsync
   - listhen
   - live2dcubismcore
   - live2dcubismframework
+  - livechat
   - Llmmarker
+  - lmstudio
   - lobehub
   - logg
   - Lorebook
@@ -157,13 +181,17 @@ words:
   - matchall
   - mdit
   - mediabunny
+  - mediapipe
   - MeshToonMaterial
+  - meteocons
   - micvad
   - mineflayer
   - mingcute
   - minimizable
   - minisearch
   - mkdist
+  - mobileprovision
+  - Mocap
   - modelcontextprotocol
   - modnet
   - moeru
@@ -176,6 +204,7 @@ words:
   - ndarray
   - Neko
   - nekomeowww
+  - nekopaw
   - neuri
   - Neuro
   - Neuro-sama
@@ -184,6 +213,7 @@ words:
   - novita
   - nprogress
   - nsis
+  - Nunito
   - nuxi
   - nuxt
   - nuxtjs
@@ -200,7 +230,9 @@ words:
   - OPFS
   - opusscript
   - otelcol
+  - owenthereal
   - oxlint
+  - pbxproj
   - pglite
   - pgvector
   - picklist
@@ -212,18 +244,22 @@ words:
   - pmrem
   - popmotion
   - poppin
+  - posthog
   - PREFLIGHTS
   - prereleased
   - pretrained
   - prismarine
   - prng
   - pthread
+  - pulseaudio
   - quanlai
   - qwen
+  - rafta
   - Raycaster
   - rdev
   - rehype
   - reka
+  - remarkablegames
   - Replayable
   - resampler
   - RGBE
@@ -237,6 +273,7 @@ words:
   - safetensors
   - SAVEPOINT
   - Screenable
+  - sdkmanager
   - sensenova
   - serde
   - Shadcn
@@ -248,26 +285,35 @@ words:
   - sizecheck
   - smallserial
   - Sniglet
+  - softprops
   - sonarjs
   - sonner
+  - Spacebar
   - specta
+  - splitpanes
   - splt
   - srgb
   - ssml
   - staticlib
   - stepfun
+  - stockfish
+  - sumimakito
   - supergroup
   - superjson
+  - systempreferences
   - tamagotchi
   - tauri
   - taze
   - tempora
+  - temurin
+  - testflight
   - tinyexec
   - togetherapi
   - tolist
   - tresjs
   - Triggerable
   - tsdown
+  - ttft
   - turborepo
   - unbird
   - unbundle
@@ -277,18 +323,26 @@ words:
   - Unlisten
   - unocss
   - unplugin
+  - unref
   - unspeech
+  - upterm
+  - userversion
   - valibot
   - vaul
   - velin
+  - vieval
+  - vishot
   - VITE
   - vitepress
   - vllm
   - Volcengine
   - vrma
+  - vrms
   - vtuber
   - vueuse
   - waapi
+  - Waifu
+  - warpdrive
   - Warudo
   - wavefile
   - webgpu
@@ -300,6 +354,8 @@ words:
   - worklets
   - xast
   - xastscript
+  - xcarchive
+  - xcodeproj
   - Xenova
   - xiaolai
   - xsai

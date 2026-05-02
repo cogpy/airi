@@ -1,13 +1,11 @@
 <script setup lang="ts">
+import { useElectronAllDisplays, useElectronMouse } from '@proj-airi/electron-vueuse'
 import { useWindowSize } from '@vueuse/core'
-import { computed, ref } from 'vue'
-
-import { useElectronAllDisplays, useElectronMouse } from '../../composables/electron-vueuse'
+import { computed } from 'vue'
 
 const allDisplays = useElectronAllDisplays()
 const { x: cursorX, y: cursorY } = useElectronMouse()
 
-const containerRef = ref<HTMLElement>()
 const windowSize = useWindowSize()
 
 const displayBounds = computed(() => {
@@ -89,7 +87,6 @@ const containerDimensions = computed(() => {
 <template>
   <div>
     <div
-      ref="containerRef"
       class="relative"
       :style="{
         width: `${containerDimensions.width}px`,
@@ -144,4 +141,6 @@ const containerDimensions = computed(() => {
 <route lang="yaml">
 meta:
   layout: settings
+  title: useElectronAllDisplays
+  subtitleKey: tamagotchi.settings.devtools.title
 </route>

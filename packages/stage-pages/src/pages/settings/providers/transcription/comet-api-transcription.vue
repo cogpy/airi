@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { RemovableRef } from '@vueuse/core'
-import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/shared-providers'
+import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
 import {
   Alert,
@@ -13,6 +13,7 @@ import {
   TranscriptionPlayground,
 } from '@proj-airi/stage-ui/components'
 import { useProviderValidation } from '@proj-airi/stage-ui/composables/use-provider-validation'
+import { getDefinedProvider } from '@proj-airi/stage-ui/libs'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import { FieldInput } from '@proj-airi/ui'
@@ -79,7 +80,23 @@ const {
   isValid,
   validationMessage,
   handleResetSettings,
+  forceValid,
 } = useProviderValidation(providerId)
+
+const apiKeyPlaceholder = computed(() => {
+  const definition = getDefinedProvider(providerId)
+  if (!definition?.createProviderConfig)
+    return 'sk-...'
+
+  const schema = definition.createProviderConfig({ t }) as any
+  const shape = typeof schema?.shape === 'function' ? schema.shape() : schema?.shape
+  const apiKeySchema = shape?.apiKey
+  if (!apiKeySchema)
+    return 'sk-...'
+
+  const meta = typeof apiKeySchema.meta === 'function' ? apiKeySchema.meta() : undefined
+  return typeof meta?.placeholderLocalized === 'string' ? meta.placeholderLocalized : 'sk-...'
+})
 </script>
 
 <template>
@@ -97,7 +114,7 @@ const {
         <ProviderApiKeyInput
           v-model="apiKey"
           :provider-name="providerMetadata?.localizedName"
-          placeholder="sk-..."
+          :placeholder="apiKeyPlaceholder"
         />
         <FieldInput
           v-model="model"
@@ -116,7 +133,16 @@ const {
       <!-- Validation Status -->
       <Alert v-if="!isValid && isValidating === 0 && validationMessage" type="error">
         <template #title>
-          {{ t('settings.dialogs.onboarding.validationFailed') }}
+          <div class="w-full flex items-center justify-between">
+            <span>{{ t('settings.dialogs.onboarding.validationFailed') }}</span>
+            <button
+              type="button"
+              class="ml-2 rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 font-medium transition-colors dark:bg-red-800/30 hover:bg-red-200 dark:text-red-300 dark:hover:bg-red-700/40"
+              @click="forceValid"
+            >
+              {{ t('settings.pages.providers.common.continueAnyway') }}
+            </button>
+          </div>
         </template>
         <template v-if="validationMessage" #content>
           <div class="whitespace-pre-wrap break-all">

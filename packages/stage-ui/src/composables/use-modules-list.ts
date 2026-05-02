@@ -1,13 +1,20 @@
-import { computed } from 'vue'
+import type { BeatSyncDetectorState } from '@proj-airi/stage-shared/beat-sync'
+
+import { getBeatSyncState, listenBeatSyncStateChange } from '@proj-airi/stage-shared/beat-sync'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useBeatSyncStore } from '../stores/beat-sync'
+import factorioIcon from '../assets/factorio-simple.png'
+
+import { useArtistryStore } from '../stores/modules/artistry'
 import { useConsciousnessStore } from '../stores/modules/consciousness'
 import { useDiscordStore } from '../stores/modules/discord'
 import { useFactorioStore } from '../stores/modules/gaming-factorio'
 import { useMinecraftStore } from '../stores/modules/gaming-minecraft'
+import { useHearingStore } from '../stores/modules/hearing'
 import { useSpeechStore } from '../stores/modules/speech'
 import { useTwitterStore } from '../stores/modules/twitter'
+import { useVisionStore } from '../stores/modules/vision'
 
 export interface Module {
   id: string
@@ -27,11 +34,16 @@ export function useModulesList() {
   // Initialize stores
   const consciousnessStore = useConsciousnessStore()
   const speechStore = useSpeechStore()
+  const hearingStore = useHearingStore()
+  const visionStore = useVisionStore()
   const discordStore = useDiscordStore()
   const twitterStore = useTwitterStore()
   const minecraftStore = useMinecraftStore()
   const factorioStore = useFactorioStore()
-  const beatSyncStore = useBeatSyncStore()
+  const artistryStore = useArtistryStore()
+  const beatSyncState = ref<BeatSyncDetectorState>()
+
+  minecraftStore.initialize()
 
   const modulesList = computed<Module[]>(() => [
     {
@@ -58,7 +70,7 @@ export function useModulesList() {
       description: t('settings.pages.modules.hearing.description'),
       icon: 'i-solar:microphone-3-bold-duotone',
       to: '/settings/modules/hearing',
-      configured: false,
+      configured: hearingStore.configured,
       category: 'essential',
     },
     {
@@ -67,7 +79,16 @@ export function useModulesList() {
       description: t('settings.pages.modules.vision.description'),
       icon: 'i-solar:eye-closed-bold-duotone',
       to: '/settings/modules/vision',
-      configured: false,
+      configured: visionStore.configured,
+      category: 'essential',
+    },
+    {
+      id: 'artistry',
+      name: t('settings.pages.modules.artistry.title'),
+      description: t('settings.pages.modules.artistry.description'),
+      icon: 'i-solar:palette-bold-duotone',
+      to: '/settings/modules/artistry',
+      configured: artistryStore.configured,
       category: 'essential',
     },
     {
@@ -119,6 +140,7 @@ export function useModulesList() {
       id: 'gaming-factorio',
       name: t('settings.pages.modules.gaming-factorio.title'),
       description: t('settings.pages.modules.gaming-factorio.description'),
+      iconImage: factorioIcon,
       to: '/settings/modules/gaming-factorio',
       configured: factorioStore.configured,
       category: 'gaming',
@@ -138,7 +160,7 @@ export function useModulesList() {
       description: t('settings.pages.modules.beat_sync.description'),
       icon: 'i-solar:music-notes-bold-duotone',
       to: '/settings/modules/beat-sync',
-      configured: beatSyncStore.isActive,
+      configured: beatSyncState.value?.isActive ?? false,
       category: 'essential',
     },
   ])
@@ -160,6 +182,13 @@ export function useModulesList() {
     messaging: t('settings.pages.modules.categories.messaging'),
     gaming: t('settings.pages.modules.categories.gaming'),
   }))
+
+  // TODO(Makito): We can make this a reactive value from a synthetic store.
+  onMounted(() => {
+    getBeatSyncState().then(initialState => beatSyncState.value = initialState)
+    const removeListener = listenBeatSyncStateChange(newState => beatSyncState.value = { ...newState })
+    onUnmounted(() => removeListener())
+  })
 
   return {
     modulesList,

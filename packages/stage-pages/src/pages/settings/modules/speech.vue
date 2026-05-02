@@ -1,21 +1,22 @@
 <script setup lang="ts">
-import type { SpeechProviderWithExtraOptions } from '@xsai-ext/shared-providers'
+import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
 import {
   Alert,
   ErrorContainer,
   RadioCardManySelect,
   RadioCardSimple,
-  Skeleton,
   TestDummyMarker,
   VoiceCardManySelect,
 } from '@proj-airi/stage-ui/components'
+import { useAnalytics } from '@proj-airi/stage-ui/composables'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
 import {
   FieldCheckbox,
   FieldInput,
   FieldRange,
+  Skeleton,
   Textarea,
 } from '@proj-airi/ui'
 import { generateSpeech } from '@xsai/generate-speech'
@@ -45,6 +46,8 @@ const {
   availableVoices,
 } = storeToRefs(speechStore)
 
+const { trackProviderClick } = useAnalytics()
+
 const voiceSearchQuery = ref('')
 const useSSML = ref(false)
 const testText = ref('Hello, my name is AI Assistant')
@@ -54,14 +57,57 @@ const audioUrl = ref('')
 const audioPlayer = ref<HTMLAudioElement | null>(null)
 const errorMessage = ref('')
 
+// Sync OpenAI Compatible model and voice from provider config
+function syncOpenAICompatibleSettings() {
+  if (activeSpeechProvider.value !== 'openai-compatible-audio-speech')
+    return
+
+  const providerConfig = providersStore.getProviderConfig(activeSpeechProvider.value)
+  // Sync model from provider config (override any existing value from previous provider)
+  if (providerConfig?.model) {
+    activeSpeechModel.value = providerConfig.model as string
+  }
+  else {
+    // If no model in provider config, use default
+    activeSpeechModel.value = 'tts-1'
+  }
+  // Sync voice from provider config (override any existing value from previous provider)
+  // Use updateCustomVoiceName to ensure proper reactivity
+  if (providerConfig?.voice) {
+    activeSpeechVoiceId.value = providerConfig.voice as string
+    updateCustomVoiceName(providerConfig.voice as string)
+  }
+  else {
+    // If no voice in provider config, use default
+    activeSpeechVoiceId.value = 'alloy'
+    updateCustomVoiceName('alloy')
+  }
+}
+
 onMounted(async () => {
   await providersStore.loadModelsForConfiguredProviders()
   await speechStore.loadVoicesForProvider(activeSpeechProvider.value)
+  syncOpenAICompatibleSettings()
 })
 
-watch(activeSpeechProvider, async () => {
+watch(activeSpeechProvider, async (newProvider, oldProvider) => {
   await providersStore.loadModelsForConfiguredProviders()
-  await speechStore.loadVoicesForProvider(activeSpeechProvider.value)
+  await speechStore.loadVoicesForProvider(newProvider)
+
+  // Reset model and voice when switching providers (but not on initial load)
+  if (oldProvider !== undefined && oldProvider !== newProvider) {
+    activeSpeechModel.value = ''
+    activeSpeechVoiceId.value = ''
+    activeSpeechVoice.value = undefined
+  }
+
+  syncOpenAICompatibleSettings()
+})
+
+watch(activeSpeechModel, async () => {
+  if (activeSpeechProvider.value) {
+    await speechStore.loadVoicesForProvider(activeSpeechProvider.value)
+  }
 })
 
 // Function to generate speech
@@ -72,16 +118,6 @@ async function generateTestSpeech() {
   if (useSSML.value && !ssmlText.value.trim())
     return
 
-  if (!activeSpeechModel.value) {
-    console.error('No model selected')
-    return
-  }
-
-  if (!activeSpeechVoice.value) {
-    console.error('No voice selected')
-    return
-  }
-
   const provider = await providersStore.getProviderInstance(activeSpeechProvider.value) as SpeechProviderWithExtraOptions<string, any>
   if (!provider) {
     console.error('Failed to initialize speech provider')
@@ -89,6 +125,37 @@ async function generateTestSpeech() {
   }
 
   const providerConfig = providersStore.getProviderConfig(activeSpeechProvider.value)
+
+  // For OpenAI Compatible providers, fall back to provider config for model and voice
+  let model = activeSpeechModel.value
+  let voice = activeSpeechVoice.value
+
+  if (activeSpeechProvider.value === 'openai-compatible-audio-speech') {
+    if (!model && providerConfig?.model) {
+      model = providerConfig.model as string
+    }
+    if (!voice && providerConfig?.voice) {
+      voice = {
+        id: providerConfig.voice as string,
+        name: providerConfig.voice as string,
+        description: providerConfig.voice as string,
+        previewURL: '',
+        languages: [{ code: 'en', title: 'English' }],
+        provider: activeSpeechProvider.value,
+        gender: 'neutral',
+      }
+    }
+  }
+
+  if (!model) {
+    console.error('No model selected')
+    return
+  }
+
+  if (!voice) {
+    console.error('No voice selected')
+    return
+  }
 
   isGenerating.value = true
   errorMessage.value = ''
@@ -101,12 +168,14 @@ async function generateTestSpeech() {
 
     const input = useSSML.value
       ? ssmlText.value
-      : speechStore.supportsSSML ? speechStore.generateSSML(testText.value, activeSpeechVoice.value, { ...providerConfig, pitch: pitch.value }) : testText.value
+      : ssmlEnabled.value && speechStore.supportsSSML
+        ? speechStore.generateSSML(testText.value, voice, { ...providerConfig, pitch: pitch.value })
+        : testText.value
 
     const response = await generateSpeech({
-      ...provider.speech(activeSpeechModel.value, providerConfig),
+      ...provider.speech(model, providerConfig),
       input,
-      voice: activeSpeechVoice.value.id,
+      voice: voice.id,
     })
 
     // Convert the response to a blob and create an object URL
@@ -154,6 +223,7 @@ function updateCustomVoiceName(value: string | undefined) {
     activeSpeechVoice.value = undefined
     return
   }
+
   activeSpeechVoice.value = {
     id: value,
     name: value,
@@ -165,8 +235,23 @@ function updateCustomVoiceName(value: string | undefined) {
   }
 }
 
-function updateCustomModelName(value: string) {
-  activeSpeechModel.value = value
+function updateCustomModelName(value: string | undefined) {
+  activeSpeechModel.value = value || ''
+}
+
+function handleDeleteProvider(providerId: string) {
+  if (providerId === 'speech-noop') {
+    return
+  }
+
+  if (activeSpeechProvider.value === providerId) {
+    activeSpeechProvider.value = 'speech-noop'
+    activeSpeechModel.value = ''
+    activeSpeechVoiceId.value = ''
+    activeSpeechVoice.value = undefined
+  }
+
+  providersStore.deleteProvider(providerId)
 }
 </script>
 
@@ -185,8 +270,8 @@ function updateCustomModelName(value: string) {
           </div>
           <div max-w-full>
             <fieldset
-              v-if="configuredSpeechProvidersMetadata.length > 0" flex="~ row gap-4" :style="{ 'scrollbar-width': 'none' }"
-              min-w-0 of-x-scroll scroll-smooth role="radiogroup"
+              v-if="configuredSpeechProvidersMetadata.length > 0" flex="~ row gap-4"
+              min-w-0 of-x-auto scroll-smooth role="radiogroup"
             >
               <RadioCardSimple
                 v-for="metadata in configuredSpeechProvidersMetadata"
@@ -197,7 +282,19 @@ function updateCustomModelName(value: string) {
                 :value="metadata.id"
                 :title="metadata.localizedName || 'Unknown'"
                 :description="metadata.localizedDescription"
-              />
+                @click="trackProviderClick(metadata.id, 'speech')"
+              >
+                <template #topRight>
+                  <button
+                    v-if="metadata.id !== 'speech-noop' && !metadata.id.startsWith('official-provider')"
+                    type="button"
+                    class="rounded bg-neutral-100 p-1 text-neutral-600 transition-colors dark:bg-neutral-800/60 hover:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-700/60"
+                    @click.stop.prevent="handleDeleteProvider(metadata.id)"
+                  >
+                    <div i-solar:trash-bin-trash-bold-duotone class="text-base" />
+                  </button>
+                </template>
+              </RadioCardSimple>
               <RouterLink
                 to="/settings/providers#speech"
                 border="2px solid"
@@ -232,66 +329,101 @@ function updateCustomModelName(value: string) {
         </div>
         <div>
           <!-- Model selection section -->
-          <div v-if="activeSpeechProvider && supportsModelListing">
+          <div v-if="activeSpeechProvider && activeSpeechProvider !== 'speech-noop'">
             <div flex="~ col gap-4">
               <div>
                 <h2 class="text-lg md:text-2xl">
                   {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.title') }}
                 </h2>
-                <div text="neutral-400 dark:neutral-400">
+                <div class="flex flex-col items-start gap-1 text-neutral-400 md:flex-row md:items-center md:justify-between dark:text-neutral-400">
                   <span>{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.subtitle') }}</span>
+                  <span v-if="activeSpeechModel" class="text-sm text-neutral-400 font-medium dark:text-neutral-400">{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.current_model_label') }} {{ activeSpeechModel }}</span>
                 </div>
               </div>
 
-              <!-- Loading state -->
-              <div v-if="isLoadingActiveProviderModels" class="flex items-center justify-center py-4">
-                <div class="mr-2 animate-spin">
-                  <div i-solar:spinner-line-duotone text-xl />
-                </div>
-                <span>{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.loading') }}</span>
-              </div>
-
-              <!-- Error state -->
-              <ErrorContainer
-                v-else-if="activeProviderModelError"
-                :title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.error')"
-                :error="activeProviderModelError"
-              />
-
-              <!-- No models available -->
-              <Alert v-else-if="providerModels.length === 0 && !isLoadingActiveProviderModels" type="warning">
-                <template #title>
-                  {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_models') }}
-                </template>
-                <template #content>
-                  {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_models_description') }}
-                </template>
-              </Alert>
-
-              <!-- Using the new RadioCardManySelect component -->
-              <template v-else-if="providerModels.length > 0">
-                <RadioCardManySelect
-                  v-model="activeSpeechModel"
-                  v-model:search-query="modelSearchQuery"
-                  :items="providerModels"
-                  :searchable="true"
-                  :search-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.search_placeholder')"
-                  :search-no-results-title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_search_results')"
-                  :search-no-results-description="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_search_results_description', { query: modelSearchQuery })"
-                  :search-results-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.search_results', { count: '{count}', total: '{total}' })"
-                  :custom-input-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.custom_model_placeholder')"
-                  :expand-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.expand')"
-                  :collapse-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.collapse')"
-                  @update:custom-value="updateCustomModelName"
+              <!-- Manual input for OpenAI Compatible -->
+              <div v-if="activeSpeechProvider === 'openai-compatible-audio-speech'">
+                <FieldInput
+                  :model-value="activeSpeechModel || ''"
+                  label="Model"
+                  description="Enter the TTS model to use for speech generation"
+                  placeholder="tts-1"
+                  @update:model-value="updateCustomModelName"
                 />
-              </template>
+              </div>
+
+              <!-- Model listing for other providers -->
+              <div v-else-if="supportsModelListing">
+                <!-- Loading state -->
+                <div v-if="isLoadingActiveProviderModels" class="flex items-center justify-center py-4">
+                  <div class="mr-2 animate-spin">
+                    <div i-solar:spinner-line-duotone text-xl />
+                  </div>
+                  <span>{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.loading') }}</span>
+                </div>
+
+                <!-- Error state -->
+                <template v-else-if="activeProviderModelError">
+                  <ErrorContainer
+                    :title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.error')"
+                    :error="activeProviderModelError"
+                  />
+
+                  <FieldInput
+                    :model-value="activeSpeechModel || ''"
+                    label="Model"
+                    description="Enter model name manually if model discovery fails"
+                    :placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.manual_model_placeholder')"
+                    @update:model-value="updateCustomModelName"
+                  />
+                </template>
+
+                <!-- No models available -->
+                <template v-else-if="providerModels.length === 0 && !isLoadingActiveProviderModels">
+                  <Alert type="warning">
+                    <template #title>
+                      {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_models') }}
+                    </template>
+                    <template #content>
+                      {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_models_description') }}
+                    </template>
+                  </Alert>
+
+                  <FieldInput
+                    :model-value="activeSpeechModel || ''"
+                    label="Model"
+                    description="Enter model name manually when no models are returned"
+                    :placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.manual_model_placeholder')"
+                    @update:model-value="updateCustomModelName"
+                  />
+                </template>
+
+                <!-- Using the new RadioCardManySelect component -->
+                <template v-else-if="providerModels.length > 0">
+                  <RadioCardManySelect
+                    v-model="activeSpeechModel"
+                    v-model:search-query="modelSearchQuery"
+                    :items="providerModels"
+                    :searchable="true"
+                    :search-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.search_placeholder')"
+                    :search-no-results-title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_search_results')"
+                    :search-no-results-description="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_search_results_description', { query: modelSearchQuery })"
+                    :search-results-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.search_results', { count: '{count}', total: '{total}' })"
+                    :custom-input-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.custom_model_placeholder')"
+                    :expand-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.expand')"
+                    :collapse-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.collapse')"
+                    expanded-class="mb-12"
+                    @update:custom-value="updateCustomModelName"
+                  />
+                </template>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Voice Configuration Section -->
-      <div v-if="activeSpeechProvider">
+      <div v-if="activeSpeechProvider && activeSpeechProvider !== 'speech-noop'">
         <div flex="~ col gap-4">
           <div>
             <h2 class="text-lg text-neutral-500 md:text-2xl dark:text-neutral-400">
@@ -326,15 +458,21 @@ function updateCustomModelName(value: string) {
           </div>
 
           <!-- Error state -->
-          <!-- Voice selection with RadioCardManySelect -->
+          <!-- Voice selection with RadioCardManySelect (skip for OpenAI Compatible) -->
           <div
-            v-else-if="availableVoices[activeSpeechProvider] && availableVoices[activeSpeechProvider].length > 0"
+            v-else-if="activeSpeechProvider !== 'openai-compatible-audio-speech' && availableVoices[activeSpeechProvider] && availableVoices[activeSpeechProvider].length > 0"
             class="space-y-6"
           >
             <VoiceCardManySelect
               v-model:search-query="voiceSearchQuery"
               v-model:voice-id="activeSpeechVoiceId"
+              :show-visualizer="false"
               :voices="availableVoices[activeSpeechProvider]?.filter(voice => {
+                // If no model is selected, show all voices
+                if (!activeSpeechModel) {
+                  return true
+                }
+                // If a model is selected, filter by compatibility
                 return !voice.compatibleModels || voice.compatibleModels.includes(activeSpeechModel)
               }).map(voice => ({
                 id: voice.id,
@@ -399,16 +537,17 @@ function updateCustomModelName(value: string) {
             />
           </div>
 
-          <!-- Manual voice input when no voices are available -->
+          <!-- Manual voice input when no voices are available or for OpenAI Compatible -->
           <div
-            v-if="!availableVoices[activeSpeechProvider] || availableVoices[activeSpeechProvider].length === 0"
+            v-if="activeSpeechProvider === 'openai-compatible-audio-speech' || !availableVoices[activeSpeechProvider] || availableVoices[activeSpeechProvider].length === 0"
             class="mt-2 space-y-6"
           >
             <FieldInput
               type="text"
+              :model-value="activeSpeechVoiceId || ''"
               label="Voice Name"
               description="Enter the voice name for your custom voice"
-              placeholder="Enter voice name (e.g., 'Rachel', 'Josh')"
+              placeholder="Enter voice name (e.g., 'alloy', 'echo')"
               @update:model-value="updateCustomVoiceName"
             />
 
@@ -518,6 +657,8 @@ function updateCustomModelName(value: string) {
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: settings.pages.modules.speech.title
+  subtitleKey: settings.title
   stageTransition:
     name: slide
 </route>

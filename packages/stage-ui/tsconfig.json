@@ -4,6 +4,7 @@
     "jsx": "preserve",
     "lib": [
       "DOM",
+      "DOM.AsyncIterable",
       "ESNext"
     ],
     "module": "ESNext",
@@ -13,7 +14,8 @@
       "vitest",
       "vite/client",
       "unplugin-info/client",
-      "@types/audioworklet"
+      "@types/audioworklet",
+      "@webgpu/types"
     ],
     "allowJs": true,
     "strict": true,

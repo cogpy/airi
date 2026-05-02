@@ -289,5 +289,6 @@ export function runAllExamples() {
   console.log('All examples completed!');
 }
 
-// Run unconditionally when executed as a script via tsx/ts-node
+// Run unconditionally when executed as a script (e.g. via `tsx src/examples.ts`).
+// This file is a standalone script and is not imported by other modules.
 runAllExamples();

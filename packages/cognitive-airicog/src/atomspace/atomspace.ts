@@ -252,7 +252,7 @@ export class AtomSpace {
   patternMatch(pattern: AtomPattern): Array<{ atom: Atom; bindings: Map<string, string> }> {
     const results: Array<{ atom: Atom; bindings: Map<string, string> }> = [];
 
-    for (const [id, atom] of this.atoms) {
+    for (const [, atom] of this.atoms) {
       const bindings = new Map<string, string>();
 
       if (this.matchesPatternWithBindings(atom, pattern, bindings)) {

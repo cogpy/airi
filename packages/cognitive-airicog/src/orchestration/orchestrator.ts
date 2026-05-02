@@ -445,7 +445,7 @@ export class CognitiveOrchestrator {
     const now = Date.now();
     let gcCount = 0;
 
-    for (const [agentId, agent] of this.agents) {
+    for (const [, agent] of this.agents) {
       const idleTime = now - agent.lastActivity;
 
       if (idleTime > this.config.idleTimeout && agent.status === 'active') {

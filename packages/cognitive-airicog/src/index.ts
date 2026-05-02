@@ -14,6 +14,11 @@
  */
 
 // AtomSpace - Knowledge Representation
+import { createAtomSpace } from './atomspace/atomspace';
+import { createECAN, createRelevanceRealization } from './attention/ecan';
+import { createPLN } from './reasoning/pln';
+import { createOrchestrator } from './orchestration/orchestrator';
+
 export {
   AtomSpace,
   createAtomSpace,
@@ -111,11 +116,6 @@ export function createAiriCog(config?: {
   enableAutoUpdate?: boolean;
   maxAgents?: number;
 }) {
-  const { createAtomSpace } = require('./atomspace/atomspace');
-  const { createECAN, createRelevanceRealization } = require('./attention/ecan');
-  const { createPLN } = require('./reasoning/pln');
-  const { createOrchestrator } = require('./orchestration/orchestrator');
-
   const atomSpace = createAtomSpace({
     name: config?.name ?? 'airicog',
     enableAttentionDecay: config?.enableAttentionDecay ?? false,

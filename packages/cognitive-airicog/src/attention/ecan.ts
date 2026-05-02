@@ -6,7 +6,7 @@
  */
 
 import type { AtomSpace } from '../atomspace/atomspace';
-import type { Atom, AttentionValue, Link, LinkType } from '../atomspace/types';
+import type { Atom, Link, LinkType } from '../atomspace/types';
 
 /**
  * ECAN Configuration
@@ -367,8 +367,7 @@ export class RelevanceRealization {
    * Determine relevance of atoms to a given context
    */
   realizeRelevance(
-    contextAtomIds: string[],
-    queryPattern?: { nodeType?: string; linkType?: string }
+    contextAtomIds: string[]
   ): Map<string, number> {
     const relevanceScores = new Map<string, number>();
 

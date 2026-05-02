@@ -6,7 +6,7 @@
  */
 
 import type { AtomSpace } from '../atomspace/atomspace';
-import type { Atom, Link, LinkType, Node, TruthValue } from '../atomspace/types';
+import type { Atom, Link, TruthValue } from '../atomspace/types';
 import { reviseTruthValues } from '../atomspace/types';
 
 /**

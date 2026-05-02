@@ -5,15 +5,13 @@
  */
 
 import { createAtomSpace } from './atomspace/atomspace';
-import { createECAN, createRelevanceRealization } from './attention/ecan';
+import { createECAN } from './attention/ecan';
 import { createPLN } from './reasoning/pln';
 import { createOrchestrator } from './orchestration/orchestrator';
 import {
   initializeKernel,
   selfGenerate,
   selfOptimize,
-  reproduce,
-  evaluateFitness,
   runOntogenesis,
   getExpressedGenes,
 } from './ontogenesis/kernel';
@@ -38,8 +36,8 @@ export function exampleAtomSpace() {
   console.log(`  ${aiCharacter.name} (${aiCharacter.type})`);
 
   // Create inheritance relationships
-  const inheritVTuber = atomSpace.addLink('InheritanceLink', [melody.id, virtualTuber.id]);
-  const inheritAI = atomSpace.addLink('InheritanceLink', [melody.id, aiCharacter.id]);
+  atomSpace.addLink('InheritanceLink', [melody.id, virtualTuber.id]);
+  atomSpace.addLink('InheritanceLink', [melody.id, aiCharacter.id]);
 
   console.log('\nCreated links:');
   console.log(`  Melody -> VirtualTuber (Inheritance)`);
@@ -291,7 +289,5 @@ export function runAllExamples() {
   console.log('All examples completed!');
 }
 
-// Run if called directly
-if (typeof require !== 'undefined' && require.main === module) {
-  runAllExamples();
-}
+// Run unconditionally when executed as a script via tsx/ts-node
+runAllExamples();

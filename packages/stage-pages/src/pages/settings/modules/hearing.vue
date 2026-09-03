@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import workletUrl from '@proj-airi/stage-ui/workers/vad/process.worklet?worker&url'
-
-import { Alert, Button, ErrorContainer, LevelMeter, RadioCardManySelect, RadioCardSimple, TestDummyMarker, ThresholdMeter, TimeSeriesChart } from '@proj-airi/stage-ui/components'
-import { useAudioAnalyzer, useAudioRecorder } from '@proj-airi/stage-ui/composables'
-import { useVAD } from '@proj-airi/stage-ui/stores/ai/models/vad'
+import { errorMessageFrom } from '@moeru/std'
+import { Alert, ErrorContainer, LevelMeter, RadioCardManySelect, RadioCardSimple, TestDummyMarker, ThresholdMeter, TimeSeriesChart } from '@proj-airi/stage-ui/components'
+import { useAnalytics, useAudioAnalyzer, useHearingPlaygroundSegments, useVoiceInputSession } from '@proj-airi/stage-ui/composables'
+import { hearingProviderViewContextKey } from '@proj-airi/stage-ui/libs'
 import { useAudioContext } from '@proj-airi/stage-ui/stores/audio'
-import { useHearingSpeechInputPipeline, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
-import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
+import { CONFIDENCE_THRESHOLD_DISABLED, useHearingSpeechInputPipeline, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
+import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
-import { FieldCheckbox, FieldRange, FieldSelect } from '@proj-airi/ui'
+import { Button, FieldCheckbox, FieldCombobox, FieldInput, FieldRange } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import HearingPlaygroundTranscripts from './components/hearing-playground-transcripts.vue'
 
 const { t } = useI18n()
 
@@ -25,52 +27,121 @@ const {
   supportsModelListing,
   transcriptionModelSearchQuery,
   activeCustomModelName,
+  autoSendEnabled,
+  autoSendDelay,
+  confidenceThreshold,
+  verboseJsonNotSupported,
 } = storeToRefs(hearingStore)
-const providersStore = useProvidersStore()
-const { configuredTranscriptionProvidersMetadata } = storeToRefs(providersStore)
+const providersStore = useProviderStore()
+const providerStore = useProviderConfigStore()
+const { moduleTranscriptionProvidersMetadata } = storeToRefs(providersStore)
 
-const { stopStream, startStream } = useSettingsAudioDevice()
-const { audioInputs, selectedAudioInput, stream } = storeToRefs(useSettingsAudioDevice())
-const { startRecord, stopRecord, onStopRecord } = useAudioRecorder(stream)
+const { trackProviderClick } = useAnalytics()
+const settingsAudioDeviceStore = useSettingsAudioDevice()
+const { askPermission, stopStream, startStream } = settingsAudioDeviceStore
+const { audioInputOptions, selectedAudioInput, stream } = storeToRefs(settingsAudioDeviceStore)
 const { startAnalyzer, stopAnalyzer, onAnalyzerUpdate, volumeLevel } = useAudioAnalyzer()
 const { audioContext } = storeToRefs(useAudioContext())
-const { transcribeForRecording } = useHearingSpeechInputPipeline()
+const hearingSpeechInputPipeline = useHearingSpeechInputPipeline()
+const {
+  transcribeForMediaStream,
+  removeStreamingTranscriptionConsumer,
+  stopStreamingTranscription,
+} = hearingSpeechInputPipeline
+const {
+  supportsStreamInput,
+  error: transcriptionPipelineError,
+} = storeToRefs(hearingSpeechInputPipeline)
+const hearingPlaygroundTranscriptionConsumerId = 'hearing-playground'
 
-const animationFrame = ref<number>()
+// This page owns one monitoring session. Setup can restart it after device or Provider changes,
+// and stop releases the recorder, Provider consumer, media stream, and analyzer in that order.
+let volumeSpeechEndTimer: ReturnType<typeof setTimeout> | undefined
 
-const error = ref<string>('')
-const isMonitoring = ref(false)
+const error = shallowRef('')
+const isMonitoring = shallowRef(false)
+const activeProviderConfig = computed(() => {
+  if (!activeTranscriptionProvider.value)
+    return undefined
+  return providerStore.providers[activeTranscriptionProvider.value]?.config
+})
+const activeProviderHearingView = computed(() => {
+  const loadView = providersStore.findProviderDefinition(activeTranscriptionProvider.value)?.views?.hearing
+  return loadView ? defineAsyncComponent(loadView) : undefined
+})
 
-const transcriptions = ref<string[]>([])
-const audios = ref<Blob[]>([])
-const audioCleanups = ref<(() => void)[]>([])
-const audioURLs = computed(() => {
-  return audios.value.map((blob) => {
-    const url = URL.createObjectURL(blob)
-    audioCleanups.value.push(() => URL.revokeObjectURL(url))
-    return url
+const {
+  current: currentTranscription,
+  segments: playgroundSegments,
+  replaceStreamingText,
+  finishStreaming,
+  startRecording,
+  finishRecording,
+  finishEmpty,
+  finishError,
+  clear: clearPlaygroundSegments,
+} = useHearingPlaygroundSegments()
+
+const useVADThreshold = shallowRef(0.6) // 0.1 - 0.9
+const useVolumeThreshold = shallowRef(10) // 1 - 80
+const useVADMinSilenceDurationMs = shallowRef(800)
+const useVADModel = shallowRef(true) // Toggle between VAD and volume-based detection
+const shouldUseStreamInput = computed(() => supportsStreamInput.value && !!stream.value)
+const sortedProviderModels = computed(() => {
+  return providerModels.value.toSorted((left, right) => {
+    if (left.id === activeTranscriptionModel.value)
+      return -1
+    if (right.id === activeTranscriptionModel.value)
+      return 1
+    return 0
   })
 })
 
-const useVADThreshold = ref(0.6) // 0.1 - 0.9
-const useVADModel = ref(true) // Toggle between VAD and volume-based detection
+function formatVADThreshold(value: number) {
+  return value.toFixed(2)
+}
+
 const {
-  init: initVAD,
-  dispose: disposeVAD,
-  isSpeech: isSpeechVAD,
+  isSpeechVAD,
   isSpeechProb,
   isSpeechHistory,
-  inferenceError: vadModelError,
-  start: startVAD,
-  loaded: loadedVAD,
-  loading: loadingVAD,
-} = useVAD(workletUrl, {
-  threshold: useVADThreshold,
-  onSpeechStart: () => startRecord(),
-  onSpeechEnd: () => stopRecord(),
+  vadError: vadModelError,
+  vadLoaded: loadedVAD,
+  vadLoading: loadingVAD,
+  startSegment,
+  stopSegment,
+  startAutoSegmentation,
+  stop: stopVoiceInputSession,
+} = useVoiceInputSession(stream, {
+  shouldUseStreamInput,
+  vad: {
+    threshold: useVADThreshold,
+    minSilenceDurationMs: useVADMinSilenceDurationMs,
+  },
+  volumeFallback: {
+    enabled: false,
+  },
+  onRecordingReady: ({ recording }) => {
+    if (!recording)
+      return
+
+    return startRecording(recording)
+  },
+  onTranscriptionResult: ({ metadata, text }) => {
+    finishRecording(metadata, text)
+    error.value = ''
+  },
+  onTranscriptionEmpty: ({ metadata }) => {
+    finishEmpty(metadata)
+  },
+  onTranscriptionError: ({ metadata, error: cause }) => {
+    const message = errorMessageFrom(cause) ?? t('settings.pages.modules.hearing.sections.section.playground.transcription-failed')
+    finishError(metadata, message)
+    error.value = message
+  },
 })
 
-const isSpeechVolume = ref(false) // Volume-based speaking detection
+const isSpeechVolume = shallowRef(false) // Volume-based speaking detection
 const isSpeech = computed(() => {
   if (useVADModel.value && loadedVAD.value) {
     return isSpeechVAD.value
@@ -83,7 +154,7 @@ async function setupAudioMonitoring() {
   try {
     if (!selectedAudioInput.value) {
       console.warn('No audio input device selected')
-      return
+      return false
     }
 
     await stopAudioMonitoring()
@@ -91,7 +162,17 @@ async function setupAudioMonitoring() {
     await startStream()
     if (!stream.value) {
       console.warn('No audio stream available')
-      return
+      return false
+    }
+
+    if (supportsStreamInput.value) {
+      // The Hearing pipeline owns speech segmentation and the provider session.
+      // The page VAD below only drives the visualization for streaming providers.
+      await transcribeForMediaStream(stream.value, {
+        consumerId: hearingPlaygroundTranscriptionConsumerId,
+        onSpeechEnd: finishStreaming,
+        onTranscriptionUpdate: replaceStreamingText,
+      })
     }
 
     const source = audioContext.value.createMediaStreamSource(stream.value)
@@ -100,41 +181,46 @@ async function setupAudioMonitoring() {
     const analyzer = startAnalyzer(audioContext.value)
     onAnalyzerUpdate((volumeLevel) => {
       if (!useVADModel.value || !loadedVAD.value) {
-        isSpeechVolume.value = volumeLevel > useVADThreshold.value
+        isSpeechVolume.value = volumeLevel > useVolumeThreshold.value
       }
     })
     if (analyzer)
       source.connect(analyzer)
 
     if (useVADModel.value) {
-      await initVAD()
-      await startVAD(stream.value)
+      await startAutoSegmentation()
     }
+
+    error.value = ''
+    return true
   }
-  catch (error) {
-    console.error('Error setting up audio monitoring:', error)
-    vadModelError.value = error instanceof Error ? error.message : String(error)
+  catch (cause) {
+    console.error('Error setting up audio monitoring:', cause)
+    error.value = errorMessageFrom(cause) ?? t('settings.pages.modules.hearing.sections.section.playground.transcription-failed')
+    return false
   }
 }
 
-async function stopAudioMonitoring() {
-  if (animationFrame.value) { // Stop animation frame
-    cancelAnimationFrame(animationFrame.value)
-    animationFrame.value = undefined
+async function stopAudioMonitoring(disposeProviderId = activeTranscriptionProvider.value) {
+  if (volumeSpeechEndTimer) {
+    clearTimeout(volumeSpeechEndTimer)
+    volumeSpeechEndTimer = undefined
   }
+
+  await stopVoiceInputSession({ flushActiveRecording: false })
+  removeStreamingTranscriptionConsumer(hearingPlaygroundTranscriptionConsumerId)
+  await stopStreamingTranscription(true, disposeProviderId)
   if (stream.value) { // Stop media stream
     stopStream()
   }
 
   stopAnalyzer()
-  disposeVAD()
 }
 
 // Monitoring toggle
 async function toggleMonitoring() {
   if (!isMonitoring.value) {
-    await setupAudioMonitoring()
-    isMonitoring.value = true
+    isMonitoring.value = await setupAudioMonitoring()
   }
   else {
     await stopAudioMonitoring()
@@ -169,31 +255,134 @@ const speakingIndicatorClass = computed(() => {
   }
 })
 
-function updateCustomModelName(value: string) {
-  activeCustomModelName.value = value
+function updateCustomModelName(value: string | undefined) {
+  const modelValue = value || ''
+  activeCustomModelName.value = modelValue
+  activeTranscriptionModel.value = modelValue
 }
 
-onStopRecord(async (recording) => {
-  if (recording && recording.size > 0)
-    audios.value.push(recording)
+async function updateActiveProviderConfig(patch: Record<string, unknown>) {
+  const providerId = activeTranscriptionProvider.value
+  if (!providerId)
+    throw new Error('No transcription Provider is active.')
 
-  const res = await transcribeForRecording(recording)
+  const shouldRestartMonitoring = isMonitoring.value
 
-  if (res)
-    transcriptions.value.push(res)
+  try {
+    await providersStore.initializeProvider(providerId)
+    const provider = providerStore.getProvider(providerId)
+    if (!provider)
+      throw new Error('The transcription Provider configuration is unavailable.')
+
+    const update = providerStore.updateProviderConfig(
+      providerId,
+      { ...provider.config, ...patch },
+      'configured',
+    )
+
+    if (shouldRestartMonitoring) {
+      isMonitoring.value = false
+      await stopAudioMonitoring(providerId)
+    }
+
+    await update
+    await providersStore.disposeProviderInstance(providerId)
+    clearPlaygroundSegments()
+
+    // The selected Provider can change while a remote configuration save is pending.
+    // Only restart the monitoring session for the Provider that requested the save.
+    if (shouldRestartMonitoring && activeTranscriptionProvider.value === providerId)
+      isMonitoring.value = await setupAudioMonitoring()
+  }
+  catch (cause) {
+    error.value = errorMessageFrom(cause) ?? t('settings.pages.providers.catalog.edit.config.save-error')
+    throw cause
+  }
+}
+
+provide(hearingProviderViewContextKey, {
+  providerConfig: activeProviderConfig,
+  updateProviderConfig: updateActiveProviderConfig,
 })
 
-watch(selectedAudioInput, async () => isMonitoring.value && await setupAudioMonitoring())
+// Sync OpenAI Compatible model from provider config
+function syncOpenAICompatibleSettings() {
+  if (activeTranscriptionProvider.value !== 'openai-compatible-audio-transcription')
+    return
+
+  const providerConfig = providerStore.getProviderConfig(activeTranscriptionProvider.value)
+  // Always sync model from provider config (override any existing value from previous provider)
+  if (providerConfig?.model) {
+    activeTranscriptionModel.value = providerConfig.model as string
+    updateCustomModelName(providerConfig.model as string)
+  }
+  else {
+    // If no model in provider config, use default
+    const defaultModel = 'whisper-1'
+    activeTranscriptionModel.value = defaultModel
+    updateCustomModelName(defaultModel)
+  }
+}
+
+watch([selectedAudioInput, useVADModel], async () => {
+  if (!isMonitoring.value)
+    return
+
+  isMonitoring.value = await setupAudioMonitoring()
+})
+
+watch(isSpeechVolume, (speaking) => {
+  if (useVADModel.value)
+    return
+
+  if (volumeSpeechEndTimer) {
+    clearTimeout(volumeSpeechEndTimer)
+    volumeSpeechEndTimer = undefined
+  }
+
+  if (speaking) {
+    void startSegment('volume')
+    return
+  }
+
+  volumeSpeechEndTimer = setTimeout(() => {
+    volumeSpeechEndTimer = undefined
+    if (!useVADModel.value && !isSpeechVolume.value)
+      void stopSegment('volume')
+  }, useVADMinSilenceDurationMs.value)
+})
+
+watch(activeTranscriptionProvider, async (provider, previousProvider) => {
+  const shouldRestartMonitoring = isMonitoring.value
+
+  if (shouldRestartMonitoring) {
+    isMonitoring.value = false
+    await stopAudioMonitoring(previousProvider)
+  }
+
+  clearPlaygroundSegments()
+
+  if (!provider)
+    return
+
+  await hearingStore.loadModelsForProvider(provider)
+  syncOpenAICompatibleSettings()
+
+  const models = providerModels.value
+  if (models.length > 0 && !models.some(model => model.id === activeTranscriptionModel.value))
+    activeTranscriptionModel.value = models[0].id
+
+  if (shouldRestartMonitoring)
+    isMonitoring.value = await setupAudioMonitoring()
+}, { immediate: true })
 
 onMounted(async () => {
-  await hearingStore.loadModelsForProvider(activeTranscriptionProvider.value)
+  syncOpenAICompatibleSettings()
+  await askPermission()
 })
 
 onUnmounted(() => {
-  stopAudioMonitoring()
-  disposeVAD()
-
-  audioCleanups.value.forEach(cleanup => cleanup())
+  void stopAudioMonitoring().catch(cause => console.warn('[Hearing Module] Failed to stop playground monitoring:', cause))
 })
 </script>
 
@@ -203,14 +392,11 @@ onUnmounted(() => {
       <div flex="~ col gap-4">
         <!-- Audio Input Selection -->
         <div>
-          <FieldSelect
+          <FieldCombobox
             v-model="selectedAudioInput"
             label="Audio Input Device"
             description="Select the audio input device for your hearing module."
-            :options="audioInputs.map(input => ({
-              label: input.label || input.deviceId,
-              value: input.deviceId,
-            }))"
+            :options="audioInputOptions"
             placeholder="Select an audio input device"
             layout="vertical"
           />
@@ -232,14 +418,13 @@ onUnmounted(() => {
             See also: https://stackoverflow.com/a/33737340
           -->
             <fieldset
-              v-if="configuredTranscriptionProvidersMetadata.length > 0"
+              v-if="moduleTranscriptionProvidersMetadata.length > 0"
               flex="~ row gap-4"
-              :style="{ 'scrollbar-width': 'none' }"
-              min-w-0 of-x-scroll scroll-smooth
+              min-w-0 overflow-x-auto scroll-smooth
               role="radiogroup"
             >
               <RadioCardSimple
-                v-for="metadata in configuredTranscriptionProvidersMetadata"
+                v-for="metadata in moduleTranscriptionProvidersMetadata"
                 :id="metadata.id"
                 :key="metadata.id"
                 v-model="activeTranscriptionProvider"
@@ -247,6 +432,7 @@ onUnmounted(() => {
                 :value="metadata.id"
                 :title="metadata.localizedName || 'Unknown'"
                 :description="metadata.localizedDescription"
+                @click="trackProviderClick(metadata.id, 'hearing')"
               />
               <RouterLink
                 to="/settings/providers#transcription"
@@ -285,20 +471,31 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <component
+          :is="activeProviderHearingView"
+          v-if="activeProviderHearingView"
+        />
+
         <!-- Model selection section -->
-        <div v-if="activeTranscriptionProvider && supportsModelListing">
+        <div v-if="activeTranscriptionProvider">
           <div flex="~ col gap-4">
             <div>
               <h2 class="text-lg md:text-2xl">
                 {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.title') }}
               </h2>
-              <div text="neutral-400 dark:neutral-400">
-                <span>{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.subtitle') }}</span>
+              <div class="flex flex-col items-start gap-1 text-neutral-400 md:flex-row md:items-center md:justify-between dark:text-neutral-400">
+                <span v-if="supportsModelListing && providerModels.length > 0">
+                  {{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.subtitle') }}
+                </span>
+                <span v-else>
+                  Enter the transcription model to use (e.g., 'whisper-1', 'gpt-4o-transcribe')
+                </span>
+                <span v-if="activeTranscriptionModel" class="text-sm text-neutral-400 font-medium dark:text-neutral-400">{{ t('settings.pages.modules.consciousness.sections.section.provider-model-selection.current_model_label') }} {{ activeTranscriptionModel }}</span>
               </div>
             </div>
 
             <!-- Loading state -->
-            <div v-if="isLoadingActiveProviderModels" class="flex items-center justify-center py-4">
+            <div v-if="isLoadingActiveProviderModels && supportsModelListing" class="flex items-center justify-center py-4">
               <div class="mr-2 animate-spin">
                 <div i-solar:spinner-line-duotone text-xl />
               </div>
@@ -307,14 +504,26 @@ onUnmounted(() => {
 
             <!-- Error state -->
             <ErrorContainer
-              v-else-if="activeProviderModelError"
+              v-else-if="activeProviderModelError && supportsModelListing"
               :title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.error')"
               :error="activeProviderModelError"
             />
 
-            <!-- No models available -->
+            <!-- Manual input for providers without model listing or when no models are available -->
+            <div
+              v-else-if="!supportsModelListing || (activeTranscriptionProvider === 'openai-compatible-audio-transcription' && providerModels.length === 0 && !isLoadingActiveProviderModels)"
+              class="mt-2"
+            >
+              <FieldInput
+                :model-value="activeTranscriptionModel || activeCustomModelName || ''"
+                placeholder="whisper-1"
+                @update:model-value="updateCustomModelName"
+              />
+            </div>
+
+            <!-- No models available (for other providers with model listing but no models) -->
             <Alert
-              v-else-if="providerModels.length === 0 && !isLoadingActiveProviderModels"
+              v-else-if="providerModels.length === 0 && !isLoadingActiveProviderModels && supportsModelListing"
               type="warning"
             >
               <template #title>
@@ -325,12 +534,12 @@ onUnmounted(() => {
               </template>
             </Alert>
 
-            <!-- Using the new RadioCardManySelect component -->
-            <template v-else-if="providerModels.length > 0">
+            <!-- Using the new RadioCardManySelect component for providers with models -->
+            <template v-else-if="providerModels.length > 0 && supportsModelListing">
               <RadioCardManySelect
                 v-model="activeTranscriptionModel"
                 v-model:search-query="transcriptionModelSearchQuery"
-                :items="providerModels.sort((a, b) => a.id === activeTranscriptionModel ? -1 : b.id === activeTranscriptionModel ? 1 : 0)"
+                :items="sortedProviderModels"
                 :searchable="true"
                 :search-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.search_placeholder')"
                 :search-no-results-title="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.no_search_results')"
@@ -339,39 +548,111 @@ onUnmounted(() => {
                 :custom-input-placeholder="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.custom_model_placeholder')"
                 :expand-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.expand')"
                 :collapse-button-text="t('settings.pages.modules.consciousness.sections.section.provider-model-selection.collapse')"
+                expanded-class="mb-12"
                 @update:custom-value="updateCustomModelName"
               />
             </template>
+          </div>
+        </div>
+
+        <!-- Confidence threshold (only for non-streaming providers) -->
+        <div v-if="!supportsStreamInput" class="border-t border-neutral-200 pt-4 dark:border-neutral-700">
+          <div class="mb-4">
+            <h2 class="text-lg text-neutral-500 md:text-2xl dark:text-neutral-500">
+              {{ t('settings.pages.modules.hearing.sections.section.confidence-threshold.title') }}
+            </h2>
+            <div text="neutral-400 dark:neutral-400">
+              {{ t('settings.pages.modules.hearing.sections.section.confidence-threshold.description') }}
+            </div>
+          </div>
+          <FieldRange
+            v-model="confidenceThreshold"
+            :min="CONFIDENCE_THRESHOLD_DISABLED"
+            :max="0"
+            :step="0.1"
+            :format-value="value => value <= CONFIDENCE_THRESHOLD_DISABLED ? t('settings.pages.modules.hearing.sections.section.confidence-threshold.disabled') : value.toFixed(1)"
+          />
+          <div v-if="confidenceThreshold > CONFIDENCE_THRESHOLD_DISABLED" class="mt-2 text-xs text-neutral-400 dark:text-neutral-500">
+            {{ t('settings.pages.modules.hearing.sections.section.confidence-threshold.verbose-json-note') }}
+          </div>
+          <div v-if="verboseJsonNotSupported" class="mt-2 flex items-center gap-1.5 text-xs text-amber-500 dark:text-amber-400">
+            <div i-solar:warning-circle-line-duotone class="shrink-0" />
+            {{ t('settings.pages.modules.hearing.sections.section.confidence-threshold.verbose-json-unsupported') }}
+          </div>
+        </div>
+
+        <!-- Auto-send settings -->
+        <div class="border-t border-neutral-200 pt-4 dark:border-neutral-700">
+          <div class="mb-4">
+            <h2 class="text-lg text-neutral-500 md:text-2xl dark:text-neutral-500">
+              Auto-send Settings
+            </h2>
+            <div text="neutral-400 dark:neutral-400">
+              Configure automatic sending of transcribed text to chat
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <FieldCheckbox
+              v-model="autoSendEnabled"
+              label="Auto-send transcribed text"
+              description="Automatically send transcribed text to chat after a delay. This may consume tokens, so disable if you want to manually review and edit transcriptions before sending."
+            />
+
+            <FieldRange
+              v-if="autoSendEnabled"
+              v-model="autoSendDelay"
+              label="Auto-send delay"
+              description="Delay in milliseconds before automatically sending transcribed text (0 = send immediately, recommended: 1000-3000ms)"
+              :min="0"
+              :max="10000"
+              :step="100"
+              :format-value="value => value === 0 ? 'Immediate' : `${(value / 1000).toFixed(1)}s`"
+            />
           </div>
         </div>
       </div>
     </div>
 
     <div flex="~ col gap-6" class="w-full md:w-[60%]">
+      <!-- Audio Monitoring Section -->
       <div w-full rounded-xl>
-        <h2 class="mb-4 text-lg text-neutral-500 md:text-2xl dark:text-neutral-400" w-full>
+        <h2 :class="['mb-4', 'text-lg text-neutral-500 md:text-2xl dark:text-neutral-400']" w-full>
           <div class="inline-flex items-center gap-4">
             <TestDummyMarker />
             <div>
-              {{ t('settings.pages.providers.provider.elevenlabs.playground.title') }}
+              {{ t('settings.pages.modules.hearing.sections.section.playground.title') }}
             </div>
           </div>
         </h2>
 
-        <ErrorContainer v-if="error" title="Error occurred" :error="error" mb-4 />
+        <p :class="['mb-4', 'text-sm text-neutral-400 dark:text-neutral-500']">
+          {{ t('settings.pages.modules.hearing.sections.section.playground.description') }}
+        </p>
 
-        <Button class="mb-4" w-full @click="toggleMonitoring">
-          {{ isMonitoring ? 'Stop Monitoring' : 'Start Monitoring' }}
+        <ErrorContainer
+          v-if="error || transcriptionPipelineError"
+          :title="t('settings.pages.modules.hearing.sections.section.playground.error-title')"
+          :error="error || transcriptionPipelineError"
+          class="mb-4"
+        />
+
+        <Button
+          :class="['mb-4', 'w-full']"
+          data-testid="hearing-playground-monitor-toggle"
+          :disabled="!activeTranscriptionProvider || !selectedAudioInput"
+          @click="toggleMonitoring"
+        >
+          {{ isMonitoring
+            ? t('settings.pages.modules.hearing.sections.section.playground.stop')
+            : t('settings.pages.modules.hearing.sections.section.playground.start') }}
         </Button>
 
-        <div>
-          <div v-for="(audio, index) in audioURLs" :key="index" class="mb-2">
-            <audio :src="audio" controls class="w-full" />
-            <div v-if="transcriptions[index]" class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-              {{ transcriptions[index] }}
-            </div>
-          </div>
-        </div>
+        <HearingPlaygroundTranscripts
+          :current="currentTranscription"
+          :is-monitoring="isMonitoring"
+          :segments="playgroundSegments"
+        />
 
         <div flex="~ col gap-4">
           <div class="space-y-4">
@@ -400,13 +681,23 @@ onUnmounted(() => {
                   :min="0.1"
                   :max="0.9"
                   :step="0.05"
-                  :format-value="value => `${(value * 100).toFixed(0)}%`"
+                  :format-value="formatVADThreshold"
+                />
+
+                <FieldRange
+                  v-model="useVADMinSilenceDurationMs"
+                  label="Pause Before Stop"
+                  description="How long silence must last before speech is considered finished"
+                  :min="200"
+                  :max="1500"
+                  :step="50"
+                  :format-value="value => `${value} ms`"
                 />
               </div>
 
               <div v-else class="space-y-3">
                 <FieldRange
-                  v-model="useVADThreshold"
+                  v-model="useVolumeThreshold"
                   label="Sensitivity"
                   description="Adjust the threshold for speech detection"
                   :min="1"
@@ -474,6 +765,7 @@ onUnmounted(() => {
                 active-legend-label="Voice detected"
                 inactive-legend-label="Silence"
                 threshold-label="Speech threshold"
+                :format-threshold="formatVADThreshold"
               />
             </div>
           </div>
@@ -486,6 +778,8 @@ onUnmounted(() => {
 <route lang="yaml">
 meta:
   layout: settings
+  titleKey: settings.pages.modules.hearing.title
+  subtitleKey: settings.title
   stageTransition:
     name: slide
 </route>

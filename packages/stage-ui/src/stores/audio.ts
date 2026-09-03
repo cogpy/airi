@@ -1,6 +1,5 @@
-import { useDevicesList, useUserMedia } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 
 function calculateVolumeWithLinearNormalize(analyser: AnalyserNode) {
   const dataBuffer = new Uint8Array(analyser.frequencyBinCount)
@@ -68,55 +67,11 @@ function calculateVolume(analyser: AnalyserNode, mode: 'linear' | 'minmax' = 'li
 export const useAudioContext = defineStore('audio-context', () => {
   const audioContext = shallowRef<AudioContext>(new AudioContext())
 
-  onUnmounted(async () => {
-    // Close audio context
-    if (audioContext)
-      await audioContext.value.suspend()
-  })
-
   return {
     audioContext,
     calculateVolume,
   }
 })
-
-export function useAudioDevice(requestPermission: boolean = false) {
-  const devices = useDevicesList({ constraints: { audio: true }, requestPermissions: requestPermission })
-  const audioInputs = computed(() => devices.audioInputs.value)
-  const selectedAudioInput = ref<string>(devices.audioInputs.value.find(device => device.deviceId === 'default')?.deviceId || '')
-  const deviceConstraints = computed<MediaStreamConstraints>(() => ({ audio: { deviceId: { exact: selectedAudioInput.value }, autoGainControl: true, echoCancellation: true, noiseSuppression: true } }))
-  const { stream, stop: stopStream, start: startStream } = useUserMedia({ constraints: deviceConstraints, enabled: false, autoSwitch: true })
-
-  watch(audioInputs, () => {
-    if (!selectedAudioInput.value && audioInputs.value.length > 0) {
-      selectedAudioInput.value = audioInputs.value.find(input => input.deviceId === 'default')?.deviceId || audioInputs.value[0].deviceId
-    }
-  })
-
-  function askPermission() {
-    devices.ensurePermissions()
-      .then(() => nextTick())
-      .then(() => {
-        if (audioInputs.value.length > 0 && !selectedAudioInput.value) {
-          selectedAudioInput.value = audioInputs.value.find(input => input.deviceId === 'default')?.deviceId || audioInputs.value[0].deviceId
-        }
-      })
-      .catch((error) => {
-        console.error('Error ensuring permissions:', error)
-      })
-  }
-
-  return {
-    audioInputs,
-    selectedAudioInput,
-    stream,
-    deviceConstraints,
-
-    askPermission,
-    startStream,
-    stopStream,
-  }
-}
 
 export const useSpeakingStore = defineStore('character-speaking', () => {
   const nowSpeakingAvatarBorderOpacityMin = 30

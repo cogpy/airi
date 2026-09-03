@@ -1,24 +1,26 @@
 <script setup lang="ts">
+import type { ServerEvent, ServerEvents } from '@proj-airi/stage-ui/libs/providers/providers/aliyun-nls'
 import type { HearingTranscriptionResult } from '@proj-airi/stage-ui/stores/modules/hearing'
-import type { ServerEvent, ServerEvents } from '@proj-airi/stage-ui/stores/providers/aliyun'
 import type { RemovableRef } from '@vueuse/core'
-import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/shared-providers'
+import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
 import vadWorkletUrl from '@proj-airi/stage-ui/workers/vad/process.worklet?worker&url'
 
+import { toPCM16FromFloat32 } from '@proj-airi/audio/encoding'
+import { errorMessageFromValue } from '@proj-airi/stage-shared'
 import {
   Alert,
-  Button,
   ProviderBasicSettings,
   ProviderSettingsContainer,
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { useProviderValidation } from '@proj-airi/stage-ui/composables/use-provider-validation'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
-import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
-import { FieldInput, FieldSelect } from '@proj-airi/ui'
+import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
+import { Button, FieldCombobox, FieldInput } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { computed, onBeforeUnmount, reactive, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
 
 const providerId = 'aliyun-nls-transcription'
 const defaultModel = 'aliyun-nls-v1'
@@ -34,10 +36,13 @@ const regionOptions = [
 ]
 
 const hearingStore = useHearingStore()
-const providersStore = useProvidersStore()
-const { providers } = storeToRefs(providersStore) as { providers: RemovableRef<Record<string, any>> }
+const providersStore = useProviderStore()
+const providerStore = useProviderConfigStore()
+const { configs: providers } = storeToRefs(providerStore) as { configs: RemovableRef<Record<string, any>> }
 
-providersStore.initializeProvider(providerId)
+onMounted(async () => {
+  await providersStore.initializeProvider(providerId)
+})
 
 const credentials = reactive({
   get accessKeyId() {
@@ -116,16 +121,8 @@ const {
   isValid,
   validationMessage,
   handleResetSettings,
+  forceValid,
 } = useProviderValidation(providerId)
-
-function float32ToInt16(buffer: Float32Array) {
-  const output = new Int16Array(buffer.length)
-  for (let i = 0; i < buffer.length; i++) {
-    const value = Math.max(-1, Math.min(1, buffer[i]))
-    output[i] = value < 0 ? value * 0x8000 : value * 0x7FFF
-  }
-  return output
-}
 
 async function initializeAudioGraph(stream: MediaStream) {
   const context = new AudioContext({
@@ -141,7 +138,7 @@ async function initializeAudioGraph(stream: MediaStream) {
     if (!buffer || !controller)
       return
 
-    const pcm16 = float32ToInt16(buffer)
+    const pcm16 = toPCM16FromFloat32(buffer)
     controller.enqueue(pcm16.buffer.slice(0))
   }
 
@@ -240,7 +237,7 @@ async function startStreaming() {
           },
           onSessionTerminated: async (error?: unknown) => {
             if (error)
-              errorMessage.value = error instanceof Error ? error.message : String(error)
+              errorMessage.value = errorMessageFromValue(error)
             isStreaming.value = false
             transcriptionAbortController.value = undefined
           },
@@ -259,7 +256,7 @@ async function startStreaming() {
     activeTranscription.value = result
     transcriptionTextPromise.value = result.text
       .catch((error) => {
-        errorMessage.value = error instanceof Error ? error.message : String(error)
+        errorMessage.value = errorMessageFromValue(error)
         throw error
       })
 
@@ -283,7 +280,7 @@ async function startStreaming() {
     isStreaming.value = true
   }
   catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    errorMessage.value = errorMessageFromValue(error)
     await stopStreaming()
   }
 }
@@ -388,7 +385,7 @@ onBeforeUnmount(async () => {
             placeholder="请输入 AppKey"
           />
 
-          <FieldSelect
+          <FieldCombobox
             v-model="credentials.region"
             label="Region"
             :options="regionOptions"
@@ -398,7 +395,16 @@ onBeforeUnmount(async () => {
 
         <Alert v-if="!isValid && isValidating === 0 && validationMessage" type="error">
           <template #title>
-            {{ t('settings.dialogs.onboarding.validationFailed') }}
+            <div class="w-full flex items-center justify-between">
+              <span>{{ t('settings.dialogs.onboarding.validationFailed') }}</span>
+              <button
+                type="button"
+                class="ml-2 rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 font-medium transition-colors dark:bg-red-800/30 hover:bg-red-200 dark:text-red-300 dark:hover:bg-red-700/40"
+                @click="forceValid"
+              >
+                {{ t('settings.pages.providers.common.continueAnyway') }}
+              </button>
+            </div>
           </template>
           <template #content>
             <div class="whitespace-pre-wrap break-all">
@@ -418,10 +424,10 @@ onBeforeUnmount(async () => {
         <div class="border border-neutral-200/80 rounded-xl bg-neutral-50/60 p-4 dark:border-neutral-700 dark:bg-neutral-900/40">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="space-x-3">
-              <Button :disabled="!canStart" variant="primary" @click="startStreaming">
+              <Button :disabled="!canStart" @click="startStreaming">
                 {{ isRecording ? 'Streaming...' : 'Start Realtime Transcription' }}
               </Button>
-              <Button :disabled="!canStop" variant="secondary" @click="stopStreaming">
+              <Button :disabled="!canStop" @click="stopStreaming">
                 Stop
               </Button>
               <Button

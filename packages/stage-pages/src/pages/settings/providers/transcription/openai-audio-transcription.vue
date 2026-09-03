@@ -1,48 +1,80 @@
 <script setup lang="ts">
-import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/shared-providers'
+import type { TranscriptionProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
 import {
   TranscriptionPlayground,
   TranscriptionProviderSettings,
 } from '@proj-airi/stage-ui/components'
 import { useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
-import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
+import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
+import { FieldCombobox } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 
 const hearingStore = useHearingStore()
-const providersStore = useProvidersStore()
-const { providers } = storeToRefs(providersStore)
+const providersStore = useProviderStore()
+const providerStore = useProviderConfigStore()
+const { configs: providers } = storeToRefs(providerStore)
 
 // Get provider metadata
 const providerId = 'openai-audio-transcription'
 const defaultModel = 'whisper-1'
 
+// Model selection
+const model = computed({
+  get: () => providers.value[providerId]?.model as string | undefined || defaultModel,
+  set: (value) => {
+    if (!providers.value[providerId])
+      providers.value[providerId] = {}
+    providers.value[providerId].model = value
+  },
+})
+
+// Load models
+const providerModels = computed(() => {
+  return providersStore.getModelsForProvider(providerId)
+})
+
+const isLoadingModels = computed(() => {
+  return providersStore.isLoadingModels[providerId] || false
+})
+
 // Check if API key is configured
 const apiKeyConfigured = computed(() => !!providers.value[providerId]?.apiKey)
 
-// Generate speech with ElevenLabs-specific parameters
+// Load models on mount
+onMounted(async () => {
+  await providersStore.loadModelsForConfiguredProviders()
+  await providersStore.fetchModelsForProvider(providerId)
+})
+
+// Generate transcription
 async function handleGenerateTranscription(file: File) {
   const provider = await providersStore.getProviderInstance<TranscriptionProviderWithExtraOptions<string, any>>(providerId)
   if (!provider) {
-    throw new Error('Failed to initialize speech provider')
+    throw new Error('Failed to initialize transcription provider')
   }
 
   // Get provider configuration
-  const providerConfig = providersStore.getProviderConfig(providerId)
+  const providerConfig = providerStore.getProviderConfig(providerId)
 
   // Get model from configuration or use default
-  const model = providerConfig.model as string | undefined || defaultModel
+  const modelToUse = providerConfig.model as string | undefined || defaultModel
 
-  // ElevenLabs doesn't need SSML conversion, but if SSML is provided, use it directly
   return await hearingStore.transcription(
     providerId,
     provider,
-    model,
+    modelToUse,
     file,
     'json',
   )
 }
+
+watch(model, async () => {
+  const providerConfig = providerStore.getProviderConfig(providerId)
+  providerConfig.model = model.value
+})
 </script>
 
 <template>
@@ -50,6 +82,17 @@ async function handleGenerateTranscription(file: File) {
     :provider-id="providerId"
     :default-model="defaultModel"
   >
+    <template #basic-settings>
+      <!-- Model selection -->
+      <FieldCombobox
+        v-model="model"
+        label="Model"
+        description="Select the transcription model to use"
+        :options="providerModels.map(m => ({ value: m.id, label: m.name }))"
+        :disabled="isLoadingModels || providerModels.length === 0"
+        placeholder="Select a model..."
+      />
+    </template>
     <template #playground>
       <TranscriptionPlayground
         :generate-transcription="handleGenerateTranscription"

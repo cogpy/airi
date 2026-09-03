@@ -1,30 +1,57 @@
 import type { BrowserWindow } from 'electron'
 
-import type { WidgetsWindowManager } from './windows/widgets'
+import type { FileLoggerHandle } from './app/file-logger'
 
-import { env, platform } from 'node:process'
+import process, { env, platform } from 'node:process'
+
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import messages from '@proj-airi/i18n/locales'
 
 import { electronApp, optimizer } from '@electron-toolkit/utils'
-import { Format, LogLevel, setGlobalFormat, setGlobalLogLevel, useLogg } from '@guiiai/logg'
-import { app, ipcMain, Menu, nativeImage, Tray } from 'electron'
-import { noop, once } from 'es-toolkit'
-import { createLoggLogger, injeca } from 'injeca'
-import { isLinux, isMacOS } from 'std-env'
+import { Format, LogLevel, setGlobalFormat, setGlobalHookPostLog, setGlobalLogLevel, useLogg } from '@guiiai/logg'
+import { createContext } from '@moeru/eventa/adapters/electron/main'
+import { hasSelectedScreenCaptureSource, initScreenCaptureForMain } from '@proj-airi/electron-screen-capture/main'
+import { app, ipcMain, session } from 'electron'
+import { noop } from 'es-toolkit'
+import { createLoggLogger, injeca, lifecycle } from 'injeca'
+import { isLinux } from 'std-env'
 
 import icon from '../../resources/icon.png?asset'
-import macOSTrayIcon from '../../resources/tray-icon-macos.png?asset'
 
 import { openDebugger, setupDebugger } from './app/debugger'
-import { emitAppBeforeQuit, emitAppReady, emitAppWindowAllClosed, onAppBeforeQuit } from './libs/bootkit/lifecycle'
+import { nullFileLoggerHandle, setupFileLogger } from './app/file-logger'
+import { resolveIsWayland } from './app/ozone'
+import { installSingleInstanceGuard } from './app/single-instance'
+import { createArtistryConfig } from './configs/artistry'
+import { createGlobalAppConfig } from './configs/global'
+import { emitAppBeforeQuit, emitAppReady, emitAppWindowAllClosed } from './libs/bootkit/lifecycle'
 import { setElectronMainDirname } from './libs/electron/location'
-import { setupChannelServer } from './services/airi/channel-server'
+import { createI18n } from './libs/i18n'
+import { setupAppleSpeechTranscriptionService } from './services/airi/apple-speech-transcription'
+import { setupServerChannel } from './services/airi/channel-server'
+import { setupGodotStageManager } from './services/airi/godot-stage'
+import { setupBuiltInServer } from './services/airi/http-server'
+import { setupMcpStdioManager } from './services/airi/mcp-servers'
+import { setupExtensionHost } from './services/airi/plugins'
+import { setupArtistryBridge } from './services/airi/widgets/artistry-bridge'
+import { setupAutoUpdater } from './services/electron/auto-updater'
+import { setupGlobalShortcutService } from './services/electron/global-shortcut'
+import { setupPermissionHandlers } from './services/electron/media-permissions'
+import { setupTray } from './tray'
+import { setupAboutWindowReusable } from './windows/about'
+import { setupBeatSync } from './windows/beat-sync'
 import { setupCaptionWindowManager } from './windows/caption'
 import { setupChatWindowReusableFunc } from './windows/chat'
-import { setupInlayWindow } from './windows/inlay'
+import { isDesktopOverlayEnabled, setupDesktopOverlayWindow } from './windows/desktop-overlay'
+import { setupDevtoolsWindow } from './windows/devtools'
+import { setupEditorWindowManager } from './windows/editor'
 import { setupMainWindow } from './windows/main'
 import { setupNoticeWindowManager } from './windows/notice'
+import { setupOnboardingWindowManager } from './windows/onboarding'
 import { setupSettingsWindowReusableFunc } from './windows/settings'
-import { toggleWindowShow } from './windows/shared/window'
+import { setupSpotlightWindowManager } from './windows/spotlight'
 import { setupWidgetsWindowManager } from './windows/widgets'
 
 // TODO: once we refactored eventa to support window-namespaced contexts,
@@ -32,12 +59,17 @@ import { setupWidgetsWindowManager } from './windows/widgets'
 // manage events within eventa's context system.
 ipcMain.setMaxListeners(100)
 
-setElectronMainDirname(__dirname)
+setElectronMainDirname(dirname(fileURLToPath(import.meta.url)))
 setGlobalFormat(Format.Pretty)
 setGlobalLogLevel(LogLevel.Log)
 setupDebugger()
 
 const log = useLogg('main').useGlobalConfig()
+
+const appUserDataPath = env.APP_USER_DATA_PATH?.trim()
+if (appUserDataPath) {
+  app.setPath('userData', appUserDataPath)
+}
 
 // Thanks to [@blurymind](https://github.com/blurymind),
 //
@@ -48,95 +80,236 @@ const log = useLogg('main').useGlobalConfig()
 // https://github.com/electron/electron/issues/41763#issuecomment-2051725363
 // https://github.com/electron/electron/issues/41763#issuecomment-3143338995
 if (isLinux) {
-  app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer')
+  // NOTICE:
+  // All enabled features must be joined into a single comma-separated string
+  // instead of calling appendSwitch('enable-features', ...) once per feature.
+  // Root cause: Chromium's commandLine stores switches by key, so each
+  // appendSwitch('enable-features', ...) call overwrites the previous value and
+  // only the last feature survives.
+  // Source: Chromium base::CommandLine behavior; see
+  // https://github.com/electron/electron/issues/41763 for the WebGPU setup this supports.
+  // Removal condition: never for the join itself; this block can be deleted once
+  // WebGPU works on Linux Electron without manual feature switches.
+  const enabledFeatures = [
+    'SharedArrayBuffer',
+  ]
+
   app.commandLine.appendSwitch('enable-unsafe-webgpu')
-  app.commandLine.appendSwitch('enable-features', 'Vulkan')
 
-  // NOTICE: we need UseOzonePlatform, WaylandWindowDecorations for working on Wayland.
-  // Partially related to https://github.com/electron/electron/issues/41551, since X11 is deprecating now, 
-  // we can safely remove the feature flags for Electron once they made it default supported.
-  // Fixes: https://github.com/moeru-ai/airi/issues/757
-  // Ref: https://github.com/mmaura/poe2linuxcompanion/blob/90664607a147ea5ccea28df6139bd95fb0ebab0e/electron/main/index.ts#L28-L46
-  if (env.XDG_SESSION_TYPE === 'wayland') {
-    app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal')
+  // Check explicit command-line switches before falling back to session environment variables.
+  // When running with XWayland (e.g. '--ozone-platform=x11'), session variables like WAYLAND_DISPLAY
+  // are still inherited from the Wayland desktop, but Chromium uses the explicitly specified Ozone backend.
+  // Treat explicit 'auto' as an unresolved platform selection and resolve using session environment variables.
+  const isWayland = resolveIsWayland({
+    explicitOzonePlatform: app.commandLine.getSwitchValue('ozone-platform'),
+    ozonePlatformHint: app.commandLine.getSwitchValue('ozone-platform-hint'),
+    env,
+  })
 
-    app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform')
-    app.commandLine.appendSwitch('enable-features', 'WaylandWindowDecorations')
+  if (isWayland) {
+    enabledFeatures.push('GlobalShortcutsPortal', 'UseOzonePlatform', 'WaylandWindowDecorations')
+    if (!app.commandLine.hasSwitch('ozone-platform-hint')) {
+      app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+    }
   }
+  else {
+    // NOTICE:
+    // Vulkan must only be enabled on non-Wayland sessions, otherwise GPU
+    // initialization fails or rendering glitches appear.
+    // Root cause: Vulkan is incompatible with '--ozone-platform=wayland' in
+    // Chromium's surface factory; the Wayland Ozone backend cannot present
+    // Vulkan surfaces.
+    // Source: Chromium Ozone/Wayland surface factory; workaround tracked via
+    // https://github.com/electron/electron/issues/41763 (WebGPU on Linux).
+    // Removal condition: when Chromium/Electron supports Vulkan with the Wayland
+    // Ozone backend, drop the isWayland guard and always push 'Vulkan'.
+    enabledFeatures.push('Vulkan')
+  }
+
+  app.commandLine.appendSwitch('enable-features', enabledFeatures.join(','))
 }
 
 app.dock?.setIcon(icon)
 electronApp.setAppUserModelId('ai.moeru.airi')
 
-function setupTray(params: {
-  mainWindow: BrowserWindow
-  settingsWindow: () => Promise<BrowserWindow>
-  captionWindow: ReturnType<typeof setupCaptionWindowManager>
-  widgetsWindow: WidgetsWindowManager
-}): void {
-  once(() => {
-    const trayImage = nativeImage.createFromPath(isMacOS ? macOSTrayIcon : icon).resize({ width: 16 })
-    trayImage.setTemplateImage(isMacOS)
-    const appTray = new Tray(trayImage)
-    onAppBeforeQuit(() => appTray.destroy())
+// Track the real user-facing AIRI window because the process also owns hidden utility windows.
+// The second-instance handler should restore the main UI instead of accidentally surfacing internals.
+let userFacingMainWindow: BrowserWindow | undefined
+const shouldStartMainProcess = installSingleInstanceGuard({ app, getWindow: () => userFacingMainWindow })
 
-    const contextMenu = Menu.buildFromTemplate([
-      { label: 'Show', click: () => toggleWindowShow(params.mainWindow) },
-      { type: 'separator' },
-      { label: 'Settings...', click: () => params.settingsWindow().then(window => toggleWindowShow(window)) },
-      { type: 'separator' },
-      { label: 'Open Inlay...', click: () => setupInlayWindow() },
-      { label: 'Open Widgets...', click: () => params.widgetsWindow.getWindow().then(window => toggleWindowShow(window)) },
-      { label: 'Open Caption...', click: () => params.captionWindow.getWindow().then(window => toggleWindowShow(window)) },
-      {
-        type: 'submenu',
-        label: 'Caption Overlay',
-        submenu: Menu.buildFromTemplate([
-          { type: 'checkbox', label: 'Follow window', checked: params.captionWindow.getIsFollowingWindow(), click: async menuItem => await params.captionWindow.setFollowWindow(Boolean(menuItem.checked)) },
-          { label: 'Reset position', click: async () => await params.captionWindow.resetToSide() },
-        ]),
-      },
-      { type: 'separator' },
-      { label: 'Quit', click: () => app.quit() },
-    ])
-
-    appTray.setContextMenu(contextMenu)
-    appTray.setToolTip('Project AIRI')
-    appTray.addListener('click', () => toggleWindowShow(params.mainWindow))
-
-    // On macOS, there's a special double-click event
-    if (isMacOS)
-      appTray.addListener('double-click', () => toggleWindowShow(params.mainWindow))
-  })()
+if (shouldStartMainProcess) {
+  initScreenCaptureForMain()
 }
 
+let fileLogger: FileLoggerHandle = nullFileLoggerHandle
+let skipFileLogging = false
+
 app.whenReady().then(async () => {
+  if (!shouldStartMainProcess) {
+    return
+  }
+
+  setupPermissionHandlers(session.defaultSession, hasSelectedScreenCaptureSource)
+
+  // Initialize file logger and register the hook
+  fileLogger = await setupFileLogger()
+
+  // Register the global hook for file logging
+  setGlobalHookPostLog((_, formatted) => {
+    if (skipFileLogging || fileLogger.logFileFd === null)
+      return
+    void fileLogger.appendLog(formatted)
+  })
+
   injeca.setLogger(createLoggLogger(useLogg('injeca').useGlobalConfig()))
 
-  const channelServerModule = injeca.provide('modules:channel-server', async () => setupChannelServer())
-  const chatWindow = injeca.provide('windows:chat', { build: () => setupChatWindowReusableFunc() })
-  const widgetsManager = injeca.provide('windows:widgets', { build: () => setupWidgetsWindowManager() })
-  const noticeWindow = injeca.provide('windows:notice', { build: () => setupNoticeWindowManager() })
+  const appConfig = injeca.provide('configs:app', () => createGlobalAppConfig())
+  const artistryConfig = injeca.provide('configs:artistry', () => createArtistryConfig())
+  const electronApp = injeca.provide('host:electron:app', () => app)
+  const autoUpdater = injeca.provide('services:auto-updater', {
+    dependsOn: { appConfig },
+    build: ({ dependsOn }) => setupAutoUpdater({
+      enabled: import.meta.env.VITE_DISTRIBUTION !== 'steam',
+      getStoredUpdateLane: () => dependsOn.appConfig.get()?.updateChannel,
+      setStoredUpdateLane: (lane) => {
+        const currentConfig = dependsOn.appConfig.get()
+        dependsOn.appConfig.update({
+          language: currentConfig?.language ?? 'en',
+          updateChannel: lane,
+        })
+      },
+    }),
+  })
+
+  const i18n = injeca.provide('libs:i18n', {
+    dependsOn: { appConfig },
+    build: ({ dependsOn }) => createI18n({ messages, locale: dependsOn.appConfig.get()?.language }),
+  })
+
+  const serverChannel = injeca.provide('modules:channel-server', {
+    dependsOn: { app: electronApp, lifecycle },
+    build: async ({ dependsOn }) => setupServerChannel(dependsOn),
+  })
+
+  const airiHttpServer = injeca.provide('modules:airi-http-server', {
+    build: async () => setupBuiltInServer({ servers: [] }),
+  })
+
+  const godotStageManager = injeca.provide('modules:godot-stage-manager', {
+    build: async () => setupGodotStageManager(),
+  })
+
+  const appleSpeechTranscription = injeca.provide('modules:apple-speech-transcription', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupAppleSpeechTranscriptionService(dependsOn),
+  })
+
+  const mcpStdioManager = injeca.provide('modules:mcp-stdio-manager', {
+    build: async () => setupMcpStdioManager(),
+  })
+
+  const widgetsManager = injeca.provide('windows:widgets', {
+    dependsOn: { serverChannel, i18n },
+    build: ({ dependsOn }) => setupWidgetsWindowManager(dependsOn),
+  })
+
+  const pluginHost = injeca.provide('modules:plugin-host', {
+    dependsOn: { serverChannel, widgetsManager },
+    build: ({ dependsOn }) => setupExtensionHost(dependsOn),
+  })
+
+  const globalShortcut = injeca.provide('services:global-shortcut', () => setupGlobalShortcutService())
+
+  // Beat Sync uses a background renderer because Web Audio processing needs a DOM runtime.
+  const beatSync = injeca.provide('windows:beat-sync', () => setupBeatSync())
+
+  const devtoolsMarkdownStressWindow = injeca.provide('windows:devtools:markdown-stress', () => setupDevtoolsWindow())
+
+  const onboardingWindowManager = injeca.provide('windows:onboarding', {
+    dependsOn: { serverChannel, i18n },
+    build: ({ dependsOn }) => setupOnboardingWindowManager(dependsOn),
+  })
+
+  const noticeWindow = injeca.provide('windows:notice', {
+    dependsOn: { i18n, serverChannel },
+    build: ({ dependsOn }) => setupNoticeWindowManager(dependsOn),
+  })
+
+  const aboutWindow = injeca.provide('windows:about', {
+    dependsOn: { autoUpdater, i18n, serverChannel },
+    build: ({ dependsOn }) => setupAboutWindowReusable(dependsOn),
+  })
+
+  const chatWindow = injeca.provide('windows:chat', {
+    dependsOn: { widgetsManager, serverChannel, mcpStdioManager, i18n },
+    build: ({ dependsOn }) => setupChatWindowReusableFunc(dependsOn),
+  })
+
+  const spotlightWindow = injeca.provide('windows:spotlight', {
+    dependsOn: { serverChannel, i18n, chatWindow, globalShortcut, appConfig },
+    build: ({ dependsOn }) => setupSpotlightWindowManager(dependsOn),
+  })
+
+  const editorWindow = injeca.provide('windows:editor', {
+    dependsOn: { serverChannel, i18n },
+    build: ({ dependsOn }) => setupEditorWindowManager(dependsOn),
+  })
 
   const settingsWindow = injeca.provide('windows:settings', {
-    dependsOn: { widgetsManager },
-    build: ({ dependsOn }) => setupSettingsWindowReusableFunc(dependsOn),
+    dependsOn: { widgetsManager, beatSync, autoUpdater, devtoolsWindow: devtoolsMarkdownStressWindow, serverChannel, godotStageManager, mcpStdioManager, i18n, globalShortcut, spotlightWindow },
+    build: async ({ dependsOn }) =>
+      setupSettingsWindowReusableFunc({
+        ...dependsOn,
+        getMainWindow: () => userFacingMainWindow,
+      }),
   })
+
   const mainWindow = injeca.provide('windows:main', {
-    dependsOn: { settingsWindow, chatWindow, widgetsManager, noticeWindow },
-    build: async ({ dependsOn }) => setupMainWindow(dependsOn),
+    dependsOn: { editorWindow, settingsWindow, chatWindow, widgetsManager, noticeWindow, beatSync, autoUpdater, serverChannel, godotStageManager, mcpStdioManager, i18n, onboardingWindowManager, appleSpeechTranscription },
+    build: async ({ dependsOn }) => setupMainWindow({
+      ...dependsOn,
+      onWindowCreated: (window) => {
+        userFacingMainWindow = window
+      },
+    }),
   })
+
   const captionWindow = injeca.provide('windows:caption', {
-    dependsOn: { mainWindow },
+    dependsOn: { mainWindow, serverChannel, i18n },
     build: async ({ dependsOn }) => setupCaptionWindowManager(dependsOn),
   })
+
   const tray = injeca.provide('app:tray', {
-    dependsOn: { mainWindow, settingsWindow, captionWindow, widgetsWindow: widgetsManager },
+    dependsOn: { mainWindow, settingsWindow, captionWindow, widgetsWindow: widgetsManager, serverChannel, beatSyncBgWindow: beatSync, aboutWindow, i18n },
     build: async ({ dependsOn }) => setupTray(dependsOn),
   })
+
+  // Desktop grounding overlay — gated by AIRI_DESKTOP_OVERLAY=1
+  if (isDesktopOverlayEnabled()) {
+    const desktopOverlay = injeca.provide('windows:desktop-overlay', {
+      dependsOn: { mcpStdioManager, serverChannel, i18n },
+      build: async ({ dependsOn }) => setupDesktopOverlayWindow(dependsOn),
+    })
+
+    // NOTICE: Separate invoke ensures the overlay is eagerly built.
+    // Without this, injeca.start() would skip it because no other
+    // provider depends on 'windows:desktop-overlay'.
+    injeca.invoke({
+      dependsOn: { desktopOverlay },
+      callback: noop,
+    })
+  }
+
   injeca.invoke({
-    dependsOn: { mainWindow, tray, channelServerModule },
-    callback: noop,
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig },
+    callback: async (deps) => {
+      const { context } = createContext(ipcMain)
+      await setupArtistryBridge({
+        widgetsManager: deps.widgetsWindow,
+        context,
+        artistryConfig: deps.artistryConfig,
+      })
+    },
   })
 
   injeca.start().catch(err => console.error(err))
@@ -166,8 +339,59 @@ app.on('window-all-closed', () => {
   }
 })
 
+let appExiting = false
+
 // Clean up server and intervals when app quits
-app.on('before-quit', async () => {
-  emitAppBeforeQuit()
-  injeca.stop()
+async function handleAppExit() {
+  if (appExiting)
+    return
+
+  appExiting = true
+
+  let exitedNormally = true
+
+  /**
+   * Safely execute fn and log any errors that occur, marking the exit as abnormal
+   * if an error is caught.
+   *
+   * @param operation - A verb phrase describing the operation.
+   * @param fn - Any function to execute. It can be either sync or async.
+   * @returns A promise that resolves when the operation is complete.
+   */
+  async function logIfError(operation: string, fn: () => unknown): Promise<void> {
+    try {
+      await fn()
+    }
+    catch (error) {
+      exitedNormally = false
+      log.withError(error).error(`[app-exit] Failed to ${operation}:`)
+    }
+  }
+
+  await Promise.all([
+    logIfError('execute onAppBeforeQuit hooks', () => emitAppBeforeQuit()),
+    logIfError('stop injeca', () => injeca.stop()),
+  ])
+
+  // Prevent the global log hook from trying to write to the file after close() is called,
+  // which would cause a recursive failure if close() itself throws.
+  skipFileLogging = true
+  await logIfError('flush file logs', () => fileLogger.close()) // Ensure all logs are flushed
+
+  if (!exitedNormally) {
+    app.exit(1)
+  }
+  else {
+    app.quit()
+  }
+}
+
+process.on('SIGINT', () => handleAppExit())
+
+app.on('before-quit', (event) => {
+  if (appExiting)
+    return
+
+  event.preventDefault()
+  handleAppExit()
 })

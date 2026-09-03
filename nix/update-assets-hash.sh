@@ -5,6 +5,7 @@ set -eux
 cd "$(dirname "${BASH_SOURCE[0]}")"
 # Set fake hash to trigger rebuild
 echo -n "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" > assets-hash.txt
-# Redirect stderr to stdout for grep while keeping printing on stderr
-HASH=$(nix build ..#airi.assets 2> >(tee /dev/tty) | grep -oP 'got: +\K\S+')
-echo -n $HASH > assets-hash.txt
+BUILD_LOG="$(mktemp)"
+nix build -L ..#airi.assets |& tee "$BUILD_LOG"
+HASH="$(grep -aoP 'got: +\Ksha256-\S{43}=' "$BUILD_LOG")"
+[ -n "$HASH" ] && echo "$HASH" > assets-hash.txt

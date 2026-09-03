@@ -18,14 +18,22 @@ lerna-debug.log*
 .temp
 **/temp/
 
+# AI Agents
+.claude/worktrees/
+.superpowers/
+
 # Anything .local, especially for .env.local
 *.local
 # e.g. Claude Code settings.local.json
 *.local.*
+.env
+.env.*
+!.env.example
 
 # Audio binaries
 *.pcm
 *.wav
+!*.test.wav
 *.ogg
 *.mp3
 
@@ -43,11 +51,14 @@ coverage/
 # Build
 out/
 bundle/
+flatpak/
+flatpak-repo/
 .flatpak-builder/
 .flatpak-repo/
 *.flatpak
 # WXT specified this too
 *.output
+.vfox.toml
 
 # Vite
 dist
@@ -55,6 +66,7 @@ dist
 .nuxt
 # vite-plugin-inspect
 .vite-inspect
+.vite-inspect*
 
 # auto import & auto fs based router
 components.d.ts
@@ -64,18 +76,23 @@ components.d.ts
 .eslintcache
 **/.cache/
 **/.vitepress/cache/
-**/tsconfig.tsbuildinfo
+**/*.tsbuildinfo
 
 # Netlify
 **/.netlify/*
 **/.netlify/functions-serve/*
 
+**/server/public/*
 **/public/assets/js/*
-**/public/assets/live2d/models/*
-**/public/assets/vrm/models/*
+**/assets/live2d/models/*
+**/assets/vrm/models/*
 
 # Serving fonts locally
 **/public/assets/fonts/
+
+# Code generation
+**/vscode-airi/src/generated/
+**/vscode-airi/LICENSE
 
 # Make it easy for devenv users to override their local environment.
 # See: https://github.com/moeru-ai/airi/pull/110#discussion_r2024378953
@@ -104,5 +121,40 @@ twitter-session.json
 
 # Symlinks created by nix build
 result*
+# Nix develop outputs
+outputs/
 
+# MediaPipe task assets
+packages/model-driver-mediapipe/tasks/assets/*
 
+# Plugins
+plugins/local
+plugins/development
+plugins-local
+plugins-development
+
+apps/stage-pocket/ios/buildServer.json
+apps/stage-pocket/airi-pocket.jks
+apps/stage-tamagotchi/electron.vite.config.*.mjs
+docs/superpowers
+docs/research
+
+# Tools - ghfs
+.ghfs/
+
+# Tools - Obsidian
+.obsidian/
+
+docs/ai/context/verifications/
+.playwright-mcp/
+.vitest-attachments
+__screenshots__
+.vishot/
+.alint/
+.alintcache
+
+# Generated from packages/i18n/glossary/terms.yaml at upload time. Never committed, so it
+# cannot drift from its source.
+packages/i18n/glossary/glossary.tbx
+
+/airi-docs/

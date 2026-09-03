@@ -1,13 +1,25 @@
+import type { I18n } from '../../libs/i18n'
+import type { ServerChannel } from '../../services/airi/channel-server'
+import type { McpStdioManager } from '../../services/airi/mcp-servers'
+import type { WidgetsWindowManager } from '../widgets'
+
 import { join, resolve } from 'node:path'
 
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow } from 'electron'
 
 import icon from '../../../../resources/icon.png?asset'
 
 import { baseUrl, getElectronMainDirname, load, withHashRoute } from '../../libs/electron/location'
 import { createReusableWindow } from '../../libs/electron/window-manager'
+import { protectPrivilegedWindowNavigation } from '../shared'
+import { setupChatWindowElectronInvokes } from './rpc/index.electron'
 
-export function setupChatWindowReusableFunc() {
+export function setupChatWindowReusableFunc(params: {
+  widgetsManager: WidgetsWindowManager
+  serverChannel: ServerChannel
+  mcpStdioManager: McpStdioManager
+  i18n: I18n
+}) {
   return createReusableWindow(async () => {
     const window = new BrowserWindow({
       title: 'Chat',
@@ -16,18 +28,28 @@ export function setupChatWindowReusableFunc() {
       show: false,
       icon,
       webPreferences: {
-        preload: join(__dirname, '../preload/index.mjs'),
+        preload: join(getElectronMainDirname(), '../preload/index.mjs'),
         sandbox: false,
       },
     })
 
     window.on('ready-to-show', () => window.show())
-    window.webContents.setWindowOpenHandler((details) => {
-      shell.openExternal(details.url)
-      return { action: 'deny' }
+    protectPrivilegedWindowNavigation(window)
+
+    await setupChatWindowElectronInvokes({
+      window,
+      widgetsManager: params.widgetsManager,
+      serverChannel: params.serverChannel,
+      mcpStdioManager: params.mcpStdioManager,
+      i18n: params.i18n,
     })
 
-    await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/chat'))
+    await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/chat', {
+      query: {
+        'stage-runtime': 'minimal',
+        'synced-leader': 'false',
+      },
+    }))
 
     return window
   }).getWindow

@@ -2,20 +2,20 @@
 import type { RemovableRef } from '@vueuse/core'
 
 import {
-  Alert,
   ProviderBaseUrlInput,
   ProviderBasicSettings,
   ProviderSettingsContainer,
   ProviderSettingsLayout,
+  ProviderValidationAlerts,
 } from '@proj-airi/stage-ui/components'
 import { useProviderValidation } from '@proj-airi/stage-ui/composables/use-provider-validation'
-import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
+import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 
 const providerId = 'lm-studio'
-const providersStore = useProvidersStore()
-const { providers } = storeToRefs(providersStore) as { providers: RemovableRef<Record<string, any>> }
+const providerStore = useProviderConfigStore()
+const { configs: providers } = storeToRefs(providerStore) as { configs: RemovableRef<Record<string, any>> }
 
 // Define computed properties for credentials
 
@@ -37,6 +37,12 @@ const {
   isValid,
   validationMessage,
   handleResetSettings,
+  forceValid,
+  hasManualValidators,
+  isManualTesting,
+  manualTestPassed,
+  manualTestMessage,
+  runManualTest,
 } = useProviderValidation(providerId)
 </script>
 
@@ -58,22 +64,18 @@ const {
         />
       </ProviderBasicSettings>
 
-      <!-- Validation Status -->
-      <Alert v-if="!isValid && isValidating === 0 && validationMessage" type="error">
-        <template #title>
-          {{ t('settings.dialogs.onboarding.validationFailed') }}
-        </template>
-        <template v-if="validationMessage" #content>
-          <div class="whitespace-pre-wrap break-all">
-            {{ validationMessage }}
-          </div>
-        </template>
-      </Alert>
-      <Alert v-if="isValid && isValidating === 0" type="success">
-        <template #title>
-          {{ t('settings.dialogs.onboarding.validationSuccess') }}
-        </template>
-      </Alert>
+      <ProviderValidationAlerts
+        :is-valid="isValid"
+        :is-validating="isValidating"
+        :validation-message="validationMessage"
+        :has-manual-validators="hasManualValidators"
+        :is-manual-testing="isManualTesting"
+        :manual-test-passed="manualTestPassed"
+        :manual-test-message="manualTestMessage"
+        :on-run-test="runManualTest"
+        :on-force-valid="forceValid"
+        :on-go-to-model-selection="() => router.push('/settings/modules/consciousness')"
+      />
     </ProviderSettingsContainer>
   </ProviderSettingsLayout>
 </template>

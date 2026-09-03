@@ -15,30 +15,38 @@
     "directory": "packages/stage-ui-three"
   },
   "exports": {
+    "./assets/vrm": "./src/assets/vrm/index.ts",
+    "./composables/vrm": "./src/composables/vrm/index.ts",
+    "./trace": "./src/trace/index.ts",
+    "./utils/vrm-preview": "./src/utils/vrm-preview.ts",
     ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@pixiv/three-vrm": "^3.4.4",
-    "@pixiv/three-vrm-animation": "^3.4.4",
-    "@pixiv/three-vrm-core": "^3.4.4",
+    "@moeru/eventa": "catalog:",
+    "@pixiv/three-vrm": "catalog:",
+    "@pixiv/three-vrm-animation": "catalog:",
+    "@pixiv/three-vrm-core": "catalog:",
+    "@proj-airi/model-driver-lipsync": "workspace:*",
     "@proj-airi/stage-shared": "workspace:*",
-    "@tresjs/cientos": "^5.1.0",
-    "@tresjs/core": "^5.1.0",
-    "@tresjs/post-processing": "^3.1.0",
-    "@vueuse/core": "^14.0.0",
-    "culori": "^4.0.2",
-    "pinia": "^3.0.4",
-    "postprocessing": "^6.38.0",
-    "three": "^0.181.1",
-    "vue": "^3.5.24",
-    "wlipsync": "^1.3.0"
+    "@proj-airi/ui": "workspace:*",
+    "@tresjs/cientos": "catalog:",
+    "@tresjs/core": "catalog:",
+    "@tresjs/post-processing": "catalog:",
+    "@vueuse/core": "catalog:",
+    "culori": "catalog:",
+    "es-toolkit": "catalog:",
+    "pinia": "catalog:",
+    "postprocessing": "catalog:",
+    "three": "catalog:",
+    "vue": "catalog:"
   },
   "devDependencies": {
-    "@types/culori": "^4.0.1",
-    "@types/three": "^0.181.0",
-    "vue-tsc": "^3.1.4"
+    "@types/culori": "catalog:",
+    "@types/three": "catalog:",
+    "vitest": "catalog:vitest",
+    "vue-tsc": "catalog:"
   }
 }

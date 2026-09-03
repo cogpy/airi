@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import type { ServerEvent, ServerEvents } from '@proj-airi/stage-ui/stores/providers/aliyun'
+import type { ServerEvent, ServerEvents } from '@proj-airi/stage-ui/libs/providers/providers/aliyun-nls'
 
 import vadWorkletUrl from '@proj-airi/stage-ui/workers/vad/process.worklet?worker&url'
 
-import { Button } from '@proj-airi/stage-ui/components'
-import { createAliyunNLSProvider } from '@proj-airi/stage-ui/stores/providers/aliyun/stream-transcription'
-import { FieldInput, FieldSelect } from '@proj-airi/ui'
-import { streamTranscription } from '@xsai/stream-transcription'
+import { toPCM16FromFloat32 } from '@proj-airi/audio/encoding'
+import { errorMessageFromValue } from '@proj-airi/stage-shared'
+import { createAliyunNLSProvider } from '@proj-airi/stage-ui/libs/providers/providers/aliyun-nls'
+import { streamTranscription } from '@proj-airi/stage-ui/libs/providers/stream-transcription'
+import { Button, FieldCombobox, FieldInput } from '@proj-airi/ui'
 import { computed, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 
 type AliyunRegion
@@ -83,15 +84,6 @@ function appendLog(message: string, level: 'info' | 'error' = 'info') {
   })
 }
 
-function float32ToInt16(buffer: Float32Array) {
-  const output = new Int16Array(buffer.length)
-  for (let i = 0; i < buffer.length; i++) {
-    const value = Math.max(-1, Math.min(1, buffer[i]))
-    output[i] = value < 0 ? value * 0x8000 : value * 0x7FFF
-  }
-  return output
-}
-
 function resetRecordingCounters() {
   audioChunkCount = 0
   lastChunkLogAt = 0
@@ -116,7 +108,7 @@ async function initializeAudioGraph(stream: MediaStream) {
     if (!buffer || !controller)
       return
 
-    const pcm16 = float32ToInt16(buffer)
+    const pcm16 = toPCM16FromFloat32(buffer)
     controller.enqueue(pcm16.buffer.slice(0))
 
     audioChunkCount += 1
@@ -179,14 +171,13 @@ async function startRecording() {
       },
       onSessionTerminated: (error) => {
         if (error) {
-          appendLog(`Session terminated: ${error instanceof Error ? error.message : String(error)}`, 'error')
+          appendLog(`Session terminated: ${errorMessageFromValue(error)}`, 'error')
           isTranscribing.value = false
         }
       },
     }),
-    inputStream: audioStream,
     inputAudioStream: audioStream,
-  } as unknown as Parameters<typeof streamTranscription>[0])
+  })
   transcriptionTextPromise.value = transcriptionResult.text
   isTranscribing.value = true
 
@@ -202,7 +193,7 @@ async function startRecording() {
       if (error instanceof DOMException && error.name === 'AbortError')
         appendLog('Transcription aborted by user')
       else
-        appendLog(`Transcription failed: ${error instanceof Error ? error.message : String(error)}`, 'error')
+        appendLog(`Transcription failed: ${errorMessageFromValue(error)}`, 'error')
     })
     .finally(() => {
       isTranscribing.value = false
@@ -232,7 +223,7 @@ async function startRecording() {
   }
   catch (error) {
     console.error(error)
-    appendLog(`Failed to start recording: ${error instanceof Error ? error.message : String(error)}`, 'error')
+    appendLog(`Failed to start recording: ${errorMessageFromValue(error)}`, 'error')
     audioStreamController.value?.error(error instanceof Error ? error : new Error(String(error)))
     audioStreamController.value = undefined
     abortTranscription()
@@ -390,7 +381,7 @@ onBeforeUnmount(async () => {
           placeholder="请输入 AppKey"
         />
 
-        <FieldSelect
+        <FieldCombobox
           v-model="credentials.region"
           label="Region"
           description="Match the region used when issuing the token."
@@ -419,7 +410,7 @@ onBeforeUnmount(async () => {
         <div class="flex flex-wrap gap-3">
           <Button
             :disabled="!canStartRecording"
-            variant="primary"
+
             @click="startRecording"
           >
             Start Recording
@@ -427,7 +418,7 @@ onBeforeUnmount(async () => {
 
           <Button
             :disabled="!canStopRecording"
-            variant="primary"
+
             @click="stopRecording"
           >
             Stop Recording
@@ -436,7 +427,7 @@ onBeforeUnmount(async () => {
           <Button
             v-if="isTranscribing"
             :disabled="!canAbortTranscription"
-            variant="secondary"
+
             @click="abortTranscription"
           >
             Abort Transcription
@@ -506,4 +497,6 @@ onBeforeUnmount(async () => {
 <route lang="yaml">
 meta:
   layout: settings
+  title: Aliyun NLS Realtime Transcription
+  subtitleKey: tamagotchi.settings.devtools.title
 </route>

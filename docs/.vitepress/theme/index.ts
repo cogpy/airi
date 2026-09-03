@@ -4,6 +4,7 @@ import messages from '@proj-airi/i18n/locales'
 
 import { createI18n } from 'vue-i18n'
 
+import ThemedVideo from '../components/ThemedVideo.vue'
 import Layout from '../custom/Layout.vue'
 
 import '@unocss/reset/tailwind.css'
@@ -15,22 +16,27 @@ import './theme-media.css'
 import './theme-kbd.css'
 import './theme-animations.css'
 import './custom-nixie.css'
-import '@fontsource-variable/quicksand'
-import '@fontsource-variable/dm-sans'
-import '@fontsource/dm-mono'
-import '@fontsource/dm-serif-display'
-import '@fontsource-variable/comfortaa'
+import '@fontsource-variable/quicksand/index.css'
+import '@fontsource-variable/dm-sans/index.css'
+import '@fontsource/dm-mono/index.css'
+import '@fontsource/dm-serif-display/index.css'
+import '@fontsource-variable/comfortaa/index.css'
 
 export default {
   Layout,
-  enhanceApp({ app }) {
+  enhanceApp({ app, siteData }) {
+    if (!import.meta.env.SSR && import.meta.env.PROD) {
+      import('../modules/posthog')
+    }
+
     const i18n = createI18n({
       legacy: false,
-      locale: 'en',
+      locale: siteData.value.lang || 'en',
       fallbackLocale: 'en',
       messages,
     })
 
     app.use(i18n)
+    app.component('ThemedVideo', ThemedVideo)
   },
 } satisfies Theme

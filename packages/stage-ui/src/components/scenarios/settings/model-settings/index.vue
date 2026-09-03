@@ -1,99 +1,61 @@
 <script setup lang="ts">
-import type { DisplayModel } from '../../../../stores/display-models'
+import type { ModelSettingsRuntimeSnapshot } from './runtime'
 
-import { ThreeScene, useModelStore } from '@proj-airi/stage-ui-three'
-import { useMouse } from '@vueuse/core'
-import { storeToRefs } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
-import Callout from '../../../layouts/Callout.vue'
-import Button from '../../../misc/Button.vue'
-import Live2DScene from '../../../scenes/Live2D.vue'
-import Live2D from './Live2D.vue'
-import VRM from './VRM.vue'
+import ModelSettingsPanel from './panel.vue'
+import ModelSettingsPreviewStage from './preview-stage.vue'
 
-import { DisplayModelFormat } from '../../../../stores/display-models'
-import { useLive2d } from '../../../../stores/live2d'
-import { useSettings } from '../../../../stores/settings'
-import { ModelSelectorDialog } from '../../dialogs/model-selector'
+import { createEmptyModelSettingsRuntimeSnapshot } from './runtime'
 
-const props = defineProps<{
+withDefaults(defineProps<{
   palette: string[]
   settingsClass?: string | string[]
-
+  allowExtractColors?: boolean
   live2dSceneClass?: string | string[]
   vrmSceneClass?: string | string[]
-}>()
+  spineSceneClass?: string | string[]
+  tachieSceneClass?: string | string[]
+  mmdSceneClass?: string | string[]
+}>(), {
+  allowExtractColors: true,
+})
 
 defineEmits<{
   (e: 'extractColorsFromModel'): void
 }>()
 
-const selectedModel = ref<DisplayModel | undefined>()
+const previewStageRef = ref<{ capturePreviewFrame: () => Promise<Blob | undefined> }>()
+const runtimeSnapshot = ref<ModelSettingsRuntimeSnapshot>(createEmptyModelSettingsRuntimeSnapshot())
 
-const positionCursor = useMouse()
-const settingsStore = useSettings()
-const { live2dDisableFocus, stageModelSelectedUrl, stageModelSelected, stageModelRenderer } = storeToRefs(settingsStore)
+async function capturePreviewFrame() {
+  return previewStageRef.value?.capturePreviewFrame()
+}
 
-watch(selectedModel, async () => {
-  stageModelSelected.value = selectedModel.value?.id
-  await settingsStore.updateStageModel()
+function handleRuntimeSnapshotChanged(nextSnapshot: ModelSettingsRuntimeSnapshot) {
+  runtimeSnapshot.value = nextSnapshot
+}
 
-  if (selectedModel.value) {
-    switch (selectedModel.value.format) {
-      case DisplayModelFormat.Live2dZip:
-        useLive2d().shouldUpdateView()
-        break
-      case DisplayModelFormat.VRM:
-        useModelStore().shouldUpdateView()
-        break
-    }
-  }
-}, { deep: true })
+defineExpose({
+  capturePreviewFrame,
+})
 </script>
 
 <template>
-  <div
-    flex="~ col gap-2" z-10 overflow-y-scroll p-2 :class="[
-      ...(props.settingsClass
-        ? (typeof props.settingsClass === 'string' ? [props.settingsClass] : props.settingsClass)
-        : []),
-    ]"
-  >
-    <Callout label="We support both 2D and 3D models">
-      <p>
-        Click <strong>Select Model</strong> to import different formats of
-        models into catalog, currently, <code>.zip</code> (Live2D) and <code>.vrm</code> (VRM) are supported.
-      </p>
-      <p>
-        Neuro-sama uses 2D model driven by Live2D Inc. developed framework.
-        While Grok Ani (first female character announced in Grok Companion)
-        uses 3D model that is driven by VRM / MMD open formats.
-      </p>
-    </Callout>
-    <ModelSelectorDialog v-model="selectedModel">
-      <Button variant="secondary">
-        Select Model
-      </Button>
-    </ModelSelectorDialog>
-    <Live2D v-if="stageModelRenderer === 'live2d'" :palette="palette" @extract-colors-from-model="$emit('extractColorsFromModel')" />
-    <VRM v-if="stageModelRenderer === 'vrm'" :palette="palette" @extract-colors-from-model="$emit('extractColorsFromModel')" />
-  </div>
-  <!-- Live2D component for 2D stage view -->
-  <template v-if="stageModelRenderer === 'live2d'">
-    <div :class="[...(props.live2dSceneClass ? (typeof props.live2dSceneClass === 'string' ? [props.live2dSceneClass] : props.live2dSceneClass) : [])]">
-      <Live2DScene
-        :focus-at="{ x: positionCursor.x.value, y: positionCursor.y.value }"
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
-        :disable-focus-at="live2dDisableFocus"
-      />
-    </div>
-  </template>
-  <!-- VRM component for 3D stage view -->
-  <template v-if="stageModelRenderer === 'vrm'">
-    <div :class="[...(props.vrmSceneClass ? (typeof props.vrmSceneClass === 'string' ? [props.vrmSceneClass] : props.vrmSceneClass) : [])]">
-      <ThreeScene :model-src="stageModelSelectedUrl" />
-    </div>
-  </template>
+  <ModelSettingsPanel
+    :allow-extract-colors="allowExtractColors"
+    :palette="palette"
+    :runtime-snapshot="runtimeSnapshot"
+    :settings-class="settingsClass"
+    @extract-colors-from-model="$emit('extractColorsFromModel')"
+  />
+  <ModelSettingsPreviewStage
+    ref="previewStageRef"
+    :live2d-scene-class="live2dSceneClass"
+    :vrm-scene-class="vrmSceneClass"
+    :spine-scene-class="spineSceneClass"
+    :tachie-scene-class="tachieSceneClass"
+    :mmd-scene-class="mmdSceneClass"
+    @runtime-snapshot-changed="handleRuntimeSnapshotChanged"
+  />
 </template>

@@ -2,15 +2,16 @@ name: HuggingFace Spaces
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           lfs: true
@@ -21,17 +22,18 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: pnpm/setup@v2
         with:
-          node-version: lts/*
-          cache: pnpm
+          runtime: node@26.7.0
+          cache: true
+          install: false
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
         env:
           TARGET_HUGGINGFACE_SPACE: 'true'
           VITE_APP_TARGET_HUGGINGFACE_SPACE: 'true'
+          VITE_ENABLE_POSTHOG: 'true'
 
       - id: airi_diff
         working-directory: ./apps/stage-web/dist

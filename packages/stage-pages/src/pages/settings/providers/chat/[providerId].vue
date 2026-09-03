@@ -2,24 +2,33 @@
 import type { RemovableRef } from '@vueuse/core'
 
 import {
-  Alert,
   ProviderAdvancedSettings,
   ProviderApiKeyInput,
   ProviderBaseUrlInput,
   ProviderBasicSettings,
   ProviderSettingsContainer,
   ProviderSettingsLayout,
+  ProviderValidationAlerts,
 } from '@proj-airi/stage-ui/components'
 import { useProviderValidation } from '@proj-airi/stage-ui/composables/use-provider-validation'
-import { useProvidersStore } from '@proj-airi/stage-ui/stores/providers'
+import { getDefinedProvider } from '@proj-airi/stage-ui/libs'
+import { useConsciousnessStore } from '@proj-airi/stage-ui/stores/modules/consciousness'
+import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
+import { FieldCombobox } from '@proj-airi/ui'
+import { computedAsync } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const providerId = route.params.providerId as string
-const providersStore = useProvidersStore()
-const { providers } = storeToRefs(providersStore) as { providers: RemovableRef<Record<string, any>> }
+const providerConfigStore = useProviderConfigStore()
+const providersStore = useProviderStore()
+const consciousnessStore = useConsciousnessStore()
+const { configs: providers } = storeToRefs(providerConfigStore) as { configs: RemovableRef<Record<string, any>> }
+const { activeProvider } = storeToRefs(consciousnessStore)
+const providerDefinition = computed(() => providersStore.findProviderDefinition(providerId))
 
 // Define computed properties for credentials
 const apiKey = computed({
@@ -40,6 +49,17 @@ const baseUrl = computed({
   },
 })
 
+const thinkingMode = computed({
+  get: () => providers.value[providerId]?.thinkingMode || 'auto',
+  set: (value) => {
+    if (!providers.value[providerId])
+      providers.value[providerId] = {}
+    providers.value[providerId].thinkingMode = value
+  },
+})
+
+const supportsDeepSeekThinkingMode = computed(() => providerDefinition.value?.id === 'deepseek')
+
 // Use the composable to get validation logic and state
 const {
   t,
@@ -49,12 +69,39 @@ const {
   isValid,
   validationMessage,
   handleResetSettings,
+  forceValid,
+  hasManualValidators,
+  isManualTesting,
+  manualTestPassed,
+  manualTestMessage,
+  runManualTest,
 } = useProviderValidation(providerId)
+
+const apiKeyPlaceholder = computedAsync(async () => {
+  const definition = providerDefinition.value ?? getDefinedProvider(providerId)
+  if (!definition?.createProviderConfig)
+    return 'sk-...'
+
+  const schema = await definition.createProviderConfig({ t }) as any
+  const shape = typeof schema?.shape === 'function' ? schema.shape() : schema?.shape
+  const apiKeySchema = shape?.apiKey
+  if (!apiKeySchema)
+    return 'sk-...'
+
+  const meta = typeof apiKeySchema.meta === 'function' ? apiKeySchema.meta() : undefined
+  return typeof meta?.placeholderLocalized === 'string' ? meta.placeholderLocalized : 'sk-...'
+}, 'sk-...')
+
+function goToModelSelection() {
+  activeProvider.value = providerId
+  router.push('/settings/modules/consciousness')
+}
 </script>
 
 <template>
   <ProviderSettingsLayout
     :provider-name="providerMetadata?.localizedName"
+    :provider-icon="providerMetadata?.icon"
     :provider-icon-color="providerMetadata?.iconColor"
     :on-back="() => router.back()"
   >
@@ -67,33 +114,41 @@ const {
         <ProviderApiKeyInput
           v-model="apiKey"
           :provider-name="providerMetadata?.localizedName"
-          placeholder="sk-..."
+          :placeholder="apiKeyPlaceholder"
         />
       </ProviderBasicSettings>
 
       <ProviderAdvancedSettings :title="t('settings.pages.providers.common.section.advanced.title')">
         <ProviderBaseUrlInput
           v-model="baseUrl"
-          :placeholder="providerMetadata?.defaultOptions?.().baseUrl as string || 'Base URL of your provider'"
+          :placeholder="providerMetadata?.defaultConfig.baseUrl as string || 'Base URL of your provider'"
+        />
+
+        <FieldCombobox
+          v-if="supportsDeepSeekThinkingMode"
+          v-model="thinkingMode"
+          :label="t('settings.pages.providers.catalog.edit.config.common.fields.field.thinking-mode.label')"
+          :description="t('settings.pages.providers.provider.deepseek.fields.field.thinking-mode.description')"
+          :options="[
+            { label: t('settings.pages.providers.catalog.edit.config.common.fields.field.thinking-mode.options.auto'), value: 'auto' },
+            { label: t('settings.pages.providers.catalog.edit.config.common.fields.field.thinking-mode.options.disable'), value: 'disable' },
+            { label: t('settings.pages.providers.catalog.edit.config.common.fields.field.thinking-mode.options.enable'), value: 'enable' },
+          ]"
         />
       </ProviderAdvancedSettings>
 
-      <!-- Validation Status -->
-      <Alert v-if="!isValid && isValidating === 0 && validationMessage" type="error">
-        <template #title>
-          {{ t('settings.dialogs.onboarding.validationFailed') }}
-        </template>
-        <template v-if="validationMessage" #content>
-          <div class="whitespace-pre-wrap break-all">
-            {{ validationMessage }}
-          </div>
-        </template>
-      </Alert>
-      <Alert v-if="isValid && isValidating === 0" type="success">
-        <template #title>
-          {{ t('settings.dialogs.onboarding.validationSuccess') }}
-        </template>
-      </Alert>
+      <ProviderValidationAlerts
+        :is-valid="isValid"
+        :is-validating="isValidating"
+        :validation-message="validationMessage"
+        :has-manual-validators="hasManualValidators"
+        :is-manual-testing="isManualTesting"
+        :manual-test-passed="manualTestPassed"
+        :manual-test-message="manualTestMessage"
+        :on-run-test="runManualTest"
+        :on-force-valid="forceValid"
+        :on-go-to-model-selection="goToModelSelection"
+      />
     </ProviderSettingsContainer>
   </ProviderSettingsLayout>
 </template>

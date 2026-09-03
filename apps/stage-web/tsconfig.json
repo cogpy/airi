@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "target": "ESNext",
     "jsx": "preserve",
     "lib": [
       "DOM",
@@ -8,9 +9,13 @@
       "DOM.Iterable",
       "DOM.AsyncIterable"
     ],
+    "useDefineForClassFields": true,
     "paths": {
       "@proj-airi/stage-ui/*": [
         "../../packages/stage-ui/src/*"
+      ],
+      "@proj-airi/stage-layouts/*": [
+        "../../packages/stage-layouts/src/*"
       ]
     },
     "resolveJsonModule": true,
@@ -19,10 +24,10 @@
       "vite/client",
       "vite-plugin-vue-layouts/client",
       "vite-plugin-pwa/client",
-      "unplugin-vue-macros/macros-global",
-      "unplugin-vue-router/client",
+      "vue-macros/macros-global",
       "@types/audioworklet",
-      "unplugin-info/client"
+      "unplugin-info/client",
+      "@webgpu/types"
     ],
     "allowJs": true,
     "strict": true,

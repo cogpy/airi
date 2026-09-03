@@ -1,15 +1,22 @@
+import type { I18n } from '../../libs/i18n'
+import type { ServerChannel } from '../../services/airi/channel-server'
+
 import { join, resolve } from 'node:path'
 
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow } from 'electron'
 import { isMacOS } from 'std-env'
 
 import icon from '../../../../resources/icon.png?asset'
 
 import { baseUrl, getElectronMainDirname, load, withHashRoute } from '../../libs/electron/location'
 import { currentDisplayBounds, mapForBreakpoints, resolutionBreakpoints, widthFrom } from '../shared/display'
-import { spotlightLikeWindowConfig } from '../shared/window'
+import { protectPrivilegedWindowNavigation, spotlightLikeWindowConfig } from '../shared/window'
+import { setupInlayWindowInvokes } from './rpc/index.electron'
 
-export async function setupInlayWindow() {
+export async function setupInlayWindow(params: {
+  serverChannel: ServerChannel
+  i18n: I18n
+}) {
   const window = new BrowserWindow({
     title: 'Inlay',
     width: 450,
@@ -17,7 +24,7 @@ export async function setupInlayWindow() {
     show: false,
     icon,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
+      preload: join(getElectronMainDirname(), '../preload/index.mjs'),
       sandbox: false,
     },
     ...spotlightLikeWindowConfig(),
@@ -55,12 +62,13 @@ export async function setupInlayWindow() {
   })
 
   window.on('ready-to-show', () => window.show())
-  window.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
+  protectPrivilegedWindowNavigation(window)
 
-  await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/inlay'))
+  await setupInlayWindowInvokes({ inlayWindow: window, serverChannel: params.serverChannel, i18n: params.i18n })
+
+  await load(window, withHashRoute(baseUrl(resolve(getElectronMainDirname(), '..', 'renderer')), '/inlay', {
+    query: { 'synced-leader': 'false' },
+  }))
 
   return window
 }

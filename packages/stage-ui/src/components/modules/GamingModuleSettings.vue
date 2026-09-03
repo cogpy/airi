@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import type { StoreGeneric } from 'pinia'
 
-import { FieldCheckbox, FieldInput } from '@proj-airi/ui'
+import { Button, FieldCheckbox, FieldInput } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 
-import { Button } from '../../components'
 import { useNumberString } from '../../composables/use-number-string'
 
 interface GamingModuleStore extends StoreGeneric {
@@ -73,7 +72,7 @@ function saveSettings() {
     <div>
       <Button
         :label="t('settings.common.save')"
-        variant="primary"
+
         @click="saveSettings"
       />
     </div>

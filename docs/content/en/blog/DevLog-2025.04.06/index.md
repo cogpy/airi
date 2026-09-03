@@ -56,7 +56,7 @@ Such beautiful, and empowers me to continue to improve her.
 ### Memory system
 
 I was working on the refactoring over
-[`telegram-bot`](https://github.com/moeru-ai/airi/tree/main/services/telegram-bot),
+[`telegram-bot`](https://github.com/moeru-ai/airi/tree/main/integrations/telegram-bot),
 for the upcoming memory update for Project AIRI. Which we were planning to implement
 for months.
 
@@ -158,7 +158,7 @@ export const chatMessagesTable = pgTable('chat_messages', {
 
 This error will occur:
 
-```
+```txt
 ERROR: access method "hnsw" does not exist
 ```
 
@@ -331,20 +331,20 @@ const relevantMessages = await db
 
 It's easy! The key is
 
-```
+```ts
 sql<number>`(1 - (${cosineDistance(chatMessagesTable.content_vector_1536, embedding.embedding)}))`
 ```
 
 for the similarity searching,
 
-```
-gt(similarity, 0.5),
+```ts
+gt(similarity, 0.5)
 ```
 
 for the threshold, and
 
-```
-.orderBy(desc(sql`similarity`))
+```ts
+query.orderBy(desc(sql`similarity`))
 ```
 
 for the ordering.
@@ -438,7 +438,7 @@ We're excited to see the community starting to contribute to Project AIRI! Some 
 - **Documentation improvements**: Many community members have been helping to improve our documentation
 
 We're grateful for all the support and contributions. If you'd like to contribute, check out our
-[contributing guidelines](https://github.com/moeru-ai/airi/blob/main/CONTRIBUTING.md).
+[contributing guidelines](https://github.com/moeru-ai/airi/blob/main/.github/CONTRIBUTING.md).
 
 ## What's next
 

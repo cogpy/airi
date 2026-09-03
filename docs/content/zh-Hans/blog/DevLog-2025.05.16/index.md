@@ -97,9 +97,7 @@ import DemoDayHangzhou3 from './assets/demo-day-hangzhou-3.avif'
 
 最终，我得到了这个：[WebAI 实时语音聊天示例](https://github.com/proj-airi/webai-example-realtime-voice-chat)，我设法证明了这项工作可以在 Web 浏览器中用一个 300 ~ 500 行的 TypeScript 代码来实现 ChatGPT 语音聊天系统。
 
-<video controls muted style="{ height: '640px' }">
-  <source src="./assets/webai-examples-demo.MP4"/>
-</video>
+<ThemedVideo controls muted src="./assets/webai-examples-demo.MP4" style="height: 640px;" />
 
 我尽力将所有可能的步骤分解为小的可重用片段，以帮助演示如何从头开始构建实时语音聊天系统：
 
@@ -116,7 +114,7 @@ import DemoDayHangzhou3 from './assets/demo-day-hangzhou-3.avif'
 
 #### xsAI 🤗 Transformers.js 的诞生
 
-由于我们为 VAD、ASR、聊天和 TTS 演示所做的工作，这催生了一个名为 [xsAI 🤗 Transformers.js](https://github.com/proj-airi/xsai-transformers) 的新副项目，它简化了调用 WebGPU 驱动的模型推理和使用 workers 提供服务，同时仍然保持与我们之前成功的项目 [xsAI](https://github.com/moeru-ai/xsai) 的 API 兼容性。
+由于我们为 VAD、ASR、聊天和 TTS 演示所做的工作，这催生了一个名为 [xsAI 🤗 Transformers.js](https://github.com/moeru-ai/xsai-transformers) 的新副项目，它简化了调用 WebGPU 驱动的模型推理和使用 workers 提供服务，同时仍然保持与我们之前成功的项目 [xsAI](https://github.com/moeru-ai/xsai) 的 API 兼容性。
 
 我们也为此做了一个游乐场...在 [https://xsai-transformers.netlify.app](https://xsai-transformers.netlify.app) 上玩玩吧。
 
@@ -243,7 +241,6 @@ npm install @velin-dev/core
     - 角色"Me"和"ReLU"的 Live2D 建模
   - 社区支持和营销
     - 日语 README
-    - Plausible 分析集成
     - 全面的文档
 
 再见！

@@ -15,10 +15,10 @@ doc:
     title: Página siguiente
   previous-page:
     title: Página anterior
+  published-at: Publicado el {date}
 home:
   subtitle: >-
-    Recreando a Neuro-sama, un contenedor de almas de waifus de IA /
-    personajes virtuales para traerlos a nuestros mundos.
+    Recreando a Neuro-sama, un contenedor de almas de waifus de IA / personajes virtuales para traerlos a nuestros mundos.
   download:
     title: Descargar
   get-started:

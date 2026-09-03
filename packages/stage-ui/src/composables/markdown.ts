@@ -5,27 +5,54 @@ import type { Processor } from 'unified'
 import rehypeShiki from '@shikijs/rehype'
 import rehypeKatex from 'rehype-katex'
 import RehypeStringify from 'rehype-stringify'
-import remarkMath from 'remark-math'
 import RemarkParse from 'remark-parse'
 import RemarkRehype from 'remark-rehype'
 
+import { defaultPerfTracer } from '@proj-airi/stage-shared'
 import { unified } from 'unified'
+import { visit } from 'unist-util-visit'
+
+import { chatMathPreset, isChatMathFenceLanguage } from './chat-math'
 
 // Define a specific, compatible type for our processor to ensure type safety.
 type MarkdownProcessor = Processor<any, any, any, any, string>
 
 const processorCache = new Map<string, Promise<MarkdownProcessor>>()
-const langRegex = /```(.{2,})\s/g
+// The rich path parses once for language discovery so info strings and fences
+// inside blockquotes or nested lists follow Remark rules instead of a regex.
+const languageParser = unified()
+  .use(RemarkParse)
+  .use(chatMathPreset)
 
 function extractLangs(markdown: string): BundledLanguage[] {
-  const matches = markdown.matchAll(langRegex)
+  const tree = languageParser.parse(markdown)
   const langs = new Set<BundledLanguage>()
   langs.add('python')
-  for (const match of matches) {
-    if (match[1])
-      langs.add(match[1] as BundledLanguage)
-  }
+  visit(tree, 'code', (node) => {
+    if (node.lang && !isChatMathFenceLanguage(node.lang))
+      langs.add(node.lang as BundledLanguage)
+  })
   return [...langs]
+}
+
+function measuredKatex(options?: Parameters<typeof rehypeKatex>[0]) {
+  const transform = rehypeKatex(options)
+  return (tree: any, file: any) => {
+    const start = performance.now()
+    const length = typeof file?.value === 'string' ? file.value.length : undefined
+    try {
+      return transform(tree, file)
+    }
+    finally {
+      defaultPerfTracer.emit({
+        tracerId: 'markdown',
+        name: 'process.katex',
+        ts: start,
+        duration: performance.now() - start,
+        meta: { length },
+      })
+    }
+  }
 }
 
 async function createProcessor(langs: BundledLanguage[]): Promise<MarkdownProcessor> {
@@ -40,9 +67,9 @@ async function createProcessor(langs: BundledLanguage[]): Promise<MarkdownProces
 
   return unified()
     .use(RemarkParse)
-    .use(remarkMath)
+    .use(chatMathPreset)
     .use(RemarkRehype)
-    .use(rehypeKatex)
+    .use(measuredKatex, { output: 'mathml' })
     .use(rehypeShiki, options)
     .use(RehypeStringify)
 }
@@ -62,44 +89,65 @@ function getProcessor(langs: BundledLanguage[]): Promise<MarkdownProcessor> {
 export function useMarkdown() {
   const fallbackProcessor = unified()
     .use(RemarkParse)
-    .use(remarkMath)
+    .use(chatMathPreset)
     .use(RemarkRehype)
-    .use(rehypeKatex)
+    .use(measuredKatex, { output: 'mathml' })
     .use(RehypeStringify)
 
   return {
     process: async (markdown: string): Promise<string> => {
-      try {
-        // A quick check for code fences. If none, use the fast fallback.
-        if (!/`{3,}/.test(markdown))
-          return fallbackProcessor.processSync(markdown).toString()
+      const hasCodeFence = /`{3,}/.test(markdown)
+      const meta = { length: markdown.length, hasCodeFence }
 
-        const langs = extractLangs(markdown)
+      return defaultPerfTracer.withMeasure('markdown', 'process', async () => {
+        try {
+          // A quick check for code fences. If none, use the fast fallback.
+          if (!hasCodeFence) {
+            return defaultPerfTracer.withMeasure('markdown', 'process.pipeline.basic', () => {
+              return fallbackProcessor.processSync(markdown).toString()
+            }, meta)
+          }
 
-        // Always ensure 'python' is loaded as it's our default.
-        const langSet = new Set(langs)
-        langSet.add('python')
-        const languagesToLoad = Array.from(langSet)
+          const langs = extractLangs(markdown)
 
-        const processor = await getProcessor(languagesToLoad)
-        const result = await processor.process(markdown)
-        return result.toString()
-      }
-      catch (error) {
-        console.warn(
-          'Failed to process markdown with syntax highlighting, falling back to basic processing:',
-          error,
-        )
-        // Fallback to basic processor without highlighting
-        return fallbackProcessor.processSync(markdown).toString()
-      }
+          // Always ensure 'python' is loaded as it's our default.
+          const langSet = new Set(langs)
+          langSet.add('python')
+          const languagesToLoad = Array.from(langSet)
+
+          const processor = await getProcessor(languagesToLoad)
+          const result = await defaultPerfTracer.withMeasure('markdown', 'process.pipeline.rich', () => processor.process(markdown), meta)
+          return result.toString()
+        }
+        catch (error) {
+          console.warn(
+            'Failed to process markdown with syntax highlighting, falling back to basic processing:',
+            error,
+          )
+          // Fallback to basic processor without highlighting
+          return defaultPerfTracer.withMeasure('markdown', 'process.pipeline.fallback', () => {
+            return fallbackProcessor.processSync(markdown).toString()
+          }, { ...meta, fallback: true })
+        }
+      }, meta)
     },
 
     // Synchronous version for backward compatibility
     processSync: (markdown: string): string => {
-      return fallbackProcessor
+      const start = performance.now()
+      const output = fallbackProcessor
         .processSync(markdown)
         .toString()
+
+      defaultPerfTracer.emit({
+        tracerId: 'markdown',
+        name: 'process.pipeline.sync',
+        ts: start,
+        duration: performance.now() - start,
+        meta: { length: markdown.length },
+      })
+
+      return output
     },
   }
 }

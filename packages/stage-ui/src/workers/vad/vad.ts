@@ -15,9 +15,10 @@ export class VAD implements BaseVAD {
   private buffer: Float32Array
   private bufferPointer: number = 0
   private isRecording: boolean = false
+  private speechSamples: number = 0
   private postSpeechSamples: number = 0
   private prevBuffers: Float32Array[] = []
-  private inferenceChain: Promise<any> = Promise.resolve()
+  private processingChain: Promise<void> = Promise.resolve()
   private eventListeners: Partial<Record<keyof VADEvents, VADEventCallback<any>[]>> = {}
   private isReady: boolean = false
 
@@ -48,12 +49,10 @@ export class VAD implements BaseVAD {
     try {
       this.emit('status', { type: 'info', message: 'Loading VAD model...' })
 
-      this.model = await AutoModel.from_pretrained('onnx-community/silero-vad', {
-        config: { model_type: 'custom' } as any,
-        dtype: 'fp32', // Full-precision
-      })
-
+      // Full-precision
+      this.model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } as any, dtype: 'fp32' })
       this.isReady = true
+
       this.emit('status', { type: 'info', message: 'VAD model loaded successfully' })
     }
     catch (error) {
@@ -95,7 +94,16 @@ export class VAD implements BaseVAD {
   /**
    * Process audio buffer for speech detection
    */
-  public async processAudio(inputBuffer: Float32Array): Promise<void> {
+  public processAudio(inputBuffer: Float32Array): Promise<void> {
+    // AudioWorklet dispatch does not await async message handlers. Queue the
+    // complete state transition so each chunk observes the previous result.
+    const queuedBuffer = inputBuffer.slice()
+    const processing = this.processingChain.then(async () => await this.processAudioChunk(queuedBuffer))
+    this.processingChain = processing.catch(() => undefined)
+    return processing
+  }
+
+  private async processAudioChunk(inputBuffer: Float32Array): Promise<void> {
     if (!this.isReady) {
       throw new Error('VAD model is not initialized. Call initialize() first.')
     }
@@ -104,6 +112,9 @@ export class VAD implements BaseVAD {
 
     // Perform VAD on the input buffer
     const isSpeech = await this.detectSpeech(inputBuffer)
+
+    if (isSpeech)
+      this.speechSamples += inputBuffer.length
 
     // Calculate derived constants
     const sampleRateMs = this.config.sampleRate / 1000
@@ -118,7 +129,9 @@ export class VAD implements BaseVAD {
       if (this.prevBuffers.length >= maxPrevBuffers) {
         this.prevBuffers.shift()
       }
+
       this.prevBuffers.push(inputBuffer.slice(0))
+
       return
     }
 
@@ -132,6 +145,7 @@ export class VAD implements BaseVAD {
       // Process and reset with overflow
       const overflow = inputBuffer.subarray(remaining)
       this.processSpeechSegment(overflow)
+
       return
     }
     else {
@@ -146,23 +160,31 @@ export class VAD implements BaseVAD {
         // Speech just started
         this.emit('speech-start', undefined)
         this.emit('status', { type: 'info', message: 'Speech detected' })
+        this.emit('speech-audio', { buffer: this.createLeadingSpeechAudio(inputBuffer) })
+      }
+      else {
+        this.emit('speech-audio', { buffer: inputBuffer.slice() })
       }
 
       // Update state
       this.isRecording = true
       this.postSpeechSamples = 0
+
       return
     }
 
     // At this point, we were recording but the current buffer is not speech
+    this.emit('speech-audio', { buffer: inputBuffer.slice() })
     this.postSpeechSamples += inputBuffer.length
 
     // Check if silence is long enough to consider speech ended
     if (this.postSpeechSamples >= minSilenceDurationSamples) {
       // Check if the speech segment is long enough to process
-      if (this.bufferPointer < minSpeechDurationSamples) {
+      if (this.speechSamples < minSpeechDurationSamples) {
         // Too short, reset without processing
+        this.emit('speech-cancel', undefined)
         this.reset()
+
         return
       }
 
@@ -171,19 +193,36 @@ export class VAD implements BaseVAD {
     }
   }
 
+  /** Combines VAD's retained pre-speech padding with the first detected speech chunk. */
+  private createLeadingSpeechAudio(inputBuffer: Float32Array): Float32Array {
+    const leadingLength = this.prevBuffers.reduce((total, buffer) => total + buffer.length, 0)
+    const output = new Float32Array(leadingLength + inputBuffer.length)
+    let offset = 0
+
+    for (const buffer of this.prevBuffers) {
+      output.set(buffer, offset)
+      offset += buffer.length
+    }
+
+    output.set(inputBuffer, offset)
+    return output
+  }
+
   /**
    * Detect speech in an audio buffer
    */
   private async detectSpeech(buffer: Float32Array): Promise<boolean> {
     const input = new Tensor('float32', buffer, [1, buffer.length])
 
-    const { stateN, output } = await (this.inferenceChain = this.inferenceChain.then(() =>
-      this.model?.({
-        input,
-        sr: this.sampleRateTensor,
-        state: this.state,
-      }),
-    ))
+    const model = this.model
+    if (!model)
+      throw new Error('VAD model is not initialized. Call initialize() first.')
+
+    const { stateN, output } = await model({
+      input,
+      sr: this.sampleRateTensor,
+      state: this.state,
+    })
 
     // Update the state
     this.state = stateN
@@ -245,6 +284,7 @@ export class VAD implements BaseVAD {
     this.buffer.fill(0, offset)
     this.bufferPointer = offset
     this.isRecording = false
+    this.speechSamples = 0
     this.postSpeechSamples = 0
     this.prevBuffers = []
   }

@@ -58,3 +58,10 @@ async function handleFileChange(event: Event) {
   white-space: pre-wrap;
 }
 </style>
+
+<route lang="yaml">
+meta:
+  layout: settings
+  title: Image
+  subtitleKey: tamagotchi.settings.devtools.title
+</route>

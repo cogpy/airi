@@ -140,9 +140,7 @@ Eventually, I got this:
 which I managed to proof the work can be done on Web browser within one single
 300 ~ 500 lines of TypeScript code to achieve ChatGPT voice chat system.
 
-<video controls muted style="{ height: '640px' }">
-  <source src="./assets/webai-examples-demo.MP4"/>
-</video>
+<ThemedVideo controls muted src="./assets/webai-examples-demo.MP4" style="height: 640px;" />
 
 I tried my best to split all the possible steps into small and reusable pieces
 to help demonstrate how you can construct a real-time voice chat system
@@ -166,7 +164,7 @@ So [@luoling](https://github.com/luoling8192) made another small demo for this t
 #### Birth of xsAI 🤗 Transformers.js
 
 Because the work we have done for VAD, ASR, Chat, and TTS demos, this gave the
-birth of a new side project called [xsAI 🤗 Transformers.js](https://github.com/proj-airi/xsai-transformers)
+birth of a new side project called [xsAI 🤗 Transformers.js](https://github.com/moeru-ai/xsai-transformers)
 , enabling the simplicity to call the WebGPU powered model inference and serving with
 workers while still keeping the API compatible to our prior succeeded project called
 [xsAI](https://github.com/moeru-ai/xsai).
@@ -315,7 +313,6 @@ I would love to mention some of the milestone we reached in the past few weeks:
     - Live2D modeling for characters "Me" and "ReLU"
   - Community Support & Marketing
     - Japanese README
-    - Plausible analytics integration
     - Comprehensive documentation
 
 See you!

@@ -7,15 +7,17 @@
   * - Src of model is obtained from stage-ui via props, which is NOT a part of stage-ui-three package
 */
 
+import type { VRM } from '@pixiv/three-vrm'
 import type { TresContext } from '@tresjs/core'
-import type { DirectionalLight, SphericalHarmonics3, Texture, WebGLRenderTarget } from 'three'
+import type { DirectionalLight, SphericalHarmonics3, Texture, WebGLRenderer, WebGLRenderTarget } from 'three'
 
-import type { Vec3 } from '../stores/model-store'
+import type { VrmInteractionTarget } from '../composables/vrm/interaction'
+import type { SceneBootstrap, ScenePhase, Vec3 } from '../stores/model-store'
+import type { VrmLifecycleReason } from '../trace'
 
-import { withBase } from '@proj-airi/stage-shared'
+import { Screen } from '@proj-airi/ui'
 import { TresCanvas } from '@tresjs/core'
 import { EffectComposerPmndrs, HueSaturationPmndrs } from '@tresjs/post-processing'
-import { useElementBounding } from '@vueuse/core'
 import { formatHex } from 'culori'
 import { storeToRefs } from 'pinia'
 import { BlendFunction } from 'postprocessing'
@@ -24,47 +26,110 @@ import {
   Euler,
   MathUtils,
   PerspectiveCamera,
+  Raycaster,
+  Vector2,
   Vector3,
 } from 'three'
-import { onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
+// From stage-ui-three package
+import { useRenderTargetRegionAtClientPoint } from '../composables/render-target'
+import { getVrmInteractionTargetFromObjectName, isClickLikePointerGesture } from '../composables/vrm/interaction'
 // pinia store
 import { useModelStore } from '../stores/model-store'
-// From stage-ui-three package
+import {
+  getStageThreeRuntimeTraceContext,
+  isStageThreeRuntimeTraceEnabled,
+  stageThreeTraceRenderInfoEvent,
+  stageThreeTraceThreeSceneComponentStateEvent,
+  stageThreeTraceThreeSceneMutationLockEvent,
+  stageThreeTraceThreeScenePhaseEvent,
+  stageThreeTraceThreeSceneSubtreeEvent,
+  stageThreeTraceThreeSceneTransactionEvent,
+} from '../trace'
 import { OrbitControls } from './Controls'
 import { SkyBox } from './Environment'
 import { VRMModel } from './Model'
 
 const props = withDefaults(defineProps<{
+  /** The context that owns `currentAudioSource`. */
+  audioContext?: AudioContext
   currentAudioSource?: AudioBufferSourceNode
+  cursorPosition?: { x: number, y: number }
+  /** Stable display model identity. Runtime resource URLs can change across reloads. */
+  modelId: string
   modelSrc?: string
   skyBoxSrc?: string
+  /**
+   * Enables user-driven OrbitControls camera rotation and zoom.
+   *
+   * This is controlled by the app shell because orbit gestures conflict with
+   * mobile view-control overlays, while desktop/tamagotchi stages still expect
+   * direct scene manipulation.
+   *
+   * | Surface | Expected value | Reason |
+   * | --- | --- | --- |
+   * | stage-web desktop | `true` | Mouse orbit is the primary camera control. |
+   * | stage-web mobile | `false` | Touch input is reserved for mobile view controls and chat UI. |
+   * | stage-pocket mobile | `false` | Touch input is reserved for mobile view controls and chat UI. |
+   * | stage-tamagotchi | `true` | The transparent desktop stage has no mobile view-control overlay. |
+   */
+  enableOrbitControls?: boolean
   showAxes?: boolean
   idleAnimation?: string
   paused?: boolean
 }>(), {
+  enableOrbitControls: true,
   showAxes: false,
-  idleAnimation: withBase('/assets/vrm/animations/idle_loop.vrma'),
+  idleAnimation: new URL('../assets/vrm/animations/idle_loop.vrma', import.meta.url).href,
   paused: false,
 })
 
 const emit = defineEmits<{
   (e: 'loadModelProgress', value: number): void
   (e: 'error', value: unknown): void
+  (e: 'vrmInteract', value: VrmInteractionTarget): void
 }>()
 
-const sceneContainerRef = ref<HTMLDivElement>()
-const { width, height } = useElementBounding(sceneContainerRef)
+type ModelPhase = 'no-model' | 'loading' | 'ready' | 'error'
+interface ModelLoadIdentity {
+  modelId: string
+  modelSrc: string
+}
+type SceneTracePhaseCause
+  = | 'binding:complete'
+    | 'binding:start'
+    | 'component:unmount'
+    | 'controls-ready'
+    | 'controls-ref:detached'
+    | 'model-ref:detached'
+    | 'props:model-src'
+    | 'tres:ready'
+    | 'vrm:error'
+    | 'vrm:load-start'
+    | 'vrm:loaded'
+type SceneTraceTransactionReason = 'component-unmount' | 'initial-load' | 'model-reload' | 'model-switch' | 'no-model' | 'subtree-remount' | 'unknown'
+
+const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
+
 const modelStore = useModelStore()
 const {
-  lastModelSrc,
+  beginSceneBindingTransaction,
+  endSceneBindingTransaction,
+  resetSceneBindingTransactions,
+  setScenePhase,
+} = modelStore
+const {
+  sceneMutationLocked,
+  scenePhase,
+  sceneTransactionDepth,
 
+  lastCommittedModelId,
   modelSize,
   modelOrigin,
   modelOffset,
   modelRotationY,
 
-  cameraFOV,
   cameraPosition,
   cameraDistance,
 
@@ -87,15 +152,174 @@ const {
   envSelect,
   skyBoxSrc,
   skyBoxIntensity,
+  renderScale,
+  multisampling,
 } = storeToRefs(modelStore)
 
+type VrmFrameRuntimeHook = (vrm: VRM, delta: number) => void
+
 const modelRef = ref<InstanceType<typeof VRMModel>>()
+const vrmFrameRuntimeHook = shallowRef<VrmFrameRuntimeHook>()
 
 const camera = shallowRef(new PerspectiveCamera())
 const controlsRef = shallowRef<InstanceType<typeof OrbitControls>>()
-const tresCanvasRef = shallowRef<TresContext>()
+const tresContextRef = shallowRef<TresContext>()
+const screenRef = ref<InstanceType<typeof Screen>>()
 const skyBoxEnvRef = ref<InstanceType<typeof SkyBox>>()
 const dirLightRef = ref<InstanceType<typeof DirectionalLight>>()
+const stageThreeRuntimeTraceContext = getStageThreeRuntimeTraceContext()
+const stageThreeSceneTraceOriginId = `three-scene:${Math.random().toString(36).slice(2, 10)}`
+const latestScenePhaseTraceCause = ref<SceneTracePhaseCause>('props:model-src')
+const latestSceneTransactionReason = ref<SceneTraceTransactionReason>('unknown')
+const activeModelSrc = ref<string>()
+const bindingRevision = ref(0)
+// A selection ID can change while its URL is still resolving. The URL change owns
+// the request snapshot, so an in-flight load keeps the ID that requested its URL.
+const requestedModelIdentity = shallowRef<ModelLoadIdentity>()
+const loadingModelIdentity = shallowRef<ModelLoadIdentity>()
+const pendingCommittedModelIdentity = shallowRef<ModelLoadIdentity>()
+const pendingCommittedModelRevision = ref<number>()
+const pendingSceneBootstrap = shallowRef<SceneBootstrap>()
+
+function emitThreeSceneTrace(label: string, event: any, payload: Record<string, unknown>) {
+  if (isStageThreeRuntimeTraceEnabled())
+    stageThreeRuntimeTraceContext.emit(event, payload)
+  if (import.meta.env.DEV)
+    console.info(`[stage-ui-three][trace][three-scene][${label}]`, payload)
+}
+
+function emitScenePhaseTrace(cause: SceneTracePhaseCause, from: ScenePhase | undefined, to: ScenePhase) {
+  emitThreeSceneTrace('phase', stageThreeTraceThreeScenePhaseEvent, {
+    cause,
+    from,
+    modelSrc: props.modelSrc,
+    originId: stageThreeSceneTraceOriginId,
+    to,
+    transactionDepth: sceneTransactionDepth.value,
+    ts: performance.now(),
+  })
+}
+
+function emitSceneSubtreeTrace(key: 'controlsRef' | 'dirLightRef' | 'modelRef' | 'tresCanvasRef', action: 'attached' | 'detached') {
+  emitThreeSceneTrace('subtree', stageThreeTraceThreeSceneSubtreeEvent, {
+    action,
+    key,
+    originId: stageThreeSceneTraceOriginId,
+    scenePhase: scenePhase.value,
+    transactionDepth: sceneTransactionDepth.value,
+    ts: performance.now(),
+  })
+}
+
+function emitSceneTransactionTrace(action: 'begin' | 'end' | 'reset', reason: SceneTraceTransactionReason) {
+  emitThreeSceneTrace('transaction', stageThreeTraceThreeSceneTransactionEvent, {
+    action,
+    depth: sceneTransactionDepth.value,
+    originId: stageThreeSceneTraceOriginId,
+    reason,
+    scenePhase: scenePhase.value,
+    ts: performance.now(),
+  })
+}
+
+function emitSceneMutationLockTrace(locked: boolean) {
+  emitThreeSceneTrace('mutation-lock', stageThreeTraceThreeSceneMutationLockEvent, {
+    locked,
+    originId: stageThreeSceneTraceOriginId,
+    scenePhase: scenePhase.value,
+    transactionDepth: sceneTransactionDepth.value,
+    ts: performance.now(),
+  })
+}
+
+function emitSceneComponentStateTrace(
+  from: 'pending' | 'loading' | 'mounted' | undefined,
+  to: 'pending' | 'loading' | 'mounted',
+  diagnostics: {
+    canvasReady: boolean
+    controlsReady: boolean
+    modelPhase: ModelPhase
+  },
+) {
+  emitThreeSceneTrace('component-state', stageThreeTraceThreeSceneComponentStateEvent, {
+    canvasReady: diagnostics.canvasReady,
+    controlsReady: diagnostics.controlsReady,
+    from,
+    modelPhase: diagnostics.modelPhase,
+    originId: stageThreeSceneTraceOriginId,
+    scenePhase: scenePhase.value,
+    to,
+    transactionDepth: sceneTransactionDepth.value,
+    ts: performance.now(),
+  })
+}
+function toVector3(value: Vec3) {
+  return new Vector3(value.x, value.y, value.z)
+}
+
+const hemisphereLightPosition = new Vector3(0, 1, 0)
+const directionalLightPositionVector = computed(() => toVector3(directionalLightPosition.value))
+
+function toVec3(value: Vector3): Vec3 {
+  return { x: value.x, y: value.y, z: value.z }
+}
+
+function clearPendingCommittedModel() {
+  pendingCommittedModelIdentity.value = undefined
+  pendingCommittedModelRevision.value = undefined
+}
+
+function invalidateBindingRevision() {
+  bindingRevision.value += 1
+  loadingModelIdentity.value = undefined
+  clearPendingCommittedModel()
+}
+
+function applySceneBootstrap(value: SceneBootstrap) {
+  const reason = latestSceneTransactionReason.value
+  const previousOrigin = toVector3(modelOrigin.value)
+  const previousCameraOffset = toVector3(cameraPosition.value).sub(previousOrigin)
+  const previousTargetOffset = toVector3(lookAtTarget.value).sub(previousOrigin)
+  const nextOrigin = toVector3(value.modelOrigin)
+  const bootstrapCameraOffset = toVector3(value.cameraPosition).sub(nextOrigin)
+
+  modelOrigin.value = { ...value.modelOrigin }
+  modelSize.value = { ...value.modelSize }
+  eyeHeight.value = value.eyeHeight
+
+  if (reason === 'initial-load' || reason === 'unknown' || reason === 'no-model' || reason === 'model-switch') {
+    modelOffset.value = { ...value.modelOffset }
+    cameraDistance.value = value.cameraDistance
+    cameraPosition.value = { ...value.cameraPosition }
+    lookAtTarget.value = { ...value.lookAtTarget }
+    return
+  }
+
+  const effectiveCameraDistance = cameraDistance.value > 1e-6 ? cameraDistance.value : value.cameraDistance
+  cameraDistance.value = effectiveCameraDistance
+
+  const nextCameraDirection = previousCameraOffset.lengthSq() > 1e-6
+    ? previousCameraOffset.normalize()
+    : bootstrapCameraOffset.lengthSq() > 1e-6
+      ? bootstrapCameraOffset.normalize()
+      : new Vector3(0, 0, -1)
+
+  cameraPosition.value = toVec3(nextOrigin.clone().addScaledVector(nextCameraDirection, effectiveCameraDistance))
+
+  if (previousTargetOffset.lengthSq() > 1e-6) {
+    lookAtTarget.value = toVec3(nextOrigin.clone().add(previousTargetOffset))
+    return
+  }
+
+  lookAtTarget.value = { ...value.lookAtTarget }
+}
+
+const { readRenderTargetRegionAtClientPoint, disposeRenderTarget } = useRenderTargetRegionAtClientPoint({
+  getRenderer: () => tresContextRef.value?.renderer.instance as WebGLRenderer | undefined,
+  getScene: () => tresContextRef.value?.scene.value,
+  getCamera: () => camera.value,
+  getCanvas: () => tresContextRef.value?.renderer.instance.domElement,
+})
 
 /*
   * Pinia store definition
@@ -126,47 +350,165 @@ function onOrbitControlsCameraChanged(value: {
   }
 }
 const controlsReady = ref(false)
-function onOrbitControlsReady() {
-  controlsReady.value = true
-}
+const isCompletingBinding = ref(false)
 
 //  === VRMModel ===
-const modelLoaded = ref<boolean>(false)
-const controlEnable = ref<boolean>(false)
-function onVRMModelLoadStart() {
-  modelLoaded.value = false
-  controlEnable.value = false
+const canvasReady = ref(false)
+const modelPhase = ref<ModelPhase>(props.modelSrc ? 'loading' : 'no-model')
+
+function beginSceneBindingCycle(reason: SceneTraceTransactionReason) {
+  latestSceneTransactionReason.value = reason
+  invalidateBindingRevision()
+  resetSceneBindingTransactions()
+  emitSceneTransactionTrace('reset', reason)
+  beginSceneBindingTransaction()
+  emitSceneTransactionTrace('begin', reason)
+  setScenePhaseWithTrace('loading', 'vrm:load-start')
 }
-function onVRMModelCameraPosition(value: Vec3) {
-  cameraPosition.value.x = value.x
-  cameraPosition.value.y = value.y
-  cameraPosition.value.z = value.z
+
+function beginSceneRebind(reason: SceneTraceTransactionReason = 'subtree-remount') {
+  latestSceneTransactionReason.value = reason
+  invalidateBindingRevision()
+
+  if (sceneTransactionDepth.value === 0) {
+    beginSceneBindingTransaction()
+    emitSceneTransactionTrace('begin', reason)
+  }
+
+  setScenePhaseWithTrace('loading', 'controls-ref:detached')
 }
-function onVRMModelModelOrigin(value: Vec3) {
-  modelOrigin.value.x = value.x
-  modelOrigin.value.y = value.y
-  modelOrigin.value.z = value.z
+
+function setScenePhaseWithTrace(phase: ScenePhase, cause: SceneTracePhaseCause) {
+  latestScenePhaseTraceCause.value = cause
+  setScenePhase(phase)
 }
-function onVRMModelModelSize(value: Vec3) {
-  modelSize.value.x = value.x
-  modelSize.value.y = value.y
-  modelSize.value.z = value.z
+
+function commitLastCommittedModelId(expectedRevision: number, nextPhase: ScenePhase) {
+  if (nextPhase !== 'mounted')
+    return
+
+  if (expectedRevision !== bindingRevision.value)
+    return
+
+  const completedModel = pendingCommittedModelIdentity.value
+  if (!completedModel || pendingCommittedModelRevision.value !== expectedRevision)
+    return
+
+  if (!activeModelSrc.value || completedModel.modelSrc !== activeModelSrc.value)
+    return
+
+  const activeRequest = requestedModelIdentity.value
+  if (activeRequest?.modelId !== completedModel.modelId || activeRequest.modelSrc !== completedModel.modelSrc)
+    return
+
+  lastCommittedModelId.value = completedModel.modelId
+  clearPendingCommittedModel()
 }
-function onVRMModelRotationY(value: number) {
-  modelRotationY.value = value
+
+function toSceneLoadTransactionReason(reason: VrmLifecycleReason): SceneTraceTransactionReason {
+  switch (reason) {
+    case 'initial-load':
+    case 'model-reload':
+    case 'model-switch':
+      return reason
+    default:
+      return 'unknown'
+  }
 }
-function onVRMModelEyeHeight(value: number) {
-  eyeHeight.value = value
+
+function resolveScenePhaseAfterBinding(): ScenePhase {
+  if (!canvasReady.value)
+    return 'pending'
+
+  if (!props.modelSrc)
+    return 'no-model'
+
+  if (modelPhase.value === 'error')
+    return 'error'
+
+  if (modelPhase.value === 'ready')
+    return 'mounted'
+
+  return 'loading'
 }
-function onVRMModelLookAtTarget(value: Vec3) {
-  lookAtTarget.value.x = value.x
-  lookAtTarget.value.y = value.y
-  lookAtTarget.value.z = value.z
+
+async function completeSceneBinding(expectedRevision = bindingRevision.value) {
+  if (isCompletingBinding.value)
+    return
+  isCompletingBinding.value = true
+
+  try {
+    setScenePhaseWithTrace('binding', 'binding:start')
+
+    if (pendingSceneBootstrap.value) {
+      applySceneBootstrap(pendingSceneBootstrap.value)
+      pendingSceneBootstrap.value = undefined
+    }
+
+    await nextTick()
+
+    if (expectedRevision !== bindingRevision.value)
+      return
+
+    controlsRef.value?.update()
+
+    if (sceneTransactionDepth.value > 0) {
+      endSceneBindingTransaction()
+      emitSceneTransactionTrace('end', latestSceneTransactionReason.value)
+    }
+
+    const nextPhase = resolveScenePhaseAfterBinding()
+    setScenePhaseWithTrace(nextPhase, 'binding:complete')
+    commitLastCommittedModelId(expectedRevision, nextPhase)
+  }
+  finally {
+    isCompletingBinding.value = false
+  }
 }
+
+function onOrbitControlsReady() {
+  controlsReady.value = true
+
+  if (modelPhase.value === 'ready' && scenePhase.value !== 'mounted')
+    void completeSceneBinding()
+}
+
+const controlEnable = computed(() => {
+  return props.enableOrbitControls
+    && controlsReady.value
+    && modelPhase.value === 'ready'
+    && !sceneMutationLocked.value
+})
+function onVRMModelLoadStart(reason: VrmLifecycleReason) {
+  modelPhase.value = 'loading'
+  pendingSceneBootstrap.value = undefined
+  beginSceneBindingCycle(toSceneLoadTransactionReason(reason))
+  loadingModelIdentity.value = requestedModelIdentity.value
+}
+
+function onVRMSceneBootstrap(value: SceneBootstrap) {
+  pendingSceneBootstrap.value = value
+}
+
 function onVRMModelLoaded(value: string) {
-  lastModelSrc.value = value
-  modelLoaded.value = true
-  controlEnable.value = true
+  activeModelSrc.value = value
+  const completedModel = loadingModelIdentity.value
+  pendingCommittedModelIdentity.value = completedModel?.modelSrc === value
+    ? completedModel
+    : undefined
+  pendingCommittedModelRevision.value = bindingRevision.value
+  loadingModelIdentity.value = undefined
+  modelPhase.value = 'ready'
+  void completeSceneBinding(bindingRevision.value)
+}
+function onVRMModelError(error: unknown) {
+  invalidateBindingRevision()
+  pendingSceneBootstrap.value = undefined
+  modelPhase.value = props.modelSrc ? 'error' : 'no-model'
+  resetSceneBindingTransactions()
+  emitSceneTransactionTrace('reset', 'unknown')
+  setScenePhaseWithTrace(props.modelSrc ? 'error' : 'no-model', 'vrm:error')
+  emit('error', error)
 }
 
 // === sky box ===
@@ -182,7 +524,79 @@ function onSkyBoxReady(EnvPayload: {
 
 // === Tres Canvas ===
 function onTresReady(context: TresContext) {
-  tresCanvasRef.value = context
+  tresContextRef.value = context
+  canvasReady.value = true
+  context.renderer.instance.domElement.addEventListener('pointerdown', onCanvasPointerDown)
+  context.renderer.instance.domElement.addEventListener('pointerup', onCanvasPointerUp)
+  context.renderer.instance.domElement.addEventListener('pointercancel', onCanvasPointerCancel)
+  emitSceneSubtreeTrace('tresCanvasRef', 'attached')
+  setScenePhaseWithTrace(resolveScenePhaseAfterBinding(), 'tres:ready')
+}
+
+function onTresRender() {
+  if (!isStageThreeRuntimeTraceEnabled())
+    return
+
+  const renderer = tresContextRef.value?.renderer.instance
+  if (!renderer)
+    return
+
+  stageThreeRuntimeTraceContext.emit(stageThreeTraceRenderInfoEvent, {
+    drawCalls: renderer.info.render.calls,
+    geometries: renderer.info.memory.geometries,
+    lines: renderer.info.render.lines,
+    points: renderer.info.render.points,
+    textures: renderer.info.memory.textures,
+    ts: performance.now(),
+    triangles: renderer.info.render.triangles,
+  })
+}
+
+const pickingRaycaster = new Raycaster()
+const pickingMouse = new Vector2()
+let activePointer: { id: number, x: number, y: number } | undefined
+
+function onCanvasPointerDown(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0)
+    return
+  activePointer = { id: event.pointerId, x: event.clientX, y: event.clientY }
+}
+
+function onCanvasPointerCancel(event: PointerEvent) {
+  if (activePointer?.id === event.pointerId)
+    activePointer = undefined
+}
+
+function onCanvasPointerUp(event: PointerEvent) {
+  const pointer = activePointer
+  activePointer = undefined
+  if (!pointer || pointer.id !== event.pointerId || !event.isPrimary)
+    return
+  if (!isClickLikePointerGesture(pointer, { x: event.clientX, y: event.clientY }))
+    return
+  handleCanvasInteraction(event)
+}
+
+function handleCanvasInteraction(event: PointerEvent) {
+  const canvasElement = tresContextRef.value?.renderer.instance.domElement
+  if (!canvasElement || !modelRef.value)
+    return
+
+  const rect = canvasElement.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0)
+    return
+
+  pickingMouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  pickingMouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+
+  pickingRaycaster.setFromCamera(pickingMouse, camera.value)
+
+  const activeColliders = modelRef.value.getInteractionColliders?.() ?? []
+  const intersects = pickingRaycaster.intersectObjects([...activeColliders])
+
+  const target = getVrmInteractionTargetFromObjectName(intersects[0]?.object.name ?? '')
+  if (target)
+    emit('vrmInteract', target)
 }
 
 onMounted(() => {
@@ -191,7 +605,28 @@ onMounted(() => {
   }
 })
 
-onUnmounted(() => {})
+onUnmounted(() => {
+  const canvas = tresContextRef.value?.renderer.instance.domElement
+  if (canvas) {
+    canvas.removeEventListener('pointerdown', onCanvasPointerDown)
+    canvas.removeEventListener('pointerup', onCanvasPointerUp)
+    canvas.removeEventListener('pointercancel', onCanvasPointerCancel)
+  }
+  activePointer = undefined
+
+  invalidateBindingRevision()
+  if (tresContextRef.value)
+    emitSceneSubtreeTrace('tresCanvasRef', 'detached')
+
+  canvasReady.value = false
+  tresContextRef.value = undefined
+  activeModelSrc.value = undefined
+  pendingSceneBootstrap.value = undefined
+  resetSceneBindingTransactions()
+  emitSceneTransactionTrace('reset', 'component-unmount')
+  setScenePhaseWithTrace('pending', 'component:unmount')
+  disposeRenderTarget()
+})
 
 const effectProps = {
   saturation: 0.3,
@@ -199,38 +634,116 @@ const effectProps = {
   blendFunction: BlendFunction.SRC,
 }
 
-// === Directional Light ===
-// TODO: wrap <TresDirectionalLight> to integrate all the below code
-const sceneReady = ref(false)
-const dirLightReady = ref(false)
-
-function onDirLightReady() {
-  dirLightReady.value = true
+function applyVrmFrameRuntimeHook() {
+  modelRef.value?.setVrmFrameHook(vrmFrameRuntimeHook.value)
 }
-// Then start to set the camera position and target
+
+watch(() => props.modelSrc, (modelSrc) => {
+  requestedModelIdentity.value = modelSrc
+    ? { modelId: props.modelId, modelSrc }
+    : undefined
+}, { flush: 'sync', immediate: true })
+
+watch(() => props.modelSrc, (modelSrc) => {
+  modelPhase.value = modelSrc ? 'loading' : 'no-model'
+
+  if (!modelSrc) {
+    invalidateBindingRevision()
+    activeModelSrc.value = undefined
+    pendingSceneBootstrap.value = undefined
+    resetSceneBindingTransactions()
+    emitSceneTransactionTrace('reset', 'no-model')
+  }
+
+  setScenePhaseWithTrace(resolveScenePhaseAfterBinding(), 'props:model-src')
+}, { immediate: true })
+
+watch(modelRef, (next, prev) => {
+  if (!prev && next)
+    emitSceneSubtreeTrace('modelRef', 'attached')
+
+  if (next)
+    applyVrmFrameRuntimeHook()
+
+  if (prev && !next) {
+    emitSceneSubtreeTrace('modelRef', 'detached')
+    modelPhase.value = props.modelSrc ? 'loading' : 'no-model'
+    setScenePhaseWithTrace(props.modelSrc ? 'loading' : 'no-model', 'model-ref:detached')
+  }
+}, { flush: 'sync' })
+
+watch(controlsRef, (next, prev) => {
+  if (!prev && next)
+    emitSceneSubtreeTrace('controlsRef', 'attached')
+
+  if (prev && !next) {
+    emitSceneSubtreeTrace('controlsRef', 'detached')
+    controlsReady.value = false
+
+    if (props.modelSrc && !!activeModelSrc.value)
+      beginSceneRebind()
+  }
+}, { flush: 'sync' })
+
+watch(dirLightRef, (next, prev) => {
+  if (!prev && next)
+    emitSceneSubtreeTrace('dirLightRef', 'attached')
+
+  if (prev && !next)
+    emitSceneSubtreeTrace('dirLightRef', 'detached')
+}, { flush: 'sync' })
+
+// === Directional Light ===
+// Directional light setup moved inline, no ready event needed
 watch(
-  [controlsReady, dirLightReady],
-  ([ctrlOk, modelOk]) => {
-    if (ctrlOk && modelOk && camera.value && controlsRef.value && controlsRef.value.controls && dirLightRef.value) {
-      // isUpdatingCamera = true
-      try {
-        // setup initial target of directional light
-        dirLightRef.value.parent?.add(dirLightRef.value.target)
-        dirLightRef.value.target.position.set(
-          directionalLightTarget.value.x,
-          directionalLightTarget.value.y,
-          directionalLightTarget.value.z,
-        )
-        // console.debug("direction light target set: ", dirLightRef.value.target.position)
-        dirLightRef.value.target.updateMatrixWorld()
-      }
-      finally {
-        // isUpdatingCamera = false
-        sceneReady.value = true
-      }
+  [modelPhase, dirLightRef],
+  ([phase, dirLight]) => {
+    if (phase !== 'ready' || !dirLight)
+      return
+
+    try {
+      // setup initial target of directional light
+      dirLight.parent?.add(dirLight.target)
+      dirLight.target.position.set(
+        directionalLightTarget.value.x,
+        directionalLightTarget.value.y,
+        directionalLightTarget.value.z,
+      )
+      dirLight.target.updateMatrixWorld()
+    }
+    catch (error) {
+      console.error('[ThreeScene] Failed to setup directional light:', error)
     }
   },
+  { immediate: true },
 )
+
+watch(scenePhase, (to, from) => {
+  emitScenePhaseTrace(latestScenePhaseTraceCause.value, from, to)
+}, { immediate: true })
+
+watch(sceneMutationLocked, (locked) => {
+  emitSceneMutationLockTrace(locked)
+}, { immediate: true })
+
+const resolvedComponentState = computed<'pending' | 'loading' | 'mounted'>(() => {
+  if (scenePhase.value === 'pending')
+    return 'pending'
+
+  if (scenePhase.value === 'loading' || scenePhase.value === 'binding')
+    return 'loading'
+
+  return 'mounted'
+})
+
+watch(resolvedComponentState, (to, from) => {
+  componentState.value = to
+  emitSceneComponentStateTrace(from, to, {
+    canvasReady: canvasReady.value,
+    controlsReady: controlsReady.value,
+    modelPhase: modelPhase.value,
+  })
+}, { immediate: true })
 
 function updateDirLightTarget(newRotation: { x: number, y: number, z: number }) {
   const light = dirLightRef.value
@@ -260,45 +773,65 @@ function updateDirLightTarget(newRotation: { x: number, y: number, z: number }) 
   light.target.updateMatrixWorld()
 
   directionalLightTarget.value = { x: target.x, y: target.y, z: target.z }
-  // console.debug("directional Light target update!: ", directionalLightTarget.value)
 }
+
+const getScreenBBox = () => screenRef.value?.containerRef?.getBoundingClientRect() ?? { top: 0, left: 0, width: 500, height: 500 }
 
 watch(directionalLightRotation, (newRotation) => {
   updateDirLightTarget(newRotation)
 }, { deep: true })
 
 defineExpose({
-  setExpression: (expression: string) => {
-    modelRef.value?.setExpression(expression)
+  setExpression: (expression: string, intensity = 1) => {
+    modelRef.value?.setExpression(expression, intensity)
+  },
+  // NOTICE: External runtime hooks are intentionally separate from internal VRM model hooks.
+  // This public frame hook is reserved for live pose/tracking input and is forwarded to VRMModel
+  // without exposing the internal model/material lifecycle hook pipeline.
+  setVrmFrameHook: (hook?: VrmFrameRuntimeHook) => {
+    vrmFrameRuntimeHook.value = hook
+    applyVrmFrameRuntimeHook()
   },
   canvasElement: () => {
-    return tresCanvasRef.value?.renderer.instance.domElement
+    return tresContextRef.value?.renderer.instance.domElement
+  },
+  camera: () => camera.value,
+  renderer: () => tresContextRef.value?.renderer.instance,
+  scene: () => modelRef.value?.scene,
+  readRenderTargetRegionAtClientPoint,
+  captureFrame: async () => {
+    if (!tresContextRef.value)
+      return null
+
+    const { renderer, scene } = tresContextRef.value
+    renderer.instance.render(scene.value, camera.value)
+
+    return new Promise<Blob | null>((resolve) => {
+      renderer.instance.domElement.toBlob(resolve)
+    })
   },
 })
 </script>
 
 <template>
-  <div ref="sceneContainerRef" w="100%" h="100%">
+  <Screen ref="screenRef" v-slot="{ width, height }" relative>
     <TresCanvas
-      v-show="true"
-      :camera="camera"
-      :antialias="true"
       :width="width"
       :height="height"
+      :camera="camera"
+      :antialias="true"
+      :dpr="renderScale"
       :tone-mapping="ACESFilmicToneMapping"
       :tone-mapping-exposure="1"
       :clear-alpha="0"
       @ready="onTresReady"
+      @render="onTresRender"
     >
       <OrbitControls
         ref="controlsRef"
         :control-enable="controlEnable"
-        :model-loaded="modelLoaded"
         :model-size="modelSize"
-        :camera-position="cameraPosition"
         :camera-target="modelOrigin"
-        :camera-f-o-v="cameraFOV"
-        :camera-distance="cameraDistance"
         @orbit-controls-camera-changed="onOrbitControlsCameraChanged"
         @orbit-controls-ready="onOrbitControlsReady"
       />
@@ -313,7 +846,7 @@ defineExpose({
         v-else
         :color="formatHex(hemisphereSkyColor)"
         :ground-color="formatHex(hemisphereGroundColor)"
-        :position="[0, 1, 0]"
+        :position="hemisphereLightPosition"
         :intensity="hemisphereLightIntensity"
         cast-shadow
       />
@@ -325,22 +858,23 @@ defineExpose({
       <TresDirectionalLight
         ref="dirLightRef"
         :color="formatHex(directionalLightColor)"
-        :position="[directionalLightPosition.x, directionalLightPosition.y, directionalLightPosition.z]"
+        :position="directionalLightPositionVector"
         :intensity="directionalLightIntensity"
         cast-shadow
-        @ready="onDirLightReady"
       />
       <Suspense>
-        <EffectComposerPmndrs>
+        <EffectComposerPmndrs :multisampling="multisampling">
           <HueSaturationPmndrs v-bind="effectProps" />
         </EffectComposerPmndrs>
       </Suspense>
       <VRMModel
         ref="modelRef"
-
+        :audio-context="props.audioContext"
         :current-audio-source="props.currentAudioSource"
-        :model-src="props.modelSrc"
-        :last-model-src="lastModelSrc"
+        :cursor-position="props.cursorPosition"
+        :last-committed-model-id="lastCommittedModelId"
+        :model-id="requestedModelIdentity?.modelId ?? props.modelId"
+        :model-src="requestedModelIdentity?.modelSrc"
         :idle-animation="props.idleAnimation"
         :paused="props.paused"
         :env-select="envSelect"
@@ -348,24 +882,18 @@ defineExpose({
         :npr-irr-s-h="irrSHTex"
         :model-offset="modelOffset"
         :model-rotation-y="modelRotationY"
-        :look-at-target="lookAtTarget"
         :tracking-mode="trackingMode"
         :eye-height="eyeHeight"
         :camera-position="cameraPosition"
         :camera="camera"
-
+        :screen-bounding-box="getScreenBBox"
         @loading-progress="(val: number) => emit('loadModelProgress', val)"
         @load-start="onVRMModelLoadStart"
-        @camera-position="onVRMModelCameraPosition"
-        @model-origin="onVRMModelModelOrigin"
-        @model-size="onVRMModelModelSize"
-        @model-rotation-y="onVRMModelRotationY"
-        @eye-height="onVRMModelEyeHeight"
-        @look-at-target="onVRMModelLookAtTarget"
-        @error="(err: unknown) => emit('error', err)"
+        @scene-bootstrap="onVRMSceneBootstrap"
+        @error="onVRMModelError"
         @loaded="onVRMModelLoaded"
       />
       <TresAxesHelper v-if="props.showAxes" :size="1" />
     </TresCanvas>
-  </div>
+  </Screen>
 </template>

@@ -6,7 +6,6 @@
  */
 
 import type { AtomSpace } from '../atomspace/atomspace';
-import type { TruthValue, AttentionValue } from '../atomspace/types';
 
 /**
  * Cognitive gene representing a trait

@@ -4,4 +4,4 @@
  * Probabilistic Logic Networks (PLN) and inference engines
  */
 
-export * from './pln';
+export * from './pln'

@@ -4,4 +4,4 @@
  * Multi-agent cognitive coordination and knowledge sharing
  */
 
-export * from './orchestrator';
+export * from './orchestrator'

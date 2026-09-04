@@ -4,4 +4,4 @@
  * Self-generating, evolving cognitive kernels
  */
 
-export * from './kernel';
+export * from './kernel'

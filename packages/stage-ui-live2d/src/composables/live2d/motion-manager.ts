@@ -1,22 +1,30 @@
 import type { Cubism4InternalModel, InternalModel } from 'pixi-live2d-display/cubism4'
 import type { Ref } from 'vue'
 
+import type { Live2DBreathControlState, Live2DMotionControlState } from '../../stores/motion-control'
 import type { BeatSyncController } from './beat-sync'
 import type { useExpressionController } from './expression-controller'
+import type { Live2DMotionSpringController } from './motion-control-spring'
 
+import { sampleLive2DBreath } from '../../stores/motion-control'
 import { useLive2DIdleEyeFocus } from './animation'
 
 type CubismModel = Cubism4InternalModel['coreModel']
 type CubismEyeBlink = Cubism4InternalModel['eyeBlink']
 
+/** The Pixi internal-model surface that AIRI motion plugins consume. */
 export type PixiLive2DInternalModel = InternalModel & {
+  /** Cubism's breath controller, which AIRI removes before it applies its own curve. */
+  breath?: unknown
   eyeBlink?: CubismEyeBlink
   coreModel: CubismModel
 }
 
 export interface MotionManagerUpdateContext {
   model: CubismModel
+  // in seconds
   now: number
+  // in seconds
   timeDelta: number
   hookedUpdate?: (model: CubismModel, now: number) => boolean
 }
@@ -25,7 +33,10 @@ export type MotionManagerPluginContext = MotionManagerUpdateContext & {
   internalModel: PixiLive2DInternalModel
   motionManager: PixiLive2DInternalModel['motionManager']
   modelParameters: Ref<any>
+  live2dEyeTrackingEnabled: Ref<boolean>
+  live2dEyeFocusSourceActive: Ref<boolean>
   live2dIdleAnimationEnabled: Ref<boolean>
+  live2dForceIdleEyeAnimation: Ref<boolean>
   live2dAutoBlinkEnabled: Ref<boolean>
   live2dForceAutoBlinkEnabled: Ref<boolean>
   isIdleMotion: boolean
@@ -39,10 +50,48 @@ export interface UseLive2DMotionManagerUpdateOptions {
   internalModel: PixiLive2DInternalModel
   motionManager: PixiLive2DInternalModel['motionManager']
   modelParameters: Ref<any>
+  live2dEyeTrackingEnabled: Ref<boolean>
+  live2dEyeFocusSourceActive: Ref<boolean>
   live2dIdleAnimationEnabled: Ref<boolean>
+  live2dForceIdleEyeAnimation: Ref<boolean>
   live2dAutoBlinkEnabled: Ref<boolean>
   live2dForceAutoBlinkEnabled: Ref<boolean>
   lastUpdateTime: Ref<number>
+}
+
+/**
+ * Disables the periodic breath pass that the Cubism runtime applies after AIRI's motion plugins.
+ */
+export function disableLive2DSdkBreath(internalModel: { breath?: unknown }) {
+  delete internalModel.breath
+}
+
+/**
+ * Applies AIRI's manual breath curve after normal motion updates.
+ *
+ * A release restores the configured static breath value once. Normal model
+ * motion can own the parameter again on later frames.
+ */
+export function useMotionUpdatePluginBreathControl(
+  control: Ref<Live2DBreathControlState>,
+  nowMs: () => number = Date.now,
+): MotionManagerPlugin {
+  let activeOwnerId: string | null = null
+
+  return (ctx) => {
+    const state = control.value
+    if (!state.active) {
+      if (activeOwnerId !== null)
+        ctx.model.setParameterValueById('ParamBreath', ctx.modelParameters.value.breath)
+      activeOwnerId = null
+      return
+    }
+
+    activeOwnerId = state.ownerId
+    const elapsedSeconds = Math.max(0, nowMs() - state.startedAtMs) / 1000
+    const sample = sampleLive2DBreath(state.options, elapsedSeconds)
+    ctx.model.setParameterValueById('ParamBreath', sample.value)
+  }
 }
 
 export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpdateOptions) {
@@ -50,7 +99,10 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
     internalModel,
     motionManager,
     modelParameters,
+    live2dEyeTrackingEnabled,
+    live2dEyeFocusSourceActive,
     live2dIdleAnimationEnabled,
+    live2dForceIdleEyeAnimation,
     live2dAutoBlinkEnabled,
     live2dForceAutoBlinkEnabled,
     lastUpdateTime,
@@ -92,7 +144,10 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
       internalModel,
       motionManager,
       modelParameters,
+      live2dEyeTrackingEnabled,
+      live2dEyeFocusSourceActive,
       live2dIdleAnimationEnabled,
+      live2dForceIdleEyeAnimation,
       live2dAutoBlinkEnabled,
       live2dForceAutoBlinkEnabled,
       isIdleMotion,
@@ -204,8 +259,8 @@ export function useMotionUpdatePluginIdleDisable(idleEyeFocus = useLive2DIdleEye
     if (!ctx.live2dIdleAnimationEnabled.value && ctx.isIdleMotion) {
       ctx.motionManager.stopAllMotions()
 
-      // Still update eye focus and blink even if idle motion is stopped
-      idleEyeFocus.update(ctx.internalModel, ctx.now)
+      if (ctx.live2dForceIdleEyeAnimation.value && (!ctx.live2dEyeTrackingEnabled.value || !ctx.live2dEyeFocusSourceActive.value))
+        idleEyeFocus.update(ctx.internalModel, ctx.now)
       if (ctx.internalModel.eyeBlink != null) {
         ctx.internalModel.eyeBlink.updateParameters(ctx.model, ctx.timeDelta / 1000)
       }
@@ -223,6 +278,10 @@ export function useMotionUpdatePluginIdleFocus(idleEyeFocus = useLive2DIdleEyeFo
   return (ctx) => {
     if (!ctx.isIdleMotion || ctx.handled)
       return
+    if (!ctx.live2dForceIdleEyeAnimation.value)
+      return
+    if (ctx.live2dEyeTrackingEnabled.value && ctx.live2dEyeFocusSourceActive.value)
+      return
 
     idleEyeFocus.update(ctx.internalModel, ctx.now)
   }
@@ -237,6 +296,7 @@ export function useMotionUpdatePluginAutoEyeBlink(
     startLeft: 1,
     startRight: 1,
     delayMs: 0,
+    openDurationMs: 300,
   }
 
   // Eye values captured at blink start.  Used as the base during
@@ -245,11 +305,13 @@ export function useMotionUpdatePluginAutoEyeBlink(
   let preBlinkLeft = 1.0
   let preBlinkRight = 1.0
   const blinkCloseDuration = 75 // ms
-  const blinkOpenDuration = 75 // ms
+  const minBlinkOpenDuration = 150 // ms
+  const maxBlinkOpenDuration = 300 // ms
   const minDelay = 3000
   const maxDelay = 8000
 
   const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+  const randomBlinkOpenDuration = () => minBlinkOpenDuration + Math.random() * (maxBlinkOpenDuration - minBlinkOpenDuration)
 
   function resetBlinkState() {
     blinkState.phase = 'idle'
@@ -289,13 +351,14 @@ export function useMotionUpdatePluginAutoEyeBlink(
       if (blinkState.progress >= 1) {
         blinkState.phase = 'opening'
         blinkState.progress = 0
+        blinkState.openDurationMs = randomBlinkOpenDuration()
       }
 
       return { eyeLOpen, eyeROpen }
     }
 
     // Opening: move back to the base with ease-in.
-    blinkState.progress = Math.min(1, blinkState.progress + dt / blinkOpenDuration)
+    blinkState.progress = Math.min(1, blinkState.progress + dt / blinkState.openDurationMs)
     const eased = easeInQuad(blinkState.progress)
     const eyeLOpen = clamp01(blinkState.startLeft * eased)
     const eyeROpen = clamp01(blinkState.startRight * eased)
@@ -313,7 +376,7 @@ export function useMotionUpdatePluginAutoEyeBlink(
     // logic from main so that hookUpdate returns the same handled state and
     // the SDK eyeBlink/motion pipeline is not disrupted.
     if (!live2dExpressionEnabled?.value) {
-      if (!ctx.isIdleMotion || ctx.handled)
+      if (!ctx.isIdleMotion || (ctx.handled && !ctx.live2dForceAutoBlinkEnabled.value))
         return
 
       const baseLeft = clamp01(ctx.modelParameters.value.leftEyeOpen)
@@ -330,9 +393,7 @@ export function useMotionUpdatePluginAutoEyeBlink(
 
       // Force ON or eyeBlink null: timer blink + markHandled.
       if (ctx.live2dForceAutoBlinkEnabled.value || !ctx.internalModel.eyeBlink) {
-        const rawDelta = Math.max(ctx.timeDelta ?? 0, 0)
-        const dt = rawDelta < 5 ? rawDelta * 1000 : rawDelta
-        const safeDt = dt || 16
+        const safeDt = ctx.timeDelta * 1000 || 16
         const { eyeLOpen, eyeROpen } = updateForcedBlink(safeDt, baseLeft, baseRight)
         ctx.model.setParameterValueById('ParamEyeLOpen', eyeLOpen)
         ctx.model.setParameterValueById('ParamEyeROpen', eyeROpen)
@@ -399,9 +460,7 @@ export function useMotionUpdatePluginAutoEyeBlink(
 
     // Advance blink timer.
     const wasActive = blinkState.phase !== 'idle'
-    const rawDelta = Math.max(ctx.timeDelta ?? 0, 0)
-    const dt = rawDelta < 5 ? rawDelta * 1000 : rawDelta
-    const safeDt = dt || 16
+    const safeDt = ctx.timeDelta * 1000 || 16
     const { eyeLOpen: blinkFactorL, eyeROpen: blinkFactorR } = updateForcedBlink(safeDt, 1.0, 1.0)
 
     // Blink cycle complete: restore exact pre-blink values.
@@ -435,5 +494,102 @@ export function useMotionUpdatePluginExpression(
   return (ctx) => {
     // Always apply regardless of handled state – expressions layer on top.
     controller.applyExpressions(ctx.model)
+  }
+}
+
+/**
+ * Applies the active manual pose after normal Live2D motion updates.
+ *
+ * The normalized joystick range maps to each standard parameter range. Models
+ * that omit one of these parameters ignore that write through the Cubism API.
+ */
+export function useMotionUpdatePluginManualControl(
+  control: Ref<Live2DMotionControlState>,
+  spring: Live2DMotionSpringController,
+): MotionManagerPlugin {
+  return (ctx) => {
+    const output = spring.step(control.value, ctx.timeDelta)
+    if (!output.active)
+      return
+
+    const { eyeX, eyeY, eyeSquint, headX, headY, headZ, bodyX, bodyY, bodyZ, mouthForm, mouthOpen } = output.pose
+    ctx.model.setParameterValueById('ParamEyeBallX', eyeX)
+    ctx.model.setParameterValueById('ParamEyeBallY', eyeY)
+    const remainingEyeOpen = 1 - eyeSquint
+    ctx.model.setParameterValueById('ParamEyeLOpen', ctx.model.getParameterValueById('ParamEyeLOpen') * remainingEyeOpen)
+    ctx.model.setParameterValueById('ParamEyeROpen', ctx.model.getParameterValueById('ParamEyeROpen') * remainingEyeOpen)
+    ctx.model.setParameterValueById('ParamAngleX', headX * 30)
+    ctx.model.setParameterValueById('ParamAngleY', headY * 30)
+    ctx.model.setParameterValueById('ParamAngleZ', headZ * 30)
+    ctx.model.setParameterValueById('ParamBodyAngleX', bodyX * 10)
+    ctx.model.setParameterValueById('ParamBodyAngleY', bodyY * 10)
+    ctx.model.setParameterValueById('ParamBodyAngleZ', bodyZ * 10)
+    ctx.model.setParameterValueById('ParamMouthForm', mouthForm)
+    ctx.model.setParameterValueById('ParamMouthOpenY', mouthOpen)
+  }
+}
+
+/**
+ * Final-phase plugin that owns ParamMouthOpenY while speech is active and
+ * smoothly cross-fades back to the motion-driven value when speech ends.
+ *
+ * `nowSpeaking` (not `mouthOpenSize > 0`) is the speech boundary, so silent
+ * gaps between phonemes write 0 directly instead of triggering the release.
+ *
+ * After the release tail elapses, the plugin keeps forcing ParamMouthOpenY to 0
+ * for a short handoff hold (HANDOFF_HOLD_MS) before handing control back to
+ * motion/expression plugins. This reliably closes the mouth after speech even
+ * when an idle motion curve leaves a non-zero resting value, while still
+ * letting idle mouth expressions take over shortly after speech ends (rather
+ * than overriding them forever).
+ */
+export function useMotionUpdatePluginLipSync(
+  mouthOpenSize: Ref<number>,
+  nowSpeaking: Ref<boolean>,
+): MotionManagerPlugin {
+  // 200 ms covers a typical phoneme tail without lagging behind the next utterance.
+  const RELEASE_DURATION_MS = 200
+  // After the release tail, keep forcing the mouth shut for this long before
+  // handing control back to motion/expression plugins. This guarantees the
+  // mouth actually closes even on the first idle frame, where a non-zero
+  // resting motion curve would otherwise reopen it immediately.
+  const HANDOFF_HOLD_MS = 500
+
+  let releaseRemainingMs = 0
+  let handoffRemainingMs = 0
+  let lastForcedValue = 0
+
+  // Smoothstep: 3t^2 - 2t^3, eases in/out with zero slope at endpoints.
+  const smoothstep = (t: number) => t * t * (3 - 2 * t)
+
+  return (ctx) => {
+    if (nowSpeaking.value) {
+      lastForcedValue = mouthOpenSize.value
+      releaseRemainingMs = RELEASE_DURATION_MS
+      handoffRemainingMs = HANDOFF_HOLD_MS
+      ctx.model.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
+      return
+    }
+
+    if (releaseRemainingMs <= 0) {
+      if (handoffRemainingMs > 0) {
+        // Release tail elapsed. Keep forcing the mouth shut through the handoff
+        // hold so a non-zero idle motion curve cannot reopen it on the first
+        // idle frame. After the hold we stop owning the parameter and let
+        // motion/expression plugins drive it again.
+        handoffRemainingMs = Math.max(0, handoffRemainingMs - ctx.timeDelta * 1000)
+        ctx.model.setParameterValueById('ParamMouthOpenY', 0)
+      }
+      return
+    }
+
+    releaseRemainingMs = Math.max(0, releaseRemainingMs - ctx.timeDelta * 1000)
+    const blend = smoothstep(1 - releaseRemainingMs / RELEASE_DURATION_MS)
+
+    // ParamMouthOpenY was already written by motion + expression plugins this frame.
+    const motionValue = ctx.model.getParameterValueById('ParamMouthOpenY') as number
+    const blended = lastForcedValue * (1 - blend) + motionValue * blend
+
+    ctx.model.setParameterValueById('ParamMouthOpenY', blended)
   }
 }

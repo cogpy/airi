@@ -1,14 +1,10 @@
 import type {
-  ProtocolEvents,
-  ModuleConfigEnvelope as ProtocolModuleConfigEnvelope,
-  ModuleIdentity as ProtocolModuleIdentity,
+  ExtensionIdentity as ProtocolExtensionIdentity,
   ModulePermissionDeclaration as ProtocolModulePermissionDeclaration,
   ModulePermissionGrant as ProtocolModulePermissionGrant,
-  ModulePhase as ProtocolModulePhase,
-  PluginIdentity as ProtocolPluginIdentity,
 } from '@proj-airi/plugin-protocol/types'
+import type { GenericSchema } from 'valibot'
 
-import type { PluginTransport } from '../transports'
 import type { KitDescriptor } from './kits'
 
 import { isPlainObject } from 'es-toolkit'
@@ -20,6 +16,7 @@ import {
   lazy,
   literal,
   minValue,
+  null_,
   number,
   object,
   optional,
@@ -32,7 +29,7 @@ import {
 } from 'valibot'
 
 /**
- * Lists the supported plugin runtimes recognized by the host.
+ * Lists the supported extension runtimes recognized by the host.
  *
  * Use when:
  * - Validating manifest entrypoints or host runtime configuration
@@ -46,7 +43,7 @@ import {
  */
 export const pluginRuntimeValues = ['electron', 'node', 'web'] as const
 /**
- * Describes one supported plugin runtime.
+ * Describes one supported extension runtime.
  *
  * Use when:
  * - Typing host runtime configuration and manifest runtime selection
@@ -68,7 +65,7 @@ export type PluginRuntime = typeof pluginRuntimeValues[number]
  * - Inputs are runtime strings such as `electron`, `node`, or `web`
  *
  * Returns:
- * - A Valibot schema for one plugin runtime literal
+ * - A Valibot schema for one extension runtime literal
  */
 export const pluginRuntimeSchema = picklist(pluginRuntimeValues)
 
@@ -115,12 +112,12 @@ export interface HostDataRecord {
  * - The recursive union used across shared host data structures
  */
 export type HostDataValue
-  = | null
-    | string
-    | number
-    | boolean
+  = | boolean
     | HostDataArray
     | HostDataRecord
+    | null
+    | number
+    | string
 
 /**
  * Creates the recursive Valibot schema used for one {@link HostDataValue}.
@@ -134,14 +131,14 @@ export type HostDataValue
  * Returns:
  * - A Valibot schema covering the full `HostDataValue` recursion
  */
-export function createHostDataValueSchema() {
+export function createHostDataValueSchema(): GenericSchema<HostDataValue> {
   return union([
-    literal(null),
+    null_(),
     string(),
     boolean(),
     pipe(number(), finite()),
     array(lazy(createHostDataValueSchema)),
-    pipe(record(string(), lazy(createHostDataValueSchema)), check(isPlainObject)),
+    pipe(record(string(), lazy(createHostDataValueSchema)), check<HostDataRecord>(isPlainObject)),
   ])
 }
 
@@ -171,7 +168,10 @@ export const hostDataValueSchema = createHostDataValueSchema()
  * Returns:
  * - A Valibot schema for one host-safe record
  */
-export const hostDataRecordSchema = pipe(record(string(), lazy(createHostDataValueSchema)), check(isPlainObject))
+export const hostDataRecordSchema = pipe(
+  record(string(), lazy(createHostDataValueSchema)),
+  check<HostDataRecord>(isPlainObject),
+)
 
 /**
  * Validates one non-negative safe integer used for timestamps and revisions.
@@ -188,116 +188,52 @@ export const hostDataRecordSchema = pipe(record(string(), lazy(createHostDataVal
 export const nonNegativeIntegerSchema = pipe(number(), safeInteger(), minValue(0))
 
 /**
- * Re-exports the protocol module phase literals used by the host.
+ * Re-exports the protocol extension identity model used by the host.
  *
  * Use when:
- * - Typing module lifecycle phases shared with `@proj-airi/plugin-protocol`
+ * - Typing package/session-level extension authorization callbacks
  *
  * Expects:
- * - Values follow the protocol package lifecycle model
+ * - Values originate from extension manifests and host session identity generation
  *
  * Returns:
- * - The protocol-defined module phase union
+ * - The protocol-defined extension identity type
  */
-export type ModulePhase = ProtocolModulePhase
+export type ExtensionIdentity = ProtocolExtensionIdentity
 
 /**
- * Describes all phases a plugin session can occupy inside `PluginHost`.
+ * Describes a version-1 extension manifest consumed by `ExtensionHost`.
  *
- * Use when:
- * - Typing `PluginHostSession.phase`
- * - Checking host lifecycle transitions
- *
- * Expects:
- * - Protocol phases are extended with host-only bootstrap and shutdown phases
- *
- * Returns:
- * - The full plugin-session lifecycle union
+ * Extension manifests are the install/session-level package description. Module
+ * registration happens later during `defineExtension({ setup })`.
  */
-export type PluginSessionPhase
-  = | 'loading'
-    | 'loaded'
-    | 'authenticating'
-    | 'authenticated'
-    | 'waiting-deps'
-    | ModulePhase
-    | 'stopped'
-
-/**
- * Re-exports the protocol plugin identity model used by the host.
- *
- * Use when:
- * - Typing per-plugin identity values stored on sessions and events
- *
- * Expects:
- * - Values originate from the protocol identity generator or host session service
- *
- * Returns:
- * - The protocol-defined plugin identity type
- */
-export type PluginIdentity = ProtocolPluginIdentity
-
-/**
- * Re-exports the protocol module identity model used by the host.
- *
- * Use when:
- * - Typing plugin session identities and protocol event payloads
- *
- * Expects:
- * - Values originate from the protocol identity generator or host session service
- *
- * Returns:
- * - The protocol-defined module identity type
- */
-export type ModuleIdentity = ProtocolModuleIdentity
-
-/**
- * Re-exports the protocol configuration envelope used for plugin configuration state.
- *
- * Use when:
- * - Typing configuration payloads stored or emitted by the host
- *
- * Expects:
- * - `C` describes the full configuration object carried in the envelope
- *
- * Returns:
- * - The protocol-defined configuration envelope type
- */
-export type ModuleConfigEnvelope<C = Record<string, unknown>> = ProtocolModuleConfigEnvelope<C>
-
-/**
- * Re-exports the protocol compatibility request payload type.
- *
- * Use when:
- * - Typing compatibility negotiation messages in the host
- *
- * Expects:
- * - Values conform to the protocol event payload
- *
- * Returns:
- * - The protocol-defined compatibility request type
- */
-export type ModuleCompatibilityRequest = ProtocolEvents['module:compatibility:request']
-
-/**
- * Re-exports the protocol compatibility result payload type.
- *
- * Use when:
- * - Typing compatibility negotiation responses in the host
- *
- * Expects:
- * - Values conform to the protocol event payload
- *
- * Returns:
- * - The protocol-defined compatibility result type
- */
-export type ModuleCompatibilityResult = ProtocolEvents['module:compatibility:result']
+export interface ExtensionManifestV1 {
+  /** Manifest schema version expected by the current host implementation. */
+  apiVersion: 'v1'
+  /** Runtime-specific extension entrypoints that the host can resolve and import. */
+  entrypoints: {
+    /** Fallback entrypoint used when no runtime-specific path is provided. */
+    default?: string
+    /** Electron-specific entrypoint path. */
+    electron?: string
+    /** Node-specific entrypoint path. */
+    node?: string
+    /** Web-specific entrypoint path. */
+    web?: string
+  }
+  /** Stable extension id used for identity generation and display. */
+  id: string
+  /** Manifest kind discriminator used to identify AIRI extension manifests. */
+  kind: 'manifest.extension.airi.moeru.ai'
+  /** Package/session permission ceiling that module permissions are capped by. */
+  permissions: ModulePermissionDeclaration
+}
 
 /**
  * Re-exports the protocol permission declaration model used by manifests and runtime permission flow.
  *
  * Use when:
- * - Typing requested permissions in plugin manifests and host sessions
+ * - Typing requested permissions in extension manifests and host sessions
  *
  * Expects:
  * - Values conform to the protocol permission declaration model
@@ -321,183 +257,146 @@ export type ModulePermissionDeclaration = ProtocolModulePermissionDeclaration
  */
 export type ModulePermissionGrant = ProtocolModulePermissionGrant
 
-/**
- * Describes a version-1 plugin manifest consumed by `PluginHost`.
- *
- * Use when:
- * - Loading a plugin from disk or another runtime
- * - Typing manifest values in tests and host options
- *
- * Expects:
- * - `kind` and `apiVersion` match the current manifest format
- *
- * Returns:
- * - The structured plugin manifest contract understood by the host
- */
-export interface ManifestV1 {
-  /** Manifest schema version expected by the current host implementation. */
-  apiVersion: 'v1'
-  /** Manifest kind discriminator used to identify AIRI plugin manifests. */
-  kind: 'manifest.plugin.airi.moeru.ai'
-  /** Stable plugin name used for identity generation and display. */
-  name: string
-  /** Requested permissions that the host will evaluate and grant. */
-  permissions: ModulePermissionDeclaration
-  /** Runtime-specific module entrypoints that the host can resolve and import. */
-  entrypoints: {
-    /** Fallback entrypoint used when no runtime-specific path is provided. */
-    default?: string
-    /** Electron-specific entrypoint path. */
-    electron?: string
-    /** Node-specific entrypoint path. */
-    node?: string
-    /** Web-specific entrypoint path. */
-    web?: string
-  }
-}
-
 const localizableSchema = union([
   string(),
   object({
-    key: string(),
     fallback: optional(string()),
+    key: string(),
     params: optional(record(string(), union([string(), number(), boolean()]))),
   }),
 ])
 
-/**
- * Validates a version-1 plugin manifest.
- *
- * Use when:
- * - Parsing plugin manifests before loading them into the host
- *
- * Expects:
- * - Inputs follow the `ManifestV1` shape including permission declarations and entrypoints
- *
- * Returns:
- * - A Valibot schema for the AIRI plugin manifest format
- */
-export const manifestV1Schema = object({
-  apiVersion: literal('v1'),
-  kind: literal('manifest.plugin.airi.moeru.ai'),
-  name: string(),
-  permissions: object({
-    apis: optional(array(object({
-      key: string(),
-      actions: array(picklist(['invoke', 'emit'])),
-      reason: optional(localizableSchema),
-      label: optional(localizableSchema),
-      required: optional(boolean()),
-    }))),
-    resources: optional(array(object({
-      key: string(),
-      actions: array(picklist(['read', 'write', 'subscribe'])),
-      reason: optional(localizableSchema),
-      label: optional(localizableSchema),
-      required: optional(boolean()),
-    }))),
-    capabilities: optional(array(object({
-      key: string(),
-      actions: array(picklist(['wait', 'snapshot'])),
-      reason: optional(localizableSchema),
-      label: optional(localizableSchema),
-      required: optional(boolean()),
-    }))),
-    processors: optional(array(object({
-      key: string(),
-      actions: array(picklist(['register', 'execute', 'manage'])),
-      reason: optional(localizableSchema),
-      label: optional(localizableSchema),
-      required: optional(boolean()),
-    }))),
-    pipelines: optional(array(object({
-      key: string(),
-      actions: array(picklist(['hook', 'process', 'emit', 'manage'])),
-      reason: optional(localizableSchema),
-      label: optional(localizableSchema),
-      required: optional(boolean()),
-    }))),
-  }),
-  entrypoints: object({
-    default: optional(string()),
-    electron: optional(string()),
-    node: optional(string()),
-    web: optional(string()),
-  }),
+const permissionDeclarationSchema = object({
+  apis: optional(array(object({
+    actions: array(picklist(['invoke', 'emit'])),
+    key: string(),
+    label: optional(localizableSchema),
+    reason: optional(localizableSchema),
+    required: optional(boolean()),
+  }))),
+  capabilities: optional(array(object({
+    actions: array(picklist(['wait', 'snapshot'])),
+    key: string(),
+    label: optional(localizableSchema),
+    reason: optional(localizableSchema),
+    required: optional(boolean()),
+  }))),
+  pipelines: optional(array(object({
+    actions: array(picklist(['hook', 'process', 'emit', 'manage'])),
+    key: string(),
+    label: optional(localizableSchema),
+    reason: optional(localizableSchema),
+    required: optional(boolean()),
+  }))),
+  processors: optional(array(object({
+    actions: array(picklist(['register', 'execute', 'manage'])),
+    key: string(),
+    label: optional(localizableSchema),
+    reason: optional(localizableSchema),
+    required: optional(boolean()),
+  }))),
+  resources: optional(array(object({
+    actions: array(picklist(['read', 'write', 'subscribe'])),
+    key: string(),
+    label: optional(localizableSchema),
+    reason: optional(localizableSchema),
+    required: optional(boolean()),
+  }))),
+})
+
+const manifestEntrypointsSchema = object({
+  default: optional(string()),
+  electron: optional(string()),
+  node: optional(string()),
+  web: optional(string()),
 })
 
 /**
- * Configures how the host resolves and loads a plugin entrypoint.
+ * Validates a version-1 extension manifest.
  *
  * Use when:
- * - Calling `PluginHost.load(...)` or loader helpers directly
+ * - Parsing `extension.airi.json` before loading an extension into the host
  *
  * Expects:
- * - Omitted fields fall back to host defaults
+ * - Inputs use `id`, not legacy plugin `name`
+ * - `permissions` describes the extension-level install/session ceiling
  *
  * Returns:
- * - Runtime and working-directory overrides for one load operation
+ * - A Valibot schema for the AIRI extension manifest format
  */
-export interface PluginLoadOptions {
-  /** Working directory used to resolve relative manifest entrypoints. */
-  cwd?: string
-  /** Runtime used when selecting a manifest entrypoint. */
-  runtime?: PluginRuntime
+export const extensionManifestV1Schema = object({
+  apiVersion: literal('v1'),
+  entrypoints: manifestEntrypointsSchema,
+  id: string(),
+  kind: literal('manifest.extension.airi.moeru.ai'),
+  permissions: permissionDeclarationSchema,
+})
+
+/**
+ * Installs one generic host feature into `ExtensionHost`.
+ *
+ * Use when:
+ * - The host should register kits, resources, capabilities, or runtime-specific behavior
+ *
+ * Expects:
+ * - Installation is idempotent for one host instance
+ * - Contributions keep domain-specific behavior out of the low-level host core
+ *
+ * Returns:
+ * - No value; the contribution mutates the provided install context
+ */
+export interface ExtensionHostContribution {
+  install: (context: ExtensionHostInstallContext) => void
 }
 
 /**
- * Configures one `PluginHost` instance.
+ * Provides the host-owned registration surface that contributions can use during installation.
  *
  * Use when:
- * - Constructing a host with specific runtime, transport, or permission behavior
+ * - Installing a host feature into `ExtensionHost`
+ * - Registering kits, resources, or capabilities
+ *
+ * Expects:
+ * - Installation happens during `ExtensionHost` construction
+ *
+ * Returns:
+ * - Registration helpers that keep `ExtensionHost` generic while allowing host-specific features
+ */
+export interface ExtensionHostInstallContext {
+  announceCapability: (key: string, metadata?: Record<string, unknown>) => void
+  markCapabilityDegraded: (key: string, metadata?: Record<string, unknown>) => void
+  markCapabilityReady: (key: string, metadata?: Record<string, unknown>) => void
+  registerKit: (kit: KitDescriptor) => KitDescriptor
+  setResourceResolver: <T>(key: string, resolver: () => Promise<T> | T) => void
+  setResourceValue: <T>(key: string, value: T) => void
+  unregisterKit: (kitId: string) => KitDescriptor | undefined
+  withdrawCapability: (key: string, metadata?: Record<string, unknown>) => void
+}
+
+/**
+ * Configures one `ExtensionHost` instance.
+ *
+ * Use when:
+ * - Constructing a host with specific runtime, permission, or contribution behavior
  *
  * Expects:
  * - Omitted fields fall back to the host defaults documented below
  *
  * Returns:
- * - The host bootstrap options consumed by {@link import('../core').PluginHost}
+ * - The host bootstrap options consumed by {@link import('../core').ExtensionHost}
  */
-export interface PluginHostOptions {
+export interface ExtensionHostOptions {
+  /** Installable host features that can register kits, resources, and capabilities. @default [] */
+  contributions?: ExtensionHostContribution[]
+  /** Callback that decides the granted permission set for one extension session. */
+  permissionResolver?: (payload: {
+    identity: ExtensionIdentity
+    manifest: ExtensionManifestV1
+    persisted?: ModulePermissionGrant
+    requested: ModulePermissionDeclaration
+  }) => ModulePermissionGrant | Promise<ModulePermissionGrant>
   /** Runtime used when callers do not override it per load/start call. @default 'electron' */
   runtime?: PluginRuntime
-  /** Transport used when callers do not override it per load/start call. @default { kind: 'in-memory' } */
-  transport?: PluginTransport
-  /** Protocol version advertised during compatibility negotiation. @default 'v1' */
-  protocolVersion?: string
-  /** Plugin SDK API version advertised during compatibility negotiation. @default 'v1' */
-  apiVersion?: string
-  /** Additional protocol versions the host is willing to negotiate. @default [] */
-  supportedProtocolVersions?: string[]
-  /** Additional API versions the host is willing to negotiate. @default [] */
-  supportedApiVersions?: string[]
-  /** Callback that decides the granted permission set for one plugin session. */
-  permissionResolver?: (payload: {
-    identity: ModuleIdentity
-    manifest: ManifestV1
-    requested: ModulePermissionDeclaration
-    persisted?: ModulePermissionGrant
-  }) => ModulePermissionGrant | Promise<ModulePermissionGrant>
-  /** Installable host features that can extend session APIs and register host behavior. @default [] */
-  contributions?: PluginHostContribution[]
-}
-
-/**
- * Describes the stable session metadata exposed to host-installed contributions.
- *
- * Use when:
- * - Building contribution-owned session APIs
- * - Hooking plugin-session lifecycle work outside the core `PluginHost`
- *
- * Expects:
- * - Values come from the currently executing plugin session
- *
- * Returns:
- * - A minimal session context safe to pass outside `PluginHost`
- */
-export interface PluginHostSessionContext {
-  sessionId: string
-  ownerPluginId: string
-  runtime: PluginRuntime
 }
 
 /**
@@ -510,143 +409,39 @@ export interface PluginHostSessionContext {
  * - The permission key/action pair matches the manifest permission contract
  *
  * Returns:
- * - The permission request consumed by `PluginHost.assertPermission(...)`
+ * - The permission request consumed by `ExtensionHost.assertPermission(...)`
  */
-export interface PluginHostPermissionRequest {
-  area: 'apis' | 'resources' | 'capabilities' | 'processors' | 'pipelines'
+export interface ExtensionHostPermissionRequest {
   action: string
+  area: 'apis' | 'capabilities' | 'pipelines' | 'processors' | 'resources'
   key: string
   reason?: string
 }
 
 /**
- * Provides the host-owned registration surface that contributions can use during installation.
+ * Configures how the host resolves and loads an extension entrypoint.
  *
  * Use when:
- * - Installing a host feature into `PluginHost`
- * - Registering session API namespaces, kits, resources, capabilities, or lifecycle hooks
+ * - Calling loader helpers directly
  *
  * Expects:
- * - Installation happens during `PluginHost` construction
- * - Session API namespace names are unique across all contributions and built-in namespaces
+ * - Omitted fields fall back to host defaults
  *
  * Returns:
- * - Registration helpers that keep `PluginHost` generic while allowing extensions
+ * - Runtime and working-directory overrides for one load operation
  */
-export interface PluginHostInstallContext {
-  registerSessionApi: (namespace: string, factory: PluginSessionApiFactory) => void
-  registerLifecycleHook: (event: PluginHostLifecycleEvent, hook: PluginHostLifecycleHook) => void
-  registerKit: (kit: KitDescriptor) => KitDescriptor
-  unregisterKit: (kitId: string) => KitDescriptor | undefined
-  setResourceResolver: <T>(key: string, resolver: () => Promise<T> | T) => void
-  setResourceValue: <T>(key: string, value: T) => void
-  announceCapability: (key: string, metadata?: Record<string, unknown>) => void
-  markCapabilityReady: (key: string, metadata?: Record<string, unknown>) => void
-  markCapabilityDegraded: (key: string, metadata?: Record<string, unknown>) => void
-  withdrawCapability: (key: string, metadata?: Record<string, unknown>) => void
+export interface ExtensionLoadOptions {
+  /** Working directory used to resolve relative manifest entrypoints. */
+  cwd?: string
+  /** Runtime used when selecting a manifest entrypoint. */
+  runtime?: PluginRuntime
 }
 
 /**
- * Describes the context passed into one contribution-owned session API factory.
+ * Configures one `ExtensionHost.start(...)` call.
  *
  * Use when:
- * - Creating a custom namespace that will be attached to `session.apis`
- *
- * Expects:
- * - `session` refers to the plugin session currently being assembled
- * - `assertPermission` is called inside contribution methods before privileged work
- *
- * Returns:
- * - The context needed to build one session API namespace
- */
-export interface PluginSessionApiFactoryContext {
-  host: PluginHostInstallContext
-  session: PluginHostSessionContext
-  assertPermission: (input: PluginHostPermissionRequest) => void
-}
-
-/**
- * Builds one custom session API namespace installed by a host contribution.
- *
- * Use when:
- * - Extending `session.apis` with a plugin-host-specific namespace
- *
- * Expects:
- * - The returned value is an object-like namespace safe to expose to plugin code
- *
- * Returns:
- * - The namespace object attached to `session.apis[namespace]`
- */
-export type PluginSessionApiFactory<TNamespace = unknown> = (context: PluginSessionApiFactoryContext) => TNamespace
-
-/**
- * Enumerates the host lifecycle moments contributions may observe.
- *
- * Use when:
- * - Registering contribution hooks tied to session load, readiness, or stop events
- *
- * Expects:
- * - Hooks are synchronous and should stay lightweight
- *
- * Returns:
- * - The supported lifecycle event names for `registerLifecycleHook(...)`
- */
-export type PluginHostLifecycleEvent = 'session-loaded' | 'session-ready' | 'session-stopped'
-
-/**
- * Describes the context passed into one contribution lifecycle hook.
- *
- * Use when:
- * - Reacting to a plugin session lifecycle event outside the generic host core
- *
- * Expects:
- * - `session` and `manifest` refer to the active session at the time of the hook
- *
- * Returns:
- * - The snapshot available to contribution lifecycle hooks
- */
-export interface PluginHostLifecycleHookContext {
-  host: PluginHostInstallContext
-  session: PluginHostSessionContext
-  manifest: ManifestV1
-}
-
-/**
- * Handles one contribution-owned lifecycle event emitted by `PluginHost`.
- *
- * Use when:
- * - A contribution needs to observe session loading, readiness, or teardown
- *
- * Expects:
- * - Hooks are synchronous and should throw only for deterministic setup failures
- *
- * Returns:
- * - No value; side effects are owned by the contribution
- */
-export type PluginHostLifecycleHook = (context: PluginHostLifecycleHookContext) => void
-
-/**
- * Installs one generic host feature into `PluginHost`.
- *
- * Use when:
- * - The host should register extra session APIs or bootstrap runtime-specific behavior
- *
- * Expects:
- * - Installation is idempotent for one host instance
- * - Contributions keep domain-specific behavior out of the low-level host core
- *
- * Returns:
- * - No value; the contribution mutates the provided install context
- */
-export interface PluginHostContribution {
-  install: (context: PluginHostInstallContext) => void
-}
-
-/**
- * Configures one `PluginHost.start(...)` or `PluginHost.init(...)` call.
- *
- * Use when:
- * - Starting a session with runtime, compatibility, or capability-wait overrides
+ * - Starting a session with runtime or working-directory overrides
  *
  * Expects:
  * - Omitted fields fall back to host defaults or method-local defaults
@@ -654,17 +449,9 @@ export interface PluginHostContribution {
  * Returns:
  * - Per-start overrides for initialization behavior
  */
-export interface PluginStartOptions {
+export interface ExtensionStartOptions {
   /** Working directory used to resolve relative manifest entrypoints. */
   cwd?: string
   /** Runtime override used for this specific start operation. */
   runtime?: PluginRuntime
-  /** Whether initialization should stop in configuration-needed instead of auto-readying. */
-  requireConfiguration?: boolean
-  /** Compatibility ranges sent during protocol negotiation. */
-  compatibility?: Omit<ModuleCompatibilityRequest, 'protocolVersion' | 'apiVersion'>
-  /** Capability keys that must become ready before the session can proceed. */
-  requiredCapabilities?: string[]
-  /** Wait timeout applied to each required capability. @default 15000 */
-  capabilityWaitTimeoutMs?: number
 }

@@ -1,11 +1,13 @@
 import { join, resolve } from 'node:path'
 
-import { BrowserWindow, shell } from 'electron'
+import { initScreenCaptureForWindow } from '@proj-airi/electron-screen-capture/main'
+import { BrowserWindow } from 'electron'
 
 import icon from '../../../../resources/icon.png?asset'
 
 import { baseUrl, getElectronMainDirname, load, withHashRoute } from '../../libs/electron/location'
 import { createReusableWindow } from '../../libs/electron/window-manager'
+import { protectPrivilegedWindowNavigation } from '../shared'
 
 export interface OpenDevtoolsWindowParams extends Partial<Electron.Rectangle> {
   key: string
@@ -47,12 +49,12 @@ export function setupDevtoolsWindow(): DevtoolsWindowManager {
         if (reusableWindows.get(key) === reusable)
           reusableWindows.delete(key)
       })
-      window.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url)
-        return { action: 'deny' }
-      })
+      protectPrivilegedWindowNavigation(window)
+      initScreenCaptureForWindow(window)
 
-      await load(window, withHashRoute(rendererBase, route))
+      await load(window, withHashRoute(rendererBase, route, {
+        query: { 'synced-leader': 'false' },
+      }))
       return window
     })
 

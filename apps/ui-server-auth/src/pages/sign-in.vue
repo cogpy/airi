@@ -9,13 +9,24 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
+  trackLoginFailed,
+  trackLoginStarted,
+  trackLoginSucceeded,
+  trackSignupFormCompleted,
+} from '../modules/analytics'
+import { buildCurrentOriginAuthUiUrl } from '../modules/auth-ui-base'
+import {
   checkEmail,
   describeAuthError,
   signInWithEmail,
   signUpWithEmail,
 } from '../modules/email-password'
 import { getServerAuthBootstrapContext } from '../modules/server-auth-context'
-import { createServerSignInContext, requestSocialSignInRedirect } from '../modules/sign-in'
+import {
+  createServerSignInContext,
+  requestSocialSignInRedirect,
+  SocialSignInTimeoutError,
+} from '../modules/sign-in'
 
 type Step = 'identify' | 'password' | 'create'
 
@@ -46,10 +57,10 @@ const signInContext = computed(() => createServerSignInContext(currentUrl, apiSe
 
 // Outside an OIDC flow signInContext.callbackURL is bare `/` which Better Auth
 // resolves against the API server origin (404). Fall back to the UI root so
-// the user lands somewhere useful — the `/auth/` index route redirects to
-// `/auth/profile` so this is not the dead-end empty RouterView it once was.
-const uiHomeURL = `${window.location.origin}/auth/`
-const verifySuccessURL = `${window.location.origin}/auth/verify-email?verified=true`
+// the user lands somewhere useful — the `/ui/` index route redirects to
+// `/ui/profile` so this is not the dead-end empty RouterView it once was.
+const uiHomeURL = buildCurrentOriginAuthUiUrl()
+const verifySuccessURL = buildCurrentOriginAuthUiUrl('/verify-email?verified=true')
 
 const effectiveCallbackURL = computed(() =>
   signInContext.value.callbackURL === '/' ? uiHomeURL : signInContext.value.callbackURL,
@@ -78,6 +89,17 @@ const requestedProvider = computed<OAuthProvider | null>(() => {
 
   return provider as OAuthProvider
 })
+
+const requestedProviderName = computed(() => {
+  if (!requestedProvider.value)
+    return ''
+
+  return defaultSignInProviders.find(provider => provider.id === requestedProvider.value)?.name ?? requestedProvider.value
+})
+
+const isProviderHandoffActive = computed(() =>
+  requestedProvider.value !== null && pendingProvider.value === requestedProvider.value,
+)
 
 const stepHeading = computed(() => {
   if (step.value === 'password')
@@ -126,10 +148,14 @@ async function handleProviderSelect(provider: OAuthProvider) {
       callbackURL: effectiveCallbackURL.value,
     })
 
+    trackLoginStarted({ method: provider })
     window.location.href = redirectUrl
   }
   catch (error) {
-    errorMessage.value = describeAuthError(error) || t('server.auth.signIn.error.fallback')
+    trackLoginFailed({ method: provider })
+    errorMessage.value = error instanceof SocialSignInTimeoutError
+      ? t('server.auth.signIn.error.providerTimeout')
+      : describeAuthError(error) || t('server.auth.signIn.error.fallback')
     pendingProvider.value = null
   }
 }
@@ -149,7 +175,7 @@ async function handleIdentify(event: Event) {
     if (result.exists && !result.hasPassword) {
       // User signed up via a social provider only. Stay on the identifier step
       // so the OAuth buttons remain visible, and steer them there with a hint.
-      errorMessage.value = t('server.auth.signIn.error.authFailed')
+      errorMessage.value = t('server.auth.signIn.error.socialOnlyNoPassword')
       // NOTICE:
       // We avoid disclosing *which* social provider they used here. The
       // generic OAuth button row is right below; users who registered via
@@ -186,7 +212,7 @@ async function handleEmailSignIn(event: Event) {
     if (result.requiresVerification) {
       // Existing-but-unverified accounts that started from /oauth2/authorize
       // must carry the OIDC continuation through verification. Without it the
-      // verify-email tab would resume to /auth/profile after the cookie lands
+      // verify-email tab would resume to /ui/profile after the cookie lands
       // and the upstream stage app never receives its auth code/tokens.
       await router.push({
         path: '/verify-email',
@@ -201,9 +227,11 @@ async function handleEmailSignIn(event: Event) {
     // After a successful credential sign-in better-auth has set the session
     // cookie. Bounce into the OIDC `/oauth2/authorize` flow (or wherever the
     // OIDC client originally pointed) so the upstream stage app gets its tokens.
+    trackLoginSucceeded({ method: 'email' })
     window.location.href = result.redirectURL ?? effectiveCallbackURL.value
   }
   catch (error) {
+    trackLoginFailed({ method: 'email' })
     errorMessage.value = describeAuthError(error) || t('server.auth.signIn.error.fallback')
   }
   finally {
@@ -236,6 +264,7 @@ async function handleEmailSignUp(event: Event) {
     })
 
     if (result.requiresVerification) {
+      trackSignupFormCompleted({ source: 'email', requires_verification: true })
       await router.push({
         path: '/verify-email',
         query: {
@@ -248,6 +277,7 @@ async function handleEmailSignUp(event: Event) {
 
     // Verification disabled at server config: session is live, fall through
     // to the OIDC continuation just like sign-in.
+    trackSignupFormCompleted({ source: 'email', requires_verification: false })
     window.location.href = effectiveCallbackURL.value
   }
   catch (error) {
@@ -261,6 +291,28 @@ async function handleEmailSignUp(event: Event) {
 
 <template>
   <main
+    v-if="isProviderHandoffActive"
+    :class="[
+      'min-h-screen flex flex-col items-center justify-center px-6 py-10 font-cuteen',
+    ]"
+  >
+    <section
+      :class="['flex flex-col items-center text-center']"
+      role="status"
+      aria-live="polite"
+    >
+      <div
+        :class="['i-svg-spinners:ring-resize mb-5 h-9 w-9 text-neutral-600 dark:text-neutral-300']"
+        aria-hidden="true"
+      />
+      <div :class="['text-lg font-semibold']">
+        {{ t('server.auth.signIn.message.redirecting', { provider: requestedProviderName }) }}
+      </div>
+    </section>
+  </main>
+
+  <main
+    v-else
     :class="[
       'min-h-screen flex flex-col items-center justify-center px-6 py-10 font-cuteen',
     ]"
@@ -277,7 +329,7 @@ async function handleEmailSignUp(event: Event) {
          when there's nothing to show; the role swaps to alert when populated. -->
     <div
       :class="[
-        'mb-2 max-w-xs w-full min-h-[1.25rem] text-center text-sm',
+        'mb-2 max-w-sm w-full min-h-[1.25rem] text-center text-sm',
         errorMessage ? 'text-red-500' : 'text-transparent select-none',
       ]"
       :role="errorMessage ? 'alert' : undefined"
@@ -401,7 +453,7 @@ async function handleEmailSignUp(event: Event) {
           v-for="provider in defaultSignInProviders"
           :key="provider.id"
           :class="['w-full', 'py-2', 'flex', 'items-center', 'justify-center']"
-          :icon="provider.id === 'google' ? 'i-simple-icons-google' : provider.id === 'github' ? 'i-simple-icons-github' : undefined"
+          :icon="provider.icon"
           :loading="pendingProvider === provider.id"
           @click="handleProviderSelect(provider.id)"
         >

@@ -1,118 +1,97 @@
 import type { Card, ccv3 } from '@proj-airi/ccc'
 
+import type { AiriCard, AiriExtension } from '../../types/airiCard'
+
 import { useLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
-import { watchDebounced } from '@vueuse/core'
 import { nanoid } from 'nanoid'
-import { defineStore, storeToRefs } from 'pinia'
+import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import SystemPromptV2 from '../../constants/prompts/system-v2'
 
 import { DEFAULT_ARTISTRY_WIDGET_SPAWNING_PROMPT } from '../../constants/prompts/character-defaults'
+import { captureAnalyticsEvent } from '../../libs/analytics'
 import { useSettingsStageModel } from '../settings/stage-model'
 import { useArtistryStore } from './artistry'
 import { useConsciousnessStore } from './consciousness'
 import { useSpeechStore } from './speech'
+import { useVisionStore } from './vision'
 
-export interface AiriExtension {
-  modules: {
-    consciousness: {
-      provider: string // Example: "openai"
-      model: string // Example: "gpt-4o"
-    }
+export type { AiriCard, AiriExtension } from '../../types/airiCard'
 
-    speech: {
-      provider: string // Example: "elevenlabs"
-      model: string // Example: "eleven_multilingual_v2"
-      voice_id: string // Example: "alloy"
+function resolveSystemPrompt(card: AiriCard | undefined): string {
+  if (!card)
+    return ''
 
-      pitch?: number
-      rate?: number
-      ssml?: boolean
-      language?: string
-    }
+  // Position-sensitive CCv3 fields are deliberately excluded until provider
+  // message assembly owns their ordering and role semantics.
+  const systemPromptParts = [
+    card.systemPrompt,
+    card.description,
+    card.personality,
+    card.scenario,
+    card.extensions.airi.modules.artistry?.widgetInstruction,
+  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
 
-    vrm?: {
-      source?: 'file' | 'url'
-      file?: string // Example: "vrm/model.vrm"
-      url?: string // Example: "https://example.com/vrm/model.vrm"
-    }
-
-    live2d?: {
-      source?: 'file' | 'url'
-      file?: string // Example: "live2d/model.json"
-      url?: string // Example: "https://example.com/live2d/model.json"
-    }
-
-    // ID from display-models store (e.g. 'preset-live2d-1', 'display-model-<nanoid>')
-    displayModelId?: string
-    activeBackgroundId?: string
-
-    artistry?: {
-      enabled?: boolean
-      provider?: string
-      model?: string
-      promptPrefix?: string
-      workflowId?: string
-      widgetInstruction?: string
-      spawnMode?: 'bg' | 'widget' | 'inline' | 'bg_widget'
-      options?: Record<string, any>
-      autonomousEnabled?: boolean
-      autonomousThreshold?: number
-      autonomousTarget?: 'user' | 'assistant'
-    }
-  }
-
-  agents: {
-    [key: string]: { // example: minecraft
-      prompt: string
-      enabled?: boolean
-    }
-  }
-}
-
-export interface AiriCard extends Card {
-  extensions: {
-    airi: AiriExtension
-  } & Card['extensions']
+  return systemPromptParts.join('\n\n')
 }
 
 export const useAiriCardStore = defineStore('airi-card', () => {
   const { t } = useI18n()
 
-  const cards = useLocalStorageManualReset<Map<string, AiriCard>>('airi-cards', new Map())
-  const activeCardId = useLocalStorageManualReset<string>('airi-card-active-id', 'default')
+  // Pinia synchronization owns cross-window updates. Local storage only loads
+  // and saves this renderer's durable copy; listening to storage events here
+  // would create a second cross-window state channel and echo cloned maps.
+  const cards = useLocalStorageManualReset<Map<string, AiriCard>>('airi-cards', new Map(), { listenToStorageChanges: false })
+  const activeCardId = useLocalStorageManualReset<string>('airi-card-active-id', 'default', { listenToStorageChanges: false })
+  let initialized = false
 
   const activeCard = computed(() => cards.value.get(activeCardId.value))
+  function useRuntimeModuleStores() {
+    return {
+      artistry: useArtistryStore(),
+      consciousness: useConsciousnessStore(),
+      speech: useSpeechStore(),
+      stageModel: useSettingsStageModel(),
+      vision: useVisionStore(),
+    }
+  }
 
-  const consciousnessStore = useConsciousnessStore()
-  const speechStore = useSpeechStore()
-  const artistryStore = useArtistryStore()
-  const stageModelStore = useSettingsStageModel()
-
-  const {
-    activeProvider: activeConsciousnessProvider,
-    activeModel: activeConsciousnessModel,
-  } = storeToRefs(consciousnessStore)
-
-  const {
-    activeSpeechProvider,
-    activeSpeechVoiceId,
-    activeSpeechModel,
-  } = storeToRefs(speechStore)
-
-  const addCard = (card: AiriCard | Card | ccv3.CharacterCardV3) => {
+  /**
+   * `source` feeds the `card_created` analytics event: `scratch` = built in
+   * the creation dialog, `import` = ccv3 JSON upload, `duplicate` = cloned
+   * from an existing card (profile switcher). Required so a new call site
+   * can't silently degrade creation attribution.
+   */
+  const addCard = async (card: AiriCard | Card | ccv3.CharacterCardV3, source: 'scratch' | 'import' | 'duplicate') => {
     const newCardId = nanoid()
     cards.value.set(newCardId, newAiriCard(card))
+    captureAnalyticsEvent('card_created', { card_id: newCardId, source })
     return newCardId
   }
 
-  const removeCard = (id: string) => {
-    cards.value.delete(id)
+  const removeCard = async (id: string) => {
+    // The built-in card is the guaranteed fallback for every runtime profile.
+    if (id === 'default')
+      return false
+
+    const removed = cards.value.delete(id)
+    if (!removed)
+      return false
+
+    // The active id is persisted independently from the card map. Reset it
+    // before consumers observe a dangling runtime profile after deletion.
+    if (activeCardId.value === id) {
+      activeCardId.value = 'default'
+      applyActiveCardSettings()
+    }
+
+    captureAnalyticsEvent('character_deleted', { character_id: id })
+    return true
   }
 
-  const updateCard = (id: string, updates: AiriCard | Card | ccv3.CharacterCardV3) => {
+  const updateCard = async (id: string, updates: AiriCard | Card | ccv3.CharacterCardV3) => {
     const existingCard = cards.value.get(id)
     if (!existingCard)
       return false
@@ -122,7 +101,11 @@ export const useAiriCardStore = defineStore('airi-card', () => {
       ...updates,
     }
 
-    cards.value.set(id, newAiriCard(updatedCard))
+    const card = newAiriCard(updatedCard)
+    cards.value.set(id, card)
+    if (id === activeCardId.value)
+      applyActiveCardSettings(card)
+
     return true
   }
 
@@ -130,7 +113,120 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     return cards.value.get(id)
   }
 
+  function updateActiveCardModules(patch: (extension: AiriExtension) => Partial<AiriExtension['modules']>) {
+    const cardId = activeCardId.value
+    const card = cards.value.get(cardId)
+    if (!card)
+      return false
+
+    const extension = resolveAiriExtension(card)
+    cards.value.set(cardId, {
+      ...card,
+      extensions: {
+        ...card.extensions,
+        airi: {
+          ...extension,
+          modules: {
+            ...extension.modules,
+            ...patch(extension),
+          },
+        },
+      },
+    })
+
+    return true
+  }
+
+  async function updateActiveCardDisplayModel(displayModelId: string | undefined) {
+    const updated = updateActiveCardModules(() => ({ displayModelId }))
+    if (updated)
+      applyActiveCardSettings()
+    return updated
+  }
+
+  async function updateActiveCardConsciousness(consciousness: AiriExtension['modules']['consciousness']) {
+    const updated = updateActiveCardModules(() => ({ consciousness }))
+    if (updated)
+      applyActiveCardSettings()
+    return updated
+  }
+
+  async function updateActiveCardVision(vision: AiriExtension['modules']['vision']) {
+    const updated = updateActiveCardModules(() => ({ vision }))
+    if (updated)
+      applyActiveCardSettings()
+    return updated
+  }
+
+  async function updateActiveCardSpeech(speech: Pick<AiriExtension['modules']['speech'], 'provider' | 'model' | 'voice_id'>) {
+    const updated = updateActiveCardModules(({ modules }) => ({
+      speech: {
+        ...modules.speech,
+        ...speech,
+      },
+    }))
+    if (updated)
+      applyActiveCardSettings()
+    return updated
+  }
+
+  /**
+   * Persists the current inference selections in the active card.
+   *
+   * This command snapshots runtime state after a higher-level operation, such
+   * as authenticated default setup. It deliberately does not apply the card
+   * back to the runtime, so one persistence write cannot start another module
+   * transition.
+   */
+  async function persistActiveCardModuleSelections() {
+    const card = cards.value.get(activeCardId.value)
+    if (!card)
+      return false
+
+    const {
+      consciousness,
+      speech,
+      vision,
+    } = useRuntimeModuleStores()
+    const modules = card.extensions?.airi?.modules
+    const alreadyPersisted = modules?.consciousness?.provider === consciousness.activeProvider
+      && modules.consciousness.model === consciousness.activeModel
+      && modules?.speech?.provider === speech.activeSpeechProvider
+      && modules.speech.model === speech.activeSpeechModel
+      && modules.speech.voice_id === speech.activeSpeechVoiceId
+      && modules?.vision?.provider === vision.activeProvider
+      && modules.vision.model === vision.activeModel
+
+    if (alreadyPersisted)
+      return false
+
+    return updateActiveCardModules(({ modules }) => ({
+      consciousness: {
+        provider: consciousness.activeProvider,
+        model: consciousness.activeModel,
+      },
+      speech: {
+        ...modules.speech,
+        provider: speech.activeSpeechProvider,
+        model: speech.activeSpeechModel,
+        voice_id: speech.activeSpeechVoiceId,
+      },
+      vision: {
+        provider: vision.activeProvider,
+        model: vision.activeModel,
+      },
+    }))
+  }
+
   function resolveAiriExtension(card: Card | ccv3.CharacterCardV3): AiriExtension {
+    const {
+      artistry,
+      consciousness,
+      speech,
+      stageModel,
+      vision,
+    } = useRuntimeModuleStores()
+
     // Get existing extension if available
     const existingExtension = ('data' in card
       ? card.data?.extensions?.airi
@@ -139,23 +235,27 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     // Create default modules config
     const defaultModules = {
       consciousness: {
-        provider: activeConsciousnessProvider.value,
-        model: activeConsciousnessModel.value,
+        provider: consciousness.activeProvider,
+        model: consciousness.activeModel,
+      },
+      vision: {
+        provider: vision.activeProvider,
+        model: vision.activeModel,
       },
       speech: {
-        provider: activeSpeechProvider.value,
-        model: activeSpeechModel.value,
-        voice_id: activeSpeechVoiceId.value,
+        provider: speech.activeSpeechProvider,
+        model: speech.activeSpeechModel,
+        voice_id: speech.activeSpeechVoiceId,
       },
-      displayModelId: stageModelStore.stageModelSelected,
+      displayModelId: stageModel.stageModelSelected,
       artistry: {
         enabled: false,
-        provider: artistryStore.globalProvider,
-        model: artistryStore.globalModel,
-        promptPrefix: artistryStore.globalPromptPrefix,
+        provider: artistry.globalProvider,
+        model: artistry.globalModel,
+        promptPrefix: artistry.globalPromptPrefix,
         widgetInstruction: DEFAULT_ARTISTRY_WIDGET_SPAWNING_PROMPT,
         spawnMode: 'bg_widget' as const,
-        options: artistryStore.globalProviderOptions,
+        options: artistry.globalProviderOptions,
         autonomousEnabled: false,
         autonomousThreshold: 70,
         autonomousTarget: 'assistant' as const,
@@ -176,6 +276,10 @@ export const useAiriCardStore = defineStore('airi-card', () => {
         consciousness: {
           provider: existingExtension.modules?.consciousness?.provider ?? defaultModules.consciousness.provider,
           model: existingExtension.modules?.consciousness?.model ?? defaultModules.consciousness.model,
+        },
+        vision: {
+          provider: existingExtension.modules?.vision?.provider ?? defaultModules.vision.provider,
+          model: existingExtension.modules?.vision?.model ?? defaultModules.vision.model,
         },
         speech: {
           provider: existingExtension.modules?.speech?.provider ?? defaultModules.speech.provider,
@@ -256,23 +360,55 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     }
   }
 
-  function initialize() {
-    if (cards.value.has('default'))
+  async function initialize() {
+    // This synchronized action executes in the leader. Each window calls it,
+    // but only the first call can apply persisted card settings to the runtime.
+    if (initialized)
       return
-    cards.value.set('default', newAiriCard({
-      name: 'ReLU',
-      version: '1.0.0',
-      description: SystemPromptV2(
-        t('base.prompt.prefix'),
-        t('base.prompt.suffix'),
-      ).content,
-    }))
-    if (!activeCardId.value)
+
+    initialized = true
+    if (!cards.value.has('default')) {
+      cards.value.set('default', newAiriCard({
+        name: 'ReLU',
+        version: '1.0.0',
+        description: SystemPromptV2(
+          t('base.prompt.prefix'),
+          t('base.prompt.suffix'),
+        ).content,
+      }))
+    }
+
+    // The active id and card map are persisted separately. Older versions
+    // could delete the selected card without repairing its stored id.
+    if (!cards.value.has(activeCardId.value))
       activeCardId.value = 'default'
+
+    applyActiveCardSettings()
   }
 
-  watchDebounced(activeCard, (newCard: AiriCard | undefined) => {
-    artistryStore.resetToGlobal()
+  /**
+   * Selects a card and applies its module settings in the synchronization
+   * leader. Replicated state snapshots never invoke this command.
+   */
+  async function activateCard(id: string) {
+    if (!cards.value.has(id))
+      return false
+
+    activeCardId.value = id
+    applyActiveCardSettings()
+    return true
+  }
+
+  function applyActiveCardSettings(newCard = activeCard.value) {
+    const {
+      artistry,
+      consciousness,
+      speech,
+      stageModel,
+      vision,
+    } = useRuntimeModuleStores()
+
+    artistry.resetToGlobal()
 
     if (!newCard)
       return
@@ -282,35 +418,49 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     if (!extension)
       return
 
-    activeConsciousnessProvider.value = extension?.modules?.consciousness?.provider
-    activeConsciousnessModel.value = extension?.modules?.consciousness?.model
+    const consciousnessSettings = extension.modules?.consciousness
+    if (consciousnessSettings?.provider)
+      consciousness.activeProvider = consciousnessSettings.provider
+    if (consciousnessSettings?.model)
+      consciousness.activeModel = consciousnessSettings.model
 
-    activeSpeechProvider.value = extension?.modules?.speech?.provider
-    activeSpeechModel.value = extension?.modules?.speech?.model
-    activeSpeechVoiceId.value = extension?.modules?.speech?.voice_id
+    const visionSettings = extension.modules?.vision
+    if (visionSettings?.provider)
+      vision.activeProvider = visionSettings.provider
+    if (visionSettings?.model)
+      vision.activeModel = visionSettings.model
+
+    const speechSettings = extension.modules?.speech
+    if (speechSettings?.provider)
+      speech.activeSpeechProvider = speechSettings.provider
+    if (speechSettings?.model)
+      speech.activeSpeechModel = speechSettings.model
+    if (speechSettings?.voice_id)
+      speech.activeSpeechVoiceId = speechSettings.voice_id
 
     // Apply body model if the card has a display model configured.
     // NOTICE: must set via store property directly (not storeToRefs .value) so Pinia's
     // proxy correctly calls the writable computed setter → stageModelSelectedState → updateStageModel().
     if (extension.modules?.displayModelId) {
-      stageModelStore.stageModelSelected = extension.modules.displayModelId
+      stageModel.stageModelSelected = extension.modules.displayModelId
     }
 
     if (extension.modules?.artistry) {
       if (extension.modules.artistry.provider)
-        artistryStore.activeProvider = extension.modules.artistry.provider
+        artistry.activeProvider = extension.modules.artistry.provider
       if (extension.modules.artistry.model)
-        artistryStore.activeModel = extension.modules.artistry.model
+        artistry.activeModel = extension.modules.artistry.model
       if (extension.modules.artistry.promptPrefix)
-        artistryStore.defaultPromptPrefix = extension.modules.artistry.promptPrefix
+        artistry.defaultPromptPrefix = extension.modules.artistry.promptPrefix
       if (extension.modules.artistry.options)
-        artistryStore.providerOptions = extension.modules.artistry.options
+        artistry.providerOptions = extension.modules.artistry.options
     }
-  }, { debounce: 300, maxWait: 1000 })
+  }
 
   function resetState() {
-    activeCardId.reset()
+    initialized = false
     cards.reset()
+    activeCardId.reset()
   }
 
   return {
@@ -320,39 +470,58 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     addCard,
     removeCard,
     updateCard,
+    updateActiveCardConsciousness,
+    updateActiveCardDisplayModel,
+    persistActiveCardModuleSelections,
+    updateActiveCardSpeech,
+    updateActiveCardVision,
     getCard,
     resetState,
     initialize,
+    activateCard,
 
     currentModels: computed(() => {
+      const {
+        consciousness,
+        speech,
+        stageModel,
+        vision,
+      } = useRuntimeModuleStores()
+
       return {
         consciousness: {
-          provider: activeConsciousnessProvider.value,
-          model: activeConsciousnessModel.value,
+          provider: consciousness.activeProvider,
+          model: consciousness.activeModel,
+        },
+        vision: {
+          provider: vision.activeProvider,
+          model: vision.activeModel,
         },
         speech: {
-          provider: activeSpeechProvider.value,
-          model: activeSpeechModel.value,
-          voice_id: activeSpeechVoiceId.value,
+          provider: speech.activeSpeechProvider,
+          model: speech.activeSpeechModel,
+          voice_id: speech.activeSpeechVoiceId,
         },
-        displayModelId: stageModelStore.stageModelSelected,
+        displayModelId: stageModel.stageModelSelected,
         activeBackgroundId: activeCard.value?.extensions?.airi?.modules?.activeBackgroundId,
       } satisfies AiriExtension['modules']
     }),
-
-    systemPrompt: computed(() => {
-      const card = activeCard.value
-      if (!card)
-        return ''
-
-      const components = [
-        card.systemPrompt,
-        card.description,
-        card.personality,
-        card.extensions?.airi?.modules?.artistry?.widgetInstruction,
-      ].filter(Boolean)
-
-      return components.join('\n\n')
-    }),
+    systemPrompt: computed(() => resolveSystemPrompt(activeCard.value)),
   }
+}, {
+  synced: {
+    actions: [
+      'activateCard',
+      'addCard',
+      'initialize',
+      'removeCard',
+      'persistActiveCardModuleSelections',
+      'updateActiveCardConsciousness',
+      'updateActiveCardDisplayModel',
+      'updateActiveCardSpeech',
+      'updateActiveCardVision',
+      'updateCard',
+    ],
+    state: true,
+  },
 })

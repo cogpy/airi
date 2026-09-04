@@ -4,8 +4,13 @@ import type { Router, RouteRecordRaw } from 'vue-router'
 import Tres from '@tresjs/core'
 import NProgress from 'nprogress'
 
+import { Capacitor } from '@capacitor/core'
 import { autoAnimatePlugin } from '@formkit/auto-animate/vue'
 import { isEnvTruthy } from '@proj-airi/stage-shared'
+import { trackButtonPlugin } from '@proj-airi/stage-ui/directives/track-button'
+import { configureAnalyticsAdapter } from '@proj-airi/stage-ui/libs/analytics'
+import { browserAuthorizationHandler, registerAuthorizationHandler } from '@proj-airi/stage-ui/libs/auth'
+import { setupSynced } from '@proj-airi/stage-ui/libs/pinia'
 import { MotionPlugin } from '@vueuse/motion'
 import { createPinia } from 'pinia'
 import { setupLayouts } from 'virtual:generated-layouts'
@@ -15,7 +20,9 @@ import { routes } from 'vue-router/auto-routes'
 
 import App from './App.vue'
 
+import { installDeepLinks } from './modules/deep-links'
 import { i18n } from './modules/i18n'
+import { WebAuthentication } from './modules/web-authentication'
 
 import '@proj-airi/font-cjkfonts-allseto/index.css'
 import '@proj-airi/font-xiaolai/index.css'
@@ -25,7 +32,30 @@ import 'vue-sonner/style.css'
 import './styles/main.css'
 import 'uno.css'
 
+configureAnalyticsAdapter(async (options) => {
+  const { createPosthogAdapter } = await import('@proj-airi/stage-ui/libs/analytics/posthog')
+  return createPosthogAdapter(options)
+})
+
+if (Capacitor.isNativePlatform()) {
+  registerAuthorizationHandler(async ({ authorizationUrl, provider }) => {
+    const url = new URL(authorizationUrl)
+    if (provider)
+      url.searchParams.set('provider', provider)
+
+    return await WebAuthentication.authenticate({
+      callbackScheme: 'ai.moeru.airi-pocket',
+      url: url.toString(),
+    })
+  })
+}
+else {
+  registerAuthorizationHandler(browserAuthorizationHandler)
+}
+
 const pinia = createPinia()
+const synced = setupSynced()
+pinia.use(synced.pinia)
 
 // TODO: vite-plugin-vue-layouts is long deprecated, replace with another layout solution
 const routeRecords = setupLayouts(routes as RouteRecordRaw[])
@@ -49,7 +79,10 @@ window.addEventListener('unhandledrejection', (event) => {
   console.warn('Unhandled rejection:', event.reason)
 })
 
+installDeepLinks(router)
+
 createApp(App)
+  .use(synced.vue)
   .use(MotionPlugin)
   // TODO: Fix autoAnimatePlugin type error
   .use(autoAnimatePlugin as unknown as Plugin)
@@ -57,6 +90,7 @@ createApp(App)
   .use(pinia)
   .use(i18n)
   .use(Tres)
+  .use(trackButtonPlugin)
   .mount('#app')
 
 if (import.meta.env.DEV && !import.meta.env.SSR) {

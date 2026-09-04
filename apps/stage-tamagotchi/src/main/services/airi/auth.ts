@@ -34,54 +34,13 @@ const OIDC_TOKEN_PATH = '/api/auth/oauth2/token'
 let closeLoopback: (() => void) | null = null
 let signingInFlight = false
 
-export interface WindowAuthManager {
-  registerWindow: (params: { context: MainContext, window: BrowserWindow }) => void
-  broadcastAuthCallback: (tokens: TokenExchangeResult) => void
-  broadcastAuthError: (error: string) => void
-}
-
-export function createWindowAuthManagerService(): WindowAuthManager {
-  const authContexts = new Set<MainContext>()
-
-  function broadcastAuthCallback(tokens: TokenExchangeResult): void {
-    for (const context of authContexts) {
-      context.emit(electronAuthCallback, tokens)
-    }
-  }
-
-  function broadcastAuthError(error: string): void {
-    for (const context of authContexts) {
-      context.emit(electronAuthCallbackError, { error })
-    }
-  }
-
-  return {
-    registerWindow(params) {
-      authContexts.add(params.context)
-
-      params.window.on('closed', () => {
-        authContexts.delete(params.context)
-      })
-    },
-
-    broadcastAuthCallback,
-    broadcastAuthError,
-  }
-}
-
 /**
  * Create the auth service IPC handlers for a given window context.
  */
 export function createAuthService(params: {
   context: MainContext
   window: BrowserWindow
-  windowAuthManager: WindowAuthManager
 }): void {
-  params.windowAuthManager.registerWindow({
-    context: params.context,
-    window: params.window,
-  })
-
   defineInvokeHandler(params.context, electronAuthStartLogin, async (_, options) => {
     if (params.window.webContents.id !== options?.raw.ipcMainEvent.sender.id) {
       return
@@ -105,7 +64,7 @@ export function createAuthService(params: {
       const state = generateState()
 
       // Start loopback server to receive the callback
-      const loopback = await startLoopbackServer()
+      const loopback = await startLoopbackServer(state)
       closeLoopback = loopback.close
 
       // Use the server-side relay as redirect_uri. The relay page serves HTML
@@ -134,20 +93,14 @@ export function createAuthService(params: {
 
       // Wait for the callback in the background
       loopback.result
-        .then(async ({ code, state: returnedState }) => {
-          if (returnedState !== state) {
-            log.warn('State mismatch — possible CSRF attack')
-            params.windowAuthManager.broadcastAuthError('State mismatch')
-            return
-          }
-
+        .then(async ({ code }) => {
           const tokens = await exchangeCode(code, codeVerifier, redirectUri)
-          params.windowAuthManager.broadcastAuthCallback(tokens)
+          params.context.emit(electronAuthCallback, tokens)
           log.log('OIDC token exchange successful')
         })
         .catch((err) => {
           log.withError(err).error('OIDC signing in failed')
-          params.windowAuthManager.broadcastAuthError(errorMessageFrom(err) ?? 'OIDC signing in failed')
+          params.context.emit(electronAuthCallbackError, { error: errorMessageFrom(err) ?? 'OIDC signing in failed' })
         })
         .finally(() => {
           closeLoopback = null
@@ -158,7 +111,7 @@ export function createAuthService(params: {
       closeLoopback = null
       signingInFlight = false
       log.withError(err).error('Failed to start OIDC signing in flow')
-      params.windowAuthManager.broadcastAuthError(errorMessageFrom(err) ?? 'OIDC signing in failed')
+      params.context.emit(electronAuthCallbackError, { error: errorMessageFrom(err) ?? 'OIDC signing in failed' })
     }
   })
 

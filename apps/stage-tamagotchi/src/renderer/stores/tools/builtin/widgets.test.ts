@@ -213,6 +213,7 @@ describe('widgets tool helpers', () => {
       const stageWidgetsTool = await getStageWidgetsTool()
       const schema = stageWidgetsTool.function.parameters as JsonSchema
       const windowSize = getObjectSchema(schema.properties?.windowSize as JsonSchema | undefined)
+      const windowSizeProperties = windowSize?.properties ?? {}
 
       // ROOT CAUSE:
       //
@@ -244,7 +245,15 @@ describe('widgets tool helpers', () => {
         'maxWidth',
         'maxHeight',
       ])
-      expect(windowSize?.required).toEqual(Object.keys(windowSize?.properties ?? {}))
+      expect(windowSize?.required).toEqual(Object.keys(windowSizeProperties))
+      expect((windowSizeProperties.minWidth as JsonSchema).type).toEqual(['number', 'null'])
+      expect((windowSizeProperties.minHeight as JsonSchema).type).toEqual(['number', 'null'])
+      expect((windowSizeProperties.maxWidth as JsonSchema).type).toEqual(['number', 'null'])
+      expect((windowSizeProperties.maxHeight as JsonSchema).type).toEqual(['number', 'null'])
+      expect((windowSizeProperties.minWidth as JsonSchema).exclusiveMinimum).toBe(0)
+      expect((windowSizeProperties.minHeight as JsonSchema).exclusiveMinimum).toBe(0)
+      expect((windowSizeProperties.maxWidth as JsonSchema).exclusiveMinimum).toBe(0)
+      expect((windowSizeProperties.maxHeight as JsonSchema).exclusiveMinimum).toBe(0)
     })
 
     describe('live AIHubMix repro', () => {
@@ -351,6 +360,30 @@ describe('widgets tool helpers', () => {
         componentProps: { city: 'Tokyo' },
         size: 'm',
         ttlMs: 2000,
+      })
+    })
+
+    it('forwards always-on-top preference when spawning a widget', async () => {
+      const invokers = makeInvokers()
+      vi.mocked(invokers.addWidget).mockResolvedValue('pinned-widget')
+
+      await executeWidgetAction({
+        action: 'spawn',
+        id: ' pinned-widget ',
+        componentName: 'weather',
+        componentProps: '{"city":"Tokyo"}',
+        size: 'm',
+        ttlSeconds: 0,
+        alwaysOnTop: true,
+      }, { invokers })
+
+      expect(invokers.addWidget).toHaveBeenCalledWith({
+        id: 'pinned-widget',
+        componentName: 'weather',
+        componentProps: { city: 'Tokyo' },
+        size: 'm',
+        alwaysOnTop: true,
+        ttlMs: 0,
       })
     })
 
@@ -483,10 +516,11 @@ describe('widgets tool helpers', () => {
         componentName: '',
         componentProps: '{"foo":1}',
         size: 'm',
+        alwaysOnTop: false,
         ttlSeconds: 0,
       }, { invokers })
 
-      expect(invokers.updateWidget).toHaveBeenCalledWith({ id: 'xyz', componentProps: { foo: 1 } })
+      expect(invokers.updateWidget).toHaveBeenCalledWith({ id: 'xyz', componentProps: { foo: 1 }, alwaysOnTop: false, ttlMs: 0 })
     })
 
     it('removes when id provided', async () => {
@@ -562,7 +596,7 @@ describe('widgets tool helpers', () => {
         moduleSnapshot: {
           moduleId: 'module-1',
           ownerSessionId: 'session-1',
-          ownerPluginId: 'plugin-1',
+          ownerExtensionId: 'plugin-1',
           kitId: 'kit.widget',
           kitModuleType: 'window',
           state: 'active',

@@ -6,31 +6,35 @@
  * and coordinates cognitive processing across the system.
  */
 
-import { AtomSpace, createAtomSpace } from '../atomspace/atomspace';
-import type { Atom, AtomSpaceConfig, Link, Node, TruthValue } from '../atomspace/types';
-import { createECAN, ECAN } from '../attention/ecan';
-import { createPLN, PLN } from '../reasoning/pln';
+import type { AtomSpace } from '../atomspace/atomspace'
+import type { Atom, AtomSpaceConfig, Link, Node, TruthValue } from '../atomspace/types'
+import type { ECAN } from '../attention/ecan'
+import type { PLN } from '../reasoning/pln'
+
+import { createAtomSpace } from '../atomspace/atomspace'
+import { createECAN } from '../attention/ecan'
+import { createPLN } from '../reasoning/pln'
 
 /**
  * Agent state tracking
  */
 export interface AgentState {
   /** Agent identifier */
-  id: string;
+  id: string
   /** Agent's AtomSpace */
-  atomSpace: AtomSpace;
+  atomSpace: AtomSpace
   /** Agent's ECAN instance */
-  ecan: ECAN;
+  ecan: ECAN
   /** Agent's PLN instance */
-  pln: PLN;
+  pln: PLN
   /** Cognitive iteration count */
-  iterations: number;
+  iterations: number
   /** Last activity timestamp */
-  lastActivity: number;
+  lastActivity: number
   /** Agent status */
-  status: 'active' | 'idle' | 'sleeping' | 'terminated';
+  status: 'active' | 'idle' | 'sleeping' | 'terminated'
   /** Custom metadata */
-  metadata: Record<string, unknown>;
+  metadata: Record<string, unknown>
 }
 
 /**
@@ -38,13 +42,13 @@ export interface AgentState {
  */
 export interface KnowledgeShareRequest {
   /** Source agent ID */
-  sourceAgentId: string;
+  sourceAgentId: string
   /** Target agent ID */
-  targetAgentId: string;
+  targetAgentId: string
   /** Atoms to share (IDs) */
-  atomIds: string[];
+  atomIds: string[]
   /** Trust level for shared knowledge */
-  trustLevel: number;
+  trustLevel: number
 }
 
 /**
@@ -52,50 +56,50 @@ export interface KnowledgeShareRequest {
  */
 export interface OrchestratorConfig {
   /** Maximum number of agents */
-  maxAgents: number;
+  maxAgents: number
   /** Enable automatic garbage collection */
-  enableGC: boolean;
+  enableGC: boolean
   /** GC interval in milliseconds */
-  gcInterval: number;
+  gcInterval: number
   /** Idle timeout before agent sleeps (ms) */
-  idleTimeout: number;
+  idleTimeout: number
   /** Enable shared knowledge base */
-  enableSharedKB: boolean;
+  enableSharedKB: boolean
 }
 
 /**
  * Orchestrator event types
  */
-export type OrchestratorEventType =
-  | 'agent_created'
-  | 'agent_terminated'
-  | 'knowledge_shared'
-  | 'iteration_complete'
-  | 'gc_complete';
+export type OrchestratorEventType
+  = | 'agent_created'
+    | 'agent_terminated'
+    | 'knowledge_shared'
+    | 'iteration_complete'
+    | 'gc_complete'
 
 /**
  * Orchestrator event
  */
 export interface OrchestratorEvent {
-  type: OrchestratorEventType;
-  timestamp: number;
-  data: Record<string, unknown>;
+  type: OrchestratorEventType
+  timestamp: number
+  data: Record<string, unknown>
 }
 
 /**
  * Event listener function
  */
-export type OrchestratorEventListener = (event: OrchestratorEvent) => void;
+export type OrchestratorEventListener = (event: OrchestratorEvent) => void
 
 /**
  * Cognitive Orchestrator - manages multiple cognitive agents
  */
 export class CognitiveOrchestrator {
-  private agents: Map<string, AgentState> = new Map();
-  private sharedKB: AtomSpace;
-  private config: OrchestratorConfig;
-  private gcTimer?: ReturnType<typeof setInterval>;
-  private eventListeners: Map<OrchestratorEventType, Set<OrchestratorEventListener>> = new Map();
+  private agents: Map<string, AgentState> = new Map()
+  private sharedKB: AtomSpace
+  private config: OrchestratorConfig
+  private gcTimer?: ReturnType<typeof setInterval>
+  private eventListeners: Map<OrchestratorEventType, Set<OrchestratorEventListener>> = new Map()
 
   constructor(config?: Partial<OrchestratorConfig>) {
     this.config = {
@@ -104,13 +108,13 @@ export class CognitiveOrchestrator {
       gcInterval: config?.gcInterval ?? 60000,
       idleTimeout: config?.idleTimeout ?? 300000,
       enableSharedKB: config?.enableSharedKB ?? true,
-    };
+    }
 
     // Create shared knowledge base
-    this.sharedKB = createAtomSpace({ name: 'shared_kb' });
+    this.sharedKB = createAtomSpace({ name: 'shared_kb' })
 
     if (this.config.enableGC) {
-      this.startGC();
+      this.startGC()
     }
   }
 
@@ -119,23 +123,23 @@ export class CognitiveOrchestrator {
    */
   createAgent(
     agentId: string,
-    atomSpaceConfig?: AtomSpaceConfig
+    atomSpaceConfig?: AtomSpaceConfig,
   ): AgentState {
     if (this.agents.has(agentId)) {
-      throw new Error(`Agent already exists: ${agentId}`);
+      throw new Error(`Agent already exists: ${agentId}`)
     }
 
     if (this.agents.size >= this.config.maxAgents) {
-      throw new Error(`Maximum agents reached: ${this.config.maxAgents}`);
+      throw new Error(`Maximum agents reached: ${this.config.maxAgents}`)
     }
 
     const atomSpace = createAtomSpace({
       name: `agent_${agentId}`,
       ...atomSpaceConfig,
-    });
+    })
 
-    const ecan = createECAN(atomSpace);
-    const pln = createPLN(atomSpace);
+    const ecan = createECAN(atomSpace)
+    const pln = createPLN(atomSpace)
 
     const agentState: AgentState = {
       id: agentId,
@@ -146,93 +150,94 @@ export class CognitiveOrchestrator {
       lastActivity: Date.now(),
       status: 'active',
       metadata: {},
-    };
+    }
 
-    this.agents.set(agentId, agentState);
+    this.agents.set(agentId, agentState)
 
     // Create agent node in shared KB
     if (this.config.enableSharedKB) {
-      this.sharedKB.addNode('AgentNode', agentId, { strength: 1.0, confidence: 0.95 });
+      this.sharedKB.addNode('AgentNode', agentId, { strength: 1.0, confidence: 0.95 })
     }
 
     this.emit({
       type: 'agent_created',
       timestamp: Date.now(),
       data: { agentId },
-    });
+    })
 
-    return agentState;
+    return agentState
   }
 
   /**
    * Get an agent by ID
    */
   getAgent(agentId: string): AgentState | undefined {
-    const agent = this.agents.get(agentId);
+    const agent = this.agents.get(agentId)
     if (agent) {
-      agent.lastActivity = Date.now();
+      agent.lastActivity = Date.now()
       if (agent.status === 'sleeping') {
-        agent.status = 'active';
+        agent.status = 'active'
       }
     }
-    return agent;
+    return agent
   }
 
   /**
    * Get or create an agent
    */
   getOrCreateAgent(agentId: string): AgentState {
-    const existing = this.getAgent(agentId);
-    if (existing) return existing;
-    return this.createAgent(agentId);
+    const existing = this.getAgent(agentId)
+    if (existing)
+      return existing
+    return this.createAgent(agentId)
   }
 
   /**
    * Terminate an agent
    */
   terminateAgent(agentId: string): boolean {
-    const agent = this.agents.get(agentId);
-    if (!agent) return false;
+    const agent = this.agents.get(agentId)
+    if (!agent)
+      return false
 
-    agent.status = 'terminated';
-    agent.ecan.dispose();
-    agent.atomSpace.dispose();
-
-    this.agents.delete(agentId);
+    agent.status = 'terminated'
+    agent.ecan.dispose()
+    agent.atomSpace.dispose()
 
     this.emit({
       type: 'agent_terminated',
       timestamp: Date.now(),
       data: { agentId },
-    });
+    })
 
-    return true;
+    return true
   }
 
   /**
    * Run a cognitive iteration for an agent
    */
   cognitiveStep(agentId: string): void {
-    const agent = this.getAgent(agentId);
-    if (!agent) return;
+    const agent = this.getAgent(agentId)
+    if (!agent)
+      return
 
     // Run ECAN step
-    agent.ecan.step();
+    agent.ecan.step()
 
     // Update iteration count
-    agent.iterations++;
-    agent.lastActivity = Date.now();
-    agent.status = 'active';
+    agent.iterations++
+    agent.lastActivity = Date.now()
+    agent.status = 'active'
 
     // Update agent node in shared KB
     if (this.config.enableSharedKB) {
-      const agentNode = this.sharedKB.getNode('AgentNode', agentId);
+      const agentNode = this.sharedKB.getNode('AgentNode', agentId)
       if (agentNode) {
         agentNode.metadata = {
           ...agentNode.metadata,
           iterations: agent.iterations,
           lastActivity: agent.lastActivity,
-        };
+        }
       }
     }
 
@@ -240,51 +245,54 @@ export class CognitiveOrchestrator {
       type: 'iteration_complete',
       timestamp: Date.now(),
       data: { agentId, iterations: agent.iterations },
-    });
+    })
   }
 
   /**
    * Share knowledge between agents
    */
   shareKnowledge(request: KnowledgeShareRequest): boolean {
-    const source = this.getAgent(request.sourceAgentId);
-    const target = this.getAgent(request.targetAgentId);
+    const source = this.getAgent(request.sourceAgentId)
+    const target = this.getAgent(request.targetAgentId)
 
-    if (!source || !target) return false;
+    if (!source || !target)
+      return false
 
-    const sharedAtoms: Atom[] = [];
+    const sharedAtoms: Atom[] = []
 
     for (const atomId of request.atomIds) {
-      const atom = source.atomSpace.getAtom(atomId);
-      if (!atom) continue;
+      const atom = source.atomSpace.getAtom(atomId)
+      if (!atom)
+        continue
 
       // Adjust truth value based on trust level
       const adjustedTV: TruthValue = {
         strength: atom.truthValue.strength * request.trustLevel,
         confidence: atom.truthValue.confidence * request.trustLevel,
-      };
+      }
 
       if (atom.kind === 'node') {
-        const node = atom as Node;
+        const node = atom as Node
         target.atomSpace.addNode(node.type, node.name, adjustedTV, undefined, {
           ...node.metadata,
           sharedFrom: request.sourceAgentId,
-        });
-      } else {
+        })
+      }
+      else {
         // For links, need to recreate nodes first
-        const link = atom as Link;
-        const newOutgoing: string[] = [];
+        const link = atom as Link
+        const newOutgoing: string[] = []
 
         for (const outId of link.outgoing) {
-          const outAtom = source.atomSpace.getAtom(outId);
+          const outAtom = source.atomSpace.getAtom(outId)
           if (outAtom && outAtom.kind === 'node') {
-            const outNode = outAtom as Node;
+            const outNode = outAtom as Node
             const newNode = target.atomSpace.addNode(
               outNode.type,
               outNode.name,
-              adjustedTV
-            );
-            newOutgoing.push(newNode.id);
+              adjustedTV,
+            )
+            newOutgoing.push(newNode.id)
           }
         }
 
@@ -292,19 +300,19 @@ export class CognitiveOrchestrator {
           target.atomSpace.addLink(link.type, newOutgoing, adjustedTV, undefined, {
             ...link.metadata,
             sharedFrom: request.sourceAgentId,
-          });
+          })
         }
       }
 
-      sharedAtoms.push(atom);
+      sharedAtoms.push(atom)
     }
 
     // Also add to shared KB
     if (this.config.enableSharedKB) {
       for (const atom of sharedAtoms) {
         if (atom.kind === 'node') {
-          const node = atom as Node;
-          this.sharedKB.addNode(node.type, node.name, atom.truthValue);
+          const node = atom as Node
+          this.sharedKB.addNode(node.type, node.name, atom.truthValue)
         }
       }
     }
@@ -317,70 +325,72 @@ export class CognitiveOrchestrator {
         targetAgentId: request.targetAgentId,
         atomCount: sharedAtoms.length,
       },
-    });
+    })
 
-    return true;
+    return true
   }
 
   /**
    * Merge agent AtomSpaces
    */
   mergeAgentSpaces(agentIds: string[]): AtomSpace {
-    const merged = createAtomSpace({ name: 'merged' });
+    const merged = createAtomSpace({ name: 'merged' })
 
     for (const agentId of agentIds) {
-      const agent = this.getAgent(agentId);
+      const agent = this.getAgent(agentId)
       if (agent) {
-        merged.merge(agent.atomSpace);
+        merged.merge(agent.atomSpace)
       }
     }
 
-    return merged;
+    return merged
   }
 
   /**
    * Get the shared knowledge base
    */
   getSharedKB(): AtomSpace {
-    return this.sharedKB;
+    return this.sharedKB
   }
 
   /**
    * Query across all agents
    */
   queryAllAgents(
-    pattern: Parameters<AtomSpace['query']>[0]
+    pattern: Parameters<AtomSpace['query']>[0],
   ): Map<string, Atom[]> {
-    const results = new Map<string, Atom[]>();
+    const results = new Map<string, Atom[]>()
 
     for (const [agentId, agent] of this.agents) {
-      const agentResults = agent.atomSpace.query(pattern);
+      const agentResults = agent.atomSpace.query(pattern)
       if (agentResults.length > 0) {
-        results.set(agentId, agentResults);
+        results.set(agentId, agentResults)
       }
     }
 
-    return results;
+    return results
   }
 
   /**
    * Get statistics about the orchestrator
    */
   getStats(): {
-    agentCount: number;
-    activeAgents: number;
-    sleepingAgents: number;
-    totalIterations: number;
-    sharedKBSize: number;
+    agentCount: number
+    activeAgents: number
+    sleepingAgents: number
+    totalIterations: number
+    sharedKBSize: number
   } {
-    let activeAgents = 0;
-    let sleepingAgents = 0;
-    let totalIterations = 0;
+    let activeAgents = 0
+    let sleepingAgents = 0
+    let totalIterations = 0
 
     for (const agent of this.agents.values()) {
-      if (agent.status === 'active') activeAgents++;
-      if (agent.status === 'sleeping') sleepingAgents++;
-      totalIterations += agent.iterations;
+      if (agent.status === 'active')
+        activeAgents++
+      if (agent.status === 'sleeping')
+        sleepingAgents++
+      totalIterations += agent.iterations
     }
 
     return {
@@ -389,7 +399,7 @@ export class CognitiveOrchestrator {
       sleepingAgents,
       totalIterations,
       sharedKBSize: this.sharedKB.getStats().totalAtoms,
-    };
+    }
   }
 
   /**
@@ -397,16 +407,16 @@ export class CognitiveOrchestrator {
    */
   on(eventType: OrchestratorEventType, listener: OrchestratorEventListener): void {
     if (!this.eventListeners.has(eventType)) {
-      this.eventListeners.set(eventType, new Set());
+      this.eventListeners.set(eventType, new Set())
     }
-    this.eventListeners.get(eventType)!.add(listener);
+    this.eventListeners.get(eventType)!.add(listener)
   }
 
   /**
    * Remove event listener
    */
   off(eventType: OrchestratorEventType, listener: OrchestratorEventListener): void {
-    this.eventListeners.get(eventType)?.delete(listener);
+    this.eventListeners.get(eventType)?.delete(listener)
   }
 
   /**
@@ -414,43 +424,43 @@ export class CognitiveOrchestrator {
    */
   dispose(): void {
     if (this.gcTimer) {
-      clearInterval(this.gcTimer);
+      clearInterval(this.gcTimer)
     }
 
     for (const [agentId] of this.agents) {
-      this.terminateAgent(agentId);
+      this.terminateAgent(agentId)
     }
 
-    this.sharedKB.dispose();
+    this.sharedKB.dispose()
   }
 
   // Private methods
 
   private emit(event: OrchestratorEvent): void {
-    const listeners = this.eventListeners.get(event.type);
+    const listeners = this.eventListeners.get(event.type)
     if (listeners) {
       for (const listener of listeners) {
-        listener(event);
+        listener(event)
       }
     }
   }
 
   private startGC(): void {
     this.gcTimer = setInterval(() => {
-      this.runGC();
-    }, this.config.gcInterval);
+      this.runGC()
+    }, this.config.gcInterval)
   }
 
   private runGC(): void {
-    const now = Date.now();
-    let gcCount = 0;
+    const now = Date.now()
+    let gcCount = 0
 
     for (const [, agent] of this.agents) {
-      const idleTime = now - agent.lastActivity;
+      const idleTime = now - agent.lastActivity
 
       if (idleTime > this.config.idleTimeout && agent.status === 'active') {
-        agent.status = 'sleeping';
-        gcCount++;
+        agent.status = 'sleeping'
+        gcCount++
       }
     }
 
@@ -459,7 +469,7 @@ export class CognitiveOrchestrator {
         type: 'gc_complete',
         timestamp: now,
         data: { sleepCount: gcCount },
-      });
+      })
     }
   }
 }
@@ -468,7 +478,7 @@ export class CognitiveOrchestrator {
  * Create a new CognitiveOrchestrator
  */
 export function createOrchestrator(
-  config?: Partial<OrchestratorConfig>
+  config?: Partial<OrchestratorConfig>,
 ): CognitiveOrchestrator {
-  return new CognitiveOrchestrator(config);
+  return new CognitiveOrchestrator(config)
 }

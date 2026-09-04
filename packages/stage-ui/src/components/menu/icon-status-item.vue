@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { ProviderDeployment, ProviderPricing } from '../../libs/providers/attributes'
+
 const props = defineProps<{
   title: string
   description?: string
@@ -7,8 +9,8 @@ const props = defineProps<{
   iconImage?: string
   to: string
   configured?: boolean
-  pricing?: 'free' | 'paid' | 'internal'
-  deployment?: 'local' | 'cloud'
+  pricing?: ProviderPricing
+  deployment?: ProviderDeployment
   beginnerRecommended?: boolean
 }>()
 </script>

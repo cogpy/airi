@@ -103,7 +103,7 @@ jobs:
       # No space left on device (os error 28)
       - name: Free Disk Space
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'ubuntu-24.04-arm'
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
 
       - uses: actions/checkout@v6
 
@@ -119,13 +119,46 @@ jobs:
           xcodebuild -version
           actool --version
 
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
+      # NOTICE:
+      # pnpm 11 does not ship a working standalone executable for Intel macOS.
+      # Install pnpm through npm so it uses the Node.js runtime from setup-node.
+      # https://github.com/pnpm/pnpm/issues/11423
+      # Remove this branch when the project uses pnpm 12 or later.
       - uses: actions/setup-node@v6
+        if: matrix.os == 'macos-15-intel'
         with:
-          node-version: lts/*
-          cache: pnpm
+          node-version: 26.7.0
+
+      - name: Install pnpm with npm
+        if: matrix.os == 'macos-15-intel'
+        run: npm install --global pnpm@11.24.0
+
+      - name: Get pnpm store path
+        if: matrix.os == 'macos-15-intel'
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        if: matrix.os == 'macos-15-intel'
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - uses: pnpm/setup@v2
+        if: matrix.os != 'macos-15-intel'
+        with:
+          runtime: node@26.7.0
+          cache: true
+          install: false
+
+      - name: Install macOS System Dependencies for node-canvas
+        if: runner.os == 'macOS'
+        run: |
+          brew install pkg-config cairo pango jpeg giflib librsvg
+
       - run: pnpm install --frozen-lockfile
 
       # ---------
@@ -133,6 +166,42 @@ jobs:
       # ---------
 
       - run: pnpm run build:packages
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: '4.7.1'
+          use-dotnet: true
+          include-templates: true
+
+      - name: Export Godot Stage (Windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: ./engines/stage-tamagotchi-godot
+        shell: bash
+        run: |
+          mkdir -p out/win
+          godot --headless --export-release "Windows Desktop" out/win/godot-stage.exe
+
+      - name: Export Godot Stage (macOS)
+        if: matrix.os == 'macos-15-intel' || matrix.os == 'macos-26'
+        working-directory: ./engines/stage-tamagotchi-godot
+        shell: bash
+        run: |
+          mkdir -p out/mac
+          godot --headless --export-release "macOS" out/mac/godot-stage.app
+
+      - name: Export Godot Stage (Linux)
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'ubuntu-24.04-arm'
+        working-directory: ./engines/stage-tamagotchi-godot
+        shell: bash
+        run: |
+          mkdir -p out/linux
+          godot --headless --export-release "Linux ${{ matrix.arch }}" out/linux/godot-stage
 
       - name: Build (Windows Only) # Windows
         if: matrix.os == 'windows-latest'
@@ -530,6 +599,30 @@ jobs:
             apps/stage-tamagotchi/bundle/${{ env.PRODUCT_NAME }}-*.flatpak
             apps/stage-tamagotchi/bundle/latest-*.yml
           append_body: true
+
+  publish-gitcode-release:
+    name: Publish GitCode Release Mirror
+    needs: build
+    if: ${{ always() && github.repository == 'moeru-ai/airi' && (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.build_only && !inputs.artifacts_only && inputs.tag != '')) }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate release mirror tools
+        run: |
+          gh --version
+          jq --version
+          curl --version
+
+      - name: Publish release assets to GitCode
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_OWNER: ${{ secrets.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ secrets.GITCODE_REPO }}
+          GITCODE_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: bash .github/scripts/publish-gitcode-release.sh
 
   publish-distribution:
     name: Publish Distribution

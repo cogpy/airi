@@ -7,12 +7,29 @@ chat:
       core-system: コアシステム
       you: あなた
   reasoning: 推論
+  sessions:
+    title: Conversations
+    new: + New
+    empty: No conversations yet
+    cloud-badge: Synced to cloud
+    new-chat-fallback: New chat
+    delete: Delete conversation
+render-error:
+  title: '{renderer} でこのモデルを描画できませんでした'
+  description: モデルは選択されていますが、ステージに表示できませんでした。
+  report-description: |-
+    {renderer} で選択したモデルを描画できませんでした。
+    モデル ID: {modelId}
+    エラー: {error}
 message: 何か話しかけてみましょう…
 send-mode:
   title: キーを送信
   enter: Enter
   ctrl-enter: Ctrl + Enter
   double-enter: Enter二回
+speech-output:
+  mute: 音声をミュート
+  unmute: ミュートを解除
 operations:
   load-models: モデルの読み込み
   load-models-status:
@@ -87,6 +104,6 @@ promo-banner:
       cta: テーマを表示
 waiting: 待機中
 websocket-status:
-  connected: WebSocketが接続されました
-  disconnected: WebSocketが切断されました
-  open-settings: WebSocketの設定を開く
+  connected: 接続済み
+  disconnected: 未接続
+  open-settings: 接続設定を開く

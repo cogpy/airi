@@ -54,6 +54,6 @@
     "@moeru/std": "catalog:"
   },
   "devDependencies": {
-    "vitest": "catalog:"
+    "vitest": "catalog:vitest"
   }
 }

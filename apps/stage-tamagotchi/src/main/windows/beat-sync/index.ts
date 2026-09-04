@@ -5,7 +5,9 @@ import { initScreenCaptureForWindow } from '@proj-airi/electron-screen-capture/m
 import { BrowserWindow } from 'electron'
 
 import { baseUrl, getElectronMainDirname, load } from '../../libs/electron/location'
+import { protectPrivilegedWindowNavigation } from '../shared/window'
 
+/** Creates the hidden renderer that owns the Beat Sync capture and detector. */
 export async function setupBeatSync() {
   const window = new BrowserWindow({
     show: false,
@@ -15,8 +17,9 @@ export async function setupBeatSync() {
     },
   })
 
-  await load(window, baseUrl(resolve(getElectronMainDirname(), '..', 'renderer'), 'beat-sync.html'))
+  protectPrivilegedWindowNavigation(window)
 
+  await load(window, baseUrl(resolve(getElectronMainDirname(), '..', 'renderer'), 'beat-sync.html'))
   initScreenCaptureForWindow(window)
 
   return window

@@ -6,26 +6,16 @@ interface EventSourcePayload {
 }
 
 function formatMetadataSource(source?: MetadataEventSource) {
-  if (!source?.plugin)
+  if (!source)
     return undefined
 
-  const pluginId = source.plugin.id
-  const instanceId = source.id
+  if ('extension' in source) {
+    return `${source.extension.id}:${source.id}`
+  }
 
-  return instanceId ? `${pluginId}:${instanceId}` : pluginId
+  return source.id
 }
 
-/**
- * Resolves a stable source key for websocket-originated events.
- *
- * Before:
- * - `{ source: "minecraft" }`
- * - `{ metadata: { source: { plugin: { id: "p" }, id: "i" } } }`
- *
- * After:
- * - `"minecraft"`
- * - `"p:i"`
- */
 export function getEventSourceKey(event: EventSourcePayload, fallback = 'unknown') {
   return (
     formatMetadataSource(event.metadata?.source)

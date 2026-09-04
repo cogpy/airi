@@ -2,7 +2,7 @@
 import type { ModelSettingsRuntimeSnapshot } from './runtime'
 
 import { useModelStore } from '@proj-airi/stage-ui-three'
-import { Button, Callout, SelectTab } from '@proj-airi/ui'
+import { Button, Callout, GhostButton, SelectTab } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -46,7 +46,6 @@ const {
 
   envSelect,
   skyBoxIntensity,
-  renderScale,
 } = storeToRefs(modelStore)
 const controlsLocked = computed(() => props.runtimeSnapshot.controlsLocked)
 const canExtractColors = computed(() => props.runtimeSnapshot.canCapturePreview)
@@ -95,7 +94,7 @@ const envOptions = computed(() => [
   >
     <template v-if="allowExtractColors">
       <ColorPalette class="mb-4 mt-2" :colors="palette.map(hex => ({ hex, name: hex }))" mx-auto />
-      <Button variant="secondary" :disabled="controlsLocked || !canExtractColors" @click="$emit('extractColorsFromModel')">
+      <Button :disabled="controlsLocked || !canExtractColors" @click="$emit('extractColorsFromModel')">
         {{ t('settings.vrm.theme-color-from-model.button-extract.title') }}
       </Button>
     </template>
@@ -110,11 +109,6 @@ const envOptions = computed(() => [
         :x-config="{ min: -modelSize.x * 2, max: modelSize.x * 2, step: modelSize.x / 10000, label: 'X', formatValue: val => val?.toFixed(4) }"
         :y-config="{ min: -modelSize.y * 2, max: modelSize.y * 2, step: modelSize.y / 10000, label: 'Y', formatValue: val => val?.toFixed(4) }"
         :z-config="{ min: -modelSize.z * 2, max: modelSize.z * 2, step: modelSize.z / 10000, label: 'Z', formatValue: val => val?.toFixed(4) }"
-      />
-      <PropertyNumber
-        v-model="renderScale"
-        :config="{ min: 0.5, max: 2, step: 0.25, label: t('settings.vrm.render-scale.title'), formatValue: val => val?.toFixed(2), disabled: controlsLocked }"
-        :label="t('settings.vrm.render-scale.title')"
       />
       <PropertyNumber
         v-model="cameraFOV"
@@ -138,11 +132,11 @@ const envOptions = computed(() => [
       </div>
       <div />
       <template v-for="option in trackingOptions" :key="option.value">
-        <Button
+        <GhostButton
           :class="[option.class, 'w-auto']"
           :disabled="controlsLocked"
           size="sm"
-          :variant="trackingMode === option.value ? 'primary' : 'secondary'"
+          :active="trackingMode === option.value"
           :label="option.label"
           @click="trackingMode = option.value"
         />

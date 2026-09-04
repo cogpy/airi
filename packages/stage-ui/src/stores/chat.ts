@@ -1,76 +1,42 @@
+import type { ChatOrchestratorRuntimeState, ChatOrchestratorSendOptions, StreamEvent, StreamOptions } from '@proj-airi/core-agent'
 import type { WebSocketEventInputs } from '@proj-airi/server-sdk'
 import type { ChatProvider } from '@xsai-ext/providers/utils'
-import type { CommonContentPart, Message, ToolMessage } from '@xsai/shared-chat'
+import type { Message } from '@xsai/shared-chat'
+import type { SyncedPiniaRuntime } from 'pinia-plugin-synced'
 
-import type { ChatAssistantMessage, ChatSlices, ChatStreamEventContext, StreamingAssistantMessage } from '../types/chat'
-import type { StreamEvent, StreamOptions } from './llm'
+import type { ChatHistoryItem, ChatToolReference, StreamingAssistantMessage } from '../types/chat'
+import type { ToolCallRerunPayload } from './tool-call-rerun'
 
+import { errorMessageFrom } from '@moeru/std'
+import { createChatOrchestratorRuntime } from '@proj-airi/core-agent'
 import { IOAttributes, IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
-import { createQueue } from '@proj-airi/stream-kit'
 import { nanoid } from 'nanoid'
 import { defineStore, storeToRefs } from 'pinia'
-import { computed, ref, toRaw } from 'vue'
+import { shallowRef, toRaw } from 'vue'
 
-import { useAnalytics } from '../composables'
-import { useLlmmarkerParser } from '../composables/llm-marker-parser'
-import { categorizeResponse, createStreamingCategorizer } from '../composables/response-categoriser'
+import { getConversationAnalyticsSurface } from '../composables'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
-import { formatContextPromptText } from './chat/context-prompt'
+import {
+  AIRI_CHAT_APP_SURFACE_HEADER,
+  AIRI_CHAT_ROUND_ID_HEADER,
+  AIRI_CHAT_SESSION_ID_HEADER,
+} from '../libs/analytics-headers'
+import { createChatAnalyticsHooks, getProviderMode } from '../libs/analytics/events/chat'
+import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
+import { useLLM } from './ai/chat-llm/llm'
+import { resolveLlmTools } from './ai/chat-llm/tool-resolver'
+import { useLlmToolsStore } from './ai/chat-llm/tools'
+import { useLlmToolsetPromptsStore } from './ai/chat-llm/toolset-prompts'
 import { createMinecraftContext } from './chat/context-providers'
 import { useChatContextStore } from './chat/context-store'
-import { formatTimePrefix } from './chat/datetime-prefix'
-import { createChatHooks } from './chat/hooks'
 import { useChatSessionStore } from './chat/session-store'
 import { useChatStreamStore } from './chat/stream-store'
 import { useContextObservabilityStore } from './devtools/context-observability'
-import { useLLM } from './llm'
 import { useAiriCardStore } from './modules/airi-card'
 import { useAutonomousArtistryStore } from './modules/artistry-autonomous'
 import { useConsciousnessStore } from './modules/consciousness'
-
-// Prepends a literal text fragment to a message's content. Handles both the
-// shorthand string form and the array-of-parts form. When the first part is
-// already text, it merges into that part to keep the part count stable for
-// downstream consumers; otherwise it inserts a new text part at the front.
-// Constraint is `content?: unknown` to admit both required-content roles
-// (system/user) and optional-content roles (assistant); the generic preserves
-// the caller's discriminated-union narrowing.
-function prependTextToContent<T extends { content?: unknown }>(msg: T, text: string): T {
-  const content = msg.content
-  if (content === undefined)
-    return { ...msg, content: text } as T
-  if (typeof content === 'string')
-    return { ...msg, content: `${text}${content}` } as T
-
-  if (Array.isArray(content)) {
-    const first = content[0] as { type?: string, text?: string } | undefined
-    if (first && first.type === 'text' && typeof first.text === 'string') {
-      const next = [{ ...first, text: `${text}${first.text}` }, ...content.slice(1)]
-      return { ...msg, content: next } as T
-    }
-    return { ...msg, content: [{ type: 'text', text }, ...content] } as T
-  }
-
-  return msg
-}
-
-function cloneStreamingMessage(message: StreamingAssistantMessage): StreamingAssistantMessage {
-  try {
-    return structuredClone(message)
-  }
-  catch {
-    return JSON.parse(JSON.stringify(message)) as StreamingAssistantMessage
-  }
-}
-
-interface SendOptions {
-  model: string
-  chatProvider: ChatProvider
-  providerConfig?: Record<string, unknown>
-  attachments?: { type: 'image', data: string, mimeType: string }[]
-  tools?: StreamOptions['tools']
-  input?: WebSocketEventInputs
-}
+import { useWebSearchStore } from './modules/web-search'
+import { executeToolCallRerun } from './tool-call-rerun'
 
 interface ForkOptions {
   fromSessionId?: string
@@ -79,34 +45,108 @@ interface ForkOptions {
   hidden?: boolean
 }
 
-interface QueuedSend {
-  sendingMessage: string
-  options: SendOptions
-  generation: number
+/** A serializable chat request that any application context can send to the leader. */
+export interface ChatSendPayload {
+  /** Image attachments for the new user message. */
+  attachments?: { type: 'image', data: string, mimeType: string }[]
+  /** Original input metadata for chat hooks and telemetry. */
+  input?: WebSocketEventInputs
+  /** Session that owns the new turn. */
   sessionId: string
-  cancelled?: boolean
-  deferred: {
-    resolve: () => void
-    reject: (error: unknown) => void
+  /** User text for the new turn. */
+  text: string
+  /** Request-specific tools selected by their model-facing names. */
+  tools?: ChatToolReference[]
+}
+
+/** The durable messages appended while one chat request executes. */
+export interface ChatSendResult {
+  messages: ChatHistoryItem[]
+  sessionId: string
+}
+
+/** Identifies one stored message whose user turn must run again. */
+export interface ChatRetryPayload {
+  index: number
+  sessionId: string
+  tools?: ChatToolReference[]
+}
+
+/** Identifies one stored tool call that must run again in the leader. */
+export interface ChatToolCallRerunPayload extends Omit<ToolCallRerunPayload, 'sessionId' | 'toolset'> {
+  sessionId: string
+}
+
+type ProviderHistoryMessage = Exclude<ChatHistoryItem, { role: 'error' }>
+
+function toProviderHistory(messages: ChatHistoryItem[]): Message[] {
+  return messages.filter((message): message is ProviderHistoryMessage => message.role !== 'error')
+}
+
+function isTextDelta(event: StreamEvent): event is Extract<StreamEvent, { type: 'text-delta' }> {
+  return event.type === 'text-delta'
+}
+
+function retryTextFrom(message: ChatHistoryItem | undefined): string | null {
+  if (!message || message.role !== 'user')
+    return null
+
+  if (typeof message.content === 'string') {
+    const text = message.content.trim()
+    return text || null
   }
+
+  if (!Array.isArray(message.content))
+    return null
+
+  const text = message.content.reduce<string[]>((texts, part) => {
+    if (part.type !== 'text')
+      return texts
+
+    const value = part.text?.trim()
+    if (value)
+      texts.push(value)
+
+    return texts
+  }, []).join('\n\n')
+
+  return text || null
 }
 
-export interface QueuedSendSnapshot {
-  sessionId: string
-  generation: number
-  cancelled: boolean
-  messagePreview: string
-  hasAttachments: boolean
-  inputType?: WebSocketEventInputs['type']
+function retrySourceIndexFrom(messages: ChatHistoryItem[], index: number): number {
+  const targetMessage = messages[index]
+  if (!targetMessage)
+    return -1
+
+  if (targetMessage.role === 'user')
+    return index
+
+  if (targetMessage.role !== 'assistant' && targetMessage.role !== 'error')
+    return -1
+
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor]?.role === 'user')
+      return cursor
+  }
+
+  return -1
 }
 
-export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
+export type { QueuedSendSnapshot } from '@proj-airi/core-agent'
+
+export const useChatStore = defineStore('chat', () => {
   const llmStore = useLLM()
+  const llmToolsStore = useLlmToolsStore()
+  const llmToolsetPromptsStore = useLlmToolsetPromptsStore()
+  // Instantiate the web-search store eagerly so its `configured` watcher registers
+  // WEB_SEARCH_TOOLSET_PROMPT before getSystemPromptSupplement is read below. The
+  // tool resolver that would otherwise be the first to create this store runs after
+  // the system prompt is composed, which would expose web_search on the first turn
+  // without its paired prompt-injection defense.
+  useWebSearchStore()
   const consciousnessStore = useConsciousnessStore()
   const artistryAutonomousStore = useAutonomousArtistryStore()
-  const { activeProvider } = storeToRefs(consciousnessStore)
-  const { trackFirstMessage } = useAnalytics()
-
+  const { activeModel, activeProvider } = storeToRefs(consciousnessStore)
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()
   const chatContext = useChatContextStore()
@@ -115,444 +155,342 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   const { activeSessionId } = storeToRefs(chatSession)
   const { streamingMessage } = storeToRefs(chatStream)
 
-  const sending = ref(false)
-  const pendingQueuedSends = ref<QueuedSend[]>([])
-  const pendingQueuedSendCount = computed(() => pendingQueuedSends.value.length)
-  const hooks = createChatHooks()
-
-  const sendQueue = createQueue<QueuedSend>({
-    handlers: [
-      async ({ data }) => {
-        const { sendingMessage, options, generation, deferred, sessionId, cancelled } = data
-
-        if (cancelled)
-          return
-
-        if (chatSession.getSessionGeneration(sessionId) !== generation) {
-          deferred.reject(new Error('Chat session was reset before send could start'))
-          return
-        }
-
-        try {
-          await performSend(sendingMessage, options, generation, sessionId)
-          deferred.resolve()
-        }
-        catch (error) {
-          deferred.reject(error)
-        }
-      },
-    ],
+  const sending = shallowRef(false)
+  const activeSendSessionId = shallowRef<string>()
+  const activeStreamingMessage = shallowRef<StreamingAssistantMessage>()
+  const pendingQueuedSendCount = shallowRef(0)
+  let ownedActiveTurnSpan: typeof activeTurnSpan.value
+  let stopLeadershipListener: (() => void) | undefined
+  const analyticsHooks = createChatAnalyticsHooks({
+    getSessionMessages: sessionId => chatSession.getSessionMessages(sessionId),
   })
 
-  sendQueue.on('enqueue', (queuedSend) => {
-    pendingQueuedSends.value.push(queuedSend)
-  })
+  /**
+   * Initializes chat state and binds local consumers to synchronized leadership.
+   * A promoted renderer restarts the leader-owned cloud consumer.
+   */
+  async function initialize(syncedPinia: SyncedPiniaRuntime) {
+    stopLeadershipListener ??= syncedPinia.onLeadershipChange((isLeader) => {
+      if (!isLeader) {
+        chatSession.dispose()
+        return
+      }
 
-  sendQueue.on('dequeue', (queuedSend) => {
-    pendingQueuedSends.value = pendingQueuedSends.value.filter(item => item !== queuedSend)
-  })
-
-  async function performSend(
-    sendingMessage: string,
-    options: SendOptions,
-    generation: number,
-    sessionId: string,
-  ) {
-    if (!sendingMessage && !options.attachments?.length)
-      return
-
-    chatSession.ensureSession(sessionId)
-
-    // Datetime is no longer injected through the side-channel context store.
-    // It is applied at message-assembly time (see below) as a system-prompt
-    // date anchor + per-message [HH:MM] prefixes, which is more KV-cache
-    // friendly and less prone to weak models echoing timestamps verbatim.
-    const minecraftContext = createMinecraftContext()
-    if (minecraftContext)
-      chatContext.ingestContextMessage(minecraftContext)
-
-    const sendingCreatedAt = Date.now()
-    // TODO: Expire or prune stale runtime contexts from disconnected services before composing.
-    // The Minecraft page already times out service liveness locally, but the shared chat context
-    // snapshot can still retain the last runtime context:update until we add cross-store expiry.
-    const streamingMessageContext: ChatStreamEventContext = {
-      message: { role: 'user', content: sendingMessage, createdAt: sendingCreatedAt, id: nanoid() },
-      contexts: chatContext.getContextsSnapshot(),
-      composedMessage: [],
-      input: options.input,
-    }
-    contextObservability.recordLifecycle({
-      phase: 'before-compose',
-      channel: 'chat',
-      sessionId,
-      textPreview: sendingMessage,
-      details: {
-        contexts: streamingMessageContext.contexts,
-      },
+      void chatSession.ensureCurrentSession().catch((error) => {
+        console.error('[chat] Failed to start chat consumers after leader promotion:', error)
+      })
     })
 
-    const isStaleGeneration = () => chatSession.getSessionGeneration(sessionId) !== generation
-    const shouldAbort = () => isStaleGeneration()
-    if (shouldAbort())
-      return
+    await chatSession.initialize()
+  }
 
-    sending.value = true
-    let hadExistingTurn = false
+  /** Stops chat consumers that belong to this window. */
+  function dispose() {
+    stopLeadershipListener?.()
+    stopLeadershipListener = undefined
+    chatSession.dispose()
+  }
 
-    const isForegroundSession = () => sessionId === activeSessionId.value
-
-    const buildingMessage: StreamingAssistantMessage = { role: 'assistant', content: '', slices: [], tool_results: [], createdAt: Date.now(), id: nanoid() }
-
-    const updateUI = () => {
-      if (isForegroundSession()) {
-        streamingMessage.value = cloneStreamingMessage(buildingMessage)
-      }
+  async function streamWithStageAdapters(
+    model: string,
+    chatProvider: ChatProvider,
+    messages: Message[],
+    options?: StreamOptions,
+  ) {
+    let llmTextLength = 0
+    let llmOutputChunkCount = 0
+    const llmOutputChunkLengths: number[] = []
+    const headers = { ...options?.headers }
+    if (getProviderMode(activeProvider.value) === 'official' && options?.requestCorrelation) {
+      headers[AIRI_CHAT_SESSION_ID_HEADER] = options.requestCorrelation.conversationId
+      headers[AIRI_CHAT_ROUND_ID_HEADER] = options.requestCorrelation.roundId
+      headers[AIRI_CHAT_APP_SURFACE_HEADER] = getConversationAnalyticsSurface()
     }
 
-    updateUI()
-    trackFirstMessage()
+    const hadExistingTurn = !!activeTurnSpan.value
+    if (!hadExistingTurn) {
+      const turnSpan = startSpan(IOSpanNames.InteractionTurn)
+      activeTurnSpan.value = turnSpan
+      ownedActiveTurnSpan = turnSpan
+    }
+
+    const llmSpan = startSpan(IOSpanNames.LLMInference, activeTurnSpan.value, {
+      [IOAttributes.Subsystem]: IOSubsystems.LLM,
+      [IOAttributes.GenAIRequestModel]: model,
+      [IOAttributes.LLMInputMessageCount]: messages.length,
+      [IOAttributes.LLMInputUserMessageCount]: messages.filter(message => message.role === 'user').length,
+      [IOAttributes.TurnId]: options?.requestCorrelation?.roundId ?? '',
+    })
+    llmSpan.setAttribute(IOAttributes.LLMInputMessageRoles, messages.map(message => message.role))
+    const llmRequestTs = performance.now()
+    let llmFirstTokenEmitted = false
 
     try {
-      await hooks.emitBeforeMessageComposedHooks(sendingMessage, streamingMessageContext)
-
-      const contentParts: CommonContentPart[] = [{ type: 'text', text: sendingMessage }]
-
-      if (options.attachments) {
-        for (const attachment of options.attachments) {
-          if (attachment.type === 'image') {
-            contentParts.push({
-              type: 'image_url',
-              image_url: {
-                url: `data:${attachment.mimeType};base64,${attachment.data}`,
-              },
-            })
-          }
-        }
-      }
-
-      const finalContent = contentParts.length > 1 ? contentParts : sendingMessage
-      if (!streamingMessageContext.input) {
-        streamingMessageContext.input = {
-          type: 'input:text',
-          data: {
-            text: sendingMessage,
-          },
-        }
-      }
-
-      if (shouldAbort())
-        return
-
-      chatSession.appendSessionMessage(sessionId, {
-        role: 'user',
-        content: finalContent,
-        createdAt: sendingCreatedAt,
-        id: nanoid(),
-      })
-      const sessionMessagesForSend = chatSession.getSessionMessages(sessionId)
-
-      // --------------------------------
-      // Cinematic Autonomy (Autonomous Artist)
-      // Trigger now only if in user-centric mode. Assistant-centric runs after response is complete.
-      const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
-      if (autonomousTarget === 'user') {
-        void artistryAutonomousStore.runArtistTask(sendingMessage, sessionMessagesForSend as any)
-      }
-      // --------------------------------
-
-      const categorizer = createStreamingCategorizer(activeProvider.value)
-      let streamPosition = 0
-
-      const parser = useLlmmarkerParser({
-        onLiteral: async (literal) => {
-          if (shouldAbort())
-            return
-
-          categorizer.consume(literal)
-
-          const speechOnly = categorizer.filterToSpeech(literal, streamPosition)
-          streamPosition += literal.length
-
-          if (speechOnly.trim()) {
-            buildingMessage.content += speechOnly
-
-            await hooks.emitTokenLiteralHooks(speechOnly, streamingMessageContext)
-
-            const lastSlice = buildingMessage.slices.at(-1)
-            if (lastSlice?.type === 'text') {
-              lastSlice.text += speechOnly
-            }
-            else {
-              buildingMessage.slices.push({
-                type: 'text',
-                text: speechOnly,
+      await llmStore.stream(model, chatProvider, messages, {
+        ...options,
+        headers,
+        onStreamEvent: async (event: StreamEvent) => {
+          if (isTextDelta(event)) {
+            llmOutputChunkCount += 1
+            llmOutputChunkLengths.push(event.text.length)
+            if (!llmFirstTokenEmitted) {
+              llmFirstTokenEmitted = true
+              llmSpan.addEvent(IOEvents.LLMFirstToken, {
+                [IOAttributes.LLM_TTFT]: performance.now() - llmRequestTs,
               })
             }
-            updateUI()
+            llmTextLength += event.text.length
           }
-        },
-        onSpecial: async (special) => {
-          if (shouldAbort())
-            return
 
-          await hooks.emitTokenSpecialHooks(special, streamingMessageContext)
-        },
-        onEnd: async (fullText) => {
-          if (isStaleGeneration())
-            return
-
-          const finalCategorization = categorizeResponse(fullText, activeProvider.value)
-
-          buildingMessage.categorization = {
-            speech: finalCategorization.speech,
-            reasoning: finalCategorization.reasoning,
-          }
-          updateUI()
-        },
-        minLiteralEmitLength: 24,
-      })
-
-      const toolCallQueue = createQueue<ChatSlices>({
-        handlers: [
-          async (ctx) => {
-            if (shouldAbort())
-              return
-            if (ctx.data.type === 'tool-call') {
-              buildingMessage.slices.push(ctx.data)
-              updateUI()
-              return
-            }
-
-            if (ctx.data.type === 'tool-call-result') {
-              buildingMessage.tool_results.push(ctx.data)
-              updateUI()
-            }
-          },
-        ],
-      })
-
-      // Per-message datetime injection (replaces the old `<context>` XML block):
-      // every user/assistant message gets a `[YYYY-MM-DD HH:MM]` prefix
-      // derived from its persisted `createdAt`. The full date appears on every
-      // turn so the model can read "today" from the most recent message; the
-      // system prompt itself stays 100% static for permanent KV-cache reuse.
-      // Legacy entries without a persisted `createdAt` fall back to "now"
-      // rather than a fabricated older timestamp.
-      // See `./chat/datetime-prefix.ts` for the rationale.
-      const nowTs = Date.now()
-
-      const newMessages = sessionMessagesForSend.map((msg) => {
-        const { context: _context, id: _id, createdAt, ...withoutContext } = msg
-        const rawMessage = toRaw(withoutContext)
-        const ts = createdAt ?? nowTs
-
-        if (rawMessage.role === 'user') {
-          return prependTextToContent(rawMessage, formatTimePrefix(ts))
-        }
-
-        if (rawMessage.role === 'assistant') {
-          const { slices: _slices, tool_results: _toolResults, categorization: _categorization, ...rest } = rawMessage as ChatAssistantMessage
-          return prependTextToContent(toRaw(rest), formatTimePrefix(ts))
-        }
-
-        return rawMessage
-      })
-
-      const contextsSnapshot = chatContext.getContextsSnapshot()
-      const contextPromptText = formatContextPromptText(contextsSnapshot)
-      if (contextPromptText) {
-        // Merge context into the latest user message instead of inserting a
-        // separate user message, which would create consecutive same-role
-        // messages forbidden by some providers (e.g. Anthropic → 400 error).
-        // Appending at the end keeps the static history prefix stable for
-        // LLM KV-cache reuse.
-        // See: https://github.com/moeru-ai/airi/issues/1539
-        const lastMessage = newMessages.at(-1)
-        if (lastMessage && lastMessage.role === 'user') {
-          // Append context after the user's content, separated by a newline.
-          // Keeping it at the end of the last message preserves the static
-          // history prefix for LLM KV-cache reuse.
-          const existingParts = typeof lastMessage.content === 'string'
-            ? [{ type: 'text' as const, text: lastMessage.content }]
-            : lastMessage.content
-
-          lastMessage.content = [
-            ...existingParts,
-            { type: 'text' as const, text: `\n${contextPromptText}` },
-          ]
-        }
-
-        contextObservability.recordLifecycle({
-          phase: 'prompt-context-built',
-          channel: 'chat',
-          sessionId,
-          details: {
-            contexts: contextsSnapshot,
-            promptText: contextPromptText,
-          },
-        })
-      }
-
-      streamingMessageContext.composedMessage = newMessages as Message[]
-      contextObservability.capturePromptProjection({
-        sessionId,
-        message: sendingMessage,
-        contexts: contextsSnapshot,
-        promptMessage: undefined,
-        composedMessage: newMessages as Message[],
-      })
-      contextObservability.recordLifecycle({
-        phase: 'after-compose',
-        channel: 'chat',
-        sessionId,
-        textPreview: sendingMessage,
-        details: {
-          composedMessage: newMessages,
+          await options?.onStreamEvent?.(event)
         },
       })
-
-      await hooks.emitAfterMessageComposedHooks(sendingMessage, streamingMessageContext)
-      await hooks.emitBeforeSendHooks(sendingMessage, streamingMessageContext)
-
-      let fullText = ''
-      const headers = (options.providerConfig?.headers || {}) as Record<string, string>
-
-      if (shouldAbort())
-        return
-
-      hadExistingTurn = !!activeTurnSpan.value
-      if (!hadExistingTurn)
-        activeTurnSpan.value = startSpan(IOSpanNames.InteractionTurn)
-
-      const llmSpan = startSpan(IOSpanNames.LLMInference, activeTurnSpan.value, {
-        [IOAttributes.Subsystem]: IOSubsystems.LLM,
-        [IOAttributes.GenAIRequestModel]: options.model,
-      })
-      const llmRequestTs = performance.now()
-      let llmFirstTokenEmitted = false
-
-      try {
-        await llmStore.stream(options.model, options.chatProvider, newMessages as Message[], {
-          headers,
-          tools: options.tools,
-          // NOTICE: xsai stream may emit `finish` before tool steps continue, so keep waiting until
-          // the final non-tool finish to avoid ending the chat turn with no assistant reply.
-          waitForTools: true,
-          captureToolErrors: true,
-          onStreamEvent: async (event: StreamEvent) => {
-            switch (event.type) {
-              case 'tool-call':
-                toolCallQueue.enqueue({
-                  type: 'tool-call',
-                  toolCall: event,
-                })
-
-                break
-              case 'tool-result':
-                toolCallQueue.enqueue({
-                  type: 'tool-call-result',
-                  id: event.toolCallId,
-                  result: event.result,
-                })
-
-                break
-              case 'tool-error':
-                toolCallQueue.enqueue({
-                  type: 'tool-call-result',
-                  id: event.toolCallId,
-                  isError: true,
-                  result: event.result,
-                })
-
-                break
-              case 'text-delta':
-                if (!llmFirstTokenEmitted) {
-                  llmFirstTokenEmitted = true
-                  llmSpan.addEvent(IOEvents.LLMFirstToken, {
-                    [IOAttributes.LLM_TTFT]: performance.now() - llmRequestTs,
-                  })
-                }
-                fullText += event.text
-                await parser.consume(event.text)
-                break
-              case 'finish':
-                break
-              case 'error':
-                throw event.error ?? new Error('Stream error')
-            }
-          },
-        })
-
-        llmSpan.setAttribute(IOAttributes.LLMTextLength, fullText.length)
-      }
-      finally {
-        // TODO: Record errors on llmSpan
-        llmSpan.end()
-      }
-
-      await parser.end()
-
-      if (!isStaleGeneration() && buildingMessage.slices.length > 0) {
-        chatSession.appendSessionMessage(sessionId, toRaw(buildingMessage))
-      }
-
-      await hooks.emitStreamEndHooks(streamingMessageContext)
-      await hooks.emitAssistantResponseEndHooks(fullText, streamingMessageContext)
-
-      await hooks.emitAfterSendHooks(sendingMessage, streamingMessageContext)
-      await hooks.emitAssistantMessageHooks({ ...buildingMessage }, fullText, streamingMessageContext)
-      await hooks.emitChatTurnCompleteHooks({
-        output: { ...buildingMessage },
-        outputText: fullText,
-        toolCalls: sessionMessagesForSend.filter(msg => msg.role === 'tool') as ToolMessage[],
-      }, streamingMessageContext)
-
-      // --- AUTONOMOUS ARTISTRY HOOK (ASSISTANT-CENTRIC) ---
-      const artistry = cardStore.activeCard?.extensions?.airi?.modules?.artistry
-      if (artistry?.autonomousEnabled && artistry?.autonomousTarget === 'assistant') {
-        void artistryAutonomousStore.runArtistTask(fullText, sessionMessagesForSend as any)
-      }
-      // ---------------------------------------------------
-
-      if (isForegroundSession()) {
-        streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [] }
-      }
-    }
-    catch (error) {
-      console.error('Error sending message:', error)
-      throw error
     }
     finally {
-      if (!hadExistingTurn && activeTurnSpan.value) {
-        activeTurnSpan.value.end()
-        activeTurnSpan.value = undefined
-      }
-      sending.value = false
+      llmSpan.setAttribute(IOAttributes.LLMOutputChunkCount, llmOutputChunkCount)
+      llmSpan.setAttribute(IOAttributes.LLMOutputChunkLengths, llmOutputChunkLengths)
+      llmSpan.setAttribute(IOAttributes.LLMTextLength, llmTextLength)
+      llmSpan.end()
     }
   }
 
+  function syncRuntimeState(state: ChatOrchestratorRuntimeState) {
+    sending.value = state.sending
+    activeSendSessionId.value = state.activeSendSessionId
+    activeStreamingMessage.value = state.activeStreamingMessage
+    pendingQueuedSendCount.value = state.pendingQueuedSendCount
+  }
+
+  function settleOwnedActiveTurnSpan() {
+    if (!ownedActiveTurnSpan)
+      return
+
+    ownedActiveTurnSpan.end()
+    if (activeTurnSpan.value === ownedActiveTurnSpan)
+      activeTurnSpan.value = undefined
+    ownedActiveTurnSpan = undefined
+  }
+
+  const runtime = createChatOrchestratorRuntime({
+    session: {
+      ensureSession: sessionId => chatSession.ensureSession(sessionId),
+      getSessionMessages: sessionId => chatSession.getSessionMessages(sessionId).map(message => toRaw(message)),
+      appendSessionMessage: (sessionId, message) => chatSession.appendSessionMessage(sessionId, message),
+      getSessionGeneration: sessionId => chatSession.getSessionGeneration(sessionId),
+    },
+    context: {
+      ingest: envelope => chatContext.ingestContextMessage(envelope),
+      snapshot: () => chatContext.getContextsSnapshot(),
+    },
+    foregroundStream: {
+      patch: (message) => {
+        streamingMessage.value = message
+      },
+      reset: () => {
+        streamingMessage.value = { role: 'assistant', content: '', slices: [], tool_results: [] }
+      },
+    },
+    llm: {
+      stream: streamWithStageAdapters,
+    },
+    getActiveSessionId: () => activeSessionId.value,
+    getActiveProvider: () => activeProvider.value,
+    getSystemPromptSupplement: () => llmToolsetPromptsStore.activeToolsetPrompt,
+    runtimeContextProviders: [
+      createMinecraftContext,
+    ],
+    createId: nanoid,
+    unwrapMessage: message => toRaw(message),
+    onStateChange: syncRuntimeState,
+    onSendSettled: settleOwnedActiveTurnSpan,
+    ...analyticsHooks,
+    onLifecycle: record => contextObservability.recordLifecycle(record),
+    onPromptProjection: payload => contextObservability.capturePromptProjection(payload),
+    onUserMessageAppended: ({ sessionId, message, messageText, source, model, provider, roundId, turnIndex }) => {
+      analyticsHooks.onUserMessageAppended?.({
+        sessionId,
+        message,
+        messageText,
+        source,
+        model,
+        provider,
+        roundId,
+        turnIndex,
+      })
+      if (isCloudSyncableMessage(message)) {
+        void chatSession.pushMessageToCloud(sessionId, {
+          id: message.id,
+          role: 'user',
+          content: messageText,
+        })
+      }
+    },
+    onAssistantMessageAppended: ({ sessionId, message }) => {
+      if (isCloudSyncableMessage(message) && message.id) {
+        void chatSession.pushMessageToCloud(sessionId, {
+          id: message.id,
+          role: 'assistant',
+          content: extractMessageText(message),
+        })
+      }
+    },
+    onUserTurnReady: ({ messageText, sessionMessages }) => {
+      const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
+      if (autonomousTarget === 'user')
+        void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))
+    },
+    onAssistantTurnReady: ({ messageText, sessionMessages }) => {
+      const artistry = cardStore.activeCard?.extensions?.airi?.modules?.artistry
+      if (artistry?.autonomousEnabled && artistry?.autonomousTarget === 'assistant')
+        void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))
+    },
+  })
+
   async function ingest(
     sendingMessage: string,
-    options: SendOptions,
+    options: ChatOrchestratorSendOptions,
     targetSessionId?: string,
   ) {
-    const sessionId = targetSessionId || activeSessionId.value
-    const generation = chatSession.getSessionGeneration(sessionId)
+    return runtime.ingest(sendingMessage, options, targetSessionId)
+  }
 
-    return new Promise<void>((resolve, reject) => {
-      sendQueue.enqueue({
-        sendingMessage,
-        options,
-        generation,
-        sessionId,
-        deferred: { resolve, reject },
-      })
+  function collectToolReferences(sessionId: string, selectedTools: ChatToolReference[] = []): ChatToolReference[] {
+    const names = new Set<string>()
+
+    for (const message of chatSession.getSessionMessages(sessionId)) {
+      for (const tool of message.tools ?? [])
+        names.add(tool.name)
+    }
+
+    for (const tool of selectedTools)
+      names.add(tool.name)
+
+    return [...names].map(name => ({ name }))
+  }
+
+  function appendSendError(sessionId: string, error: unknown) {
+    if (!chatSession.getSessionMessagesIfLoaded(sessionId))
+      return
+
+    chatSession.appendSessionMessage(sessionId, {
+      role: 'error',
+      content: errorMessageFrom(error) ?? 'Unknown chat operation failure',
     })
+  }
+
+  async function executeSend(payload: ChatSendPayload): Promise<ChatSendResult> {
+    const providerId = activeProvider.value
+    const modelId = activeModel.value
+    if (!providerId || !modelId)
+      throw new Error('No active chat provider or model configured')
+
+    if (!await chatSession.loadSession(payload.sessionId))
+      throw new Error('Failed to load the target chat session')
+
+    const messageCount = chatSession.getSessionMessages(payload.sessionId).length
+    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+    if (!chatProvider)
+      throw new Error(`Failed to resolve chat provider "${providerId}"`)
+
+    await runtime.ingest(payload.text, {
+      model: modelId,
+      chatProvider,
+      attachments: payload.attachments,
+      input: payload.input,
+      toolReferences: payload.tools,
+      // Resolve this function after the request reaches the per-session queue.
+      // The history then contains tool names from every earlier queued turn.
+      tools: async () => {
+        const references = collectToolReferences(payload.sessionId, payload.tools)
+        return llmToolsStore.getToolsByNames(...references.map(tool => tool.name))
+      },
+    }, payload.sessionId)
+
+    const completedMessages = chatSession.getSessionMessagesIfLoaded(payload.sessionId)
+    if (!completedMessages)
+      throw new Error('Chat session was removed before send completed')
+
+    return {
+      messages: completedMessages
+        .slice(messageCount)
+        .map(message => structuredClone(toRaw(message))),
+      sessionId: payload.sessionId,
+    }
+  }
+
+  /** Sends one serializable chat request through the elected leader. */
+  async function send(payload: ChatSendPayload): Promise<ChatSendResult> {
+    try {
+      return await executeSend(payload)
+    }
+    catch (error) {
+      appendSendError(payload.sessionId, error)
+      throw error
+    }
+  }
+
+  /** Replaces one stored turn with a new execution of its user message. */
+  async function retry(payload: ChatRetryPayload): Promise<ChatSendResult> {
+    if (!await chatSession.loadSession(payload.sessionId))
+      throw new Error('Failed to load the target chat session')
+
+    const currentMessages = chatSession.getSessionMessages(payload.sessionId)
+    const sourceIndex = retrySourceIndexFrom(currentMessages, payload.index)
+    if (sourceIndex < 0)
+      throw new Error('Retry target has no retriable source message')
+
+    const sourceMessage = currentMessages[sourceIndex]
+    const text = retryTextFrom(sourceMessage)
+    if (!text)
+      throw new Error('Retry target has no retriable user message')
+
+    chatSession.setSessionMessages(payload.sessionId, currentMessages.slice(0, sourceIndex))
+
+    try {
+      return await executeSend({
+        sessionId: payload.sessionId,
+        text,
+        tools: payload.tools ?? sourceMessage?.tools,
+      })
+    }
+    catch (error) {
+      appendSendError(payload.sessionId, error)
+      throw error
+    }
+  }
+
+  /** Runs one stored tool call again and replaces its stored result. */
+  async function rerunToolCall(payload: ChatToolCallRerunPayload): Promise<void> {
+    if (!await chatSession.loadSession(payload.sessionId))
+      throw new Error('Failed to load the target chat session')
+
+    const nextMessages = await executeToolCallRerun({
+      messages: chatSession.getSessionMessages(payload.sessionId),
+      payload,
+      resolveTools: () => resolveLlmTools({
+        customTools: llmToolsStore.getToolsByNames(payload.toolName),
+      }),
+    })
+    chatSession.setSessionMessages(payload.sessionId, nextMessages)
+  }
+
+  /** Clears one session and stops runtime work that still belongs to it. */
+  function cleanup(sessionId: string) {
+    chatSession.cleanupMessages(sessionId)
+    chatContext.resetContexts()
+    runtime.cancelPendingSends(sessionId)
+    chatStream.resetStream()
+  }
+
+  /** Cancels queued work before permanently removing its owning session. */
+  function deleteSession(sessionId: string): Promise<void> {
+    runtime.cancelPendingSends(sessionId)
+    return chatSession.deleteSession(sessionId)
   }
 
   async function ingestOnFork(
     sendingMessage: string,
-    options: SendOptions,
+    options: ChatOrchestratorSendOptions,
     forkOptions?: ForkOptions,
   ) {
     const baseSessionId = forkOptions?.fromSessionId ?? activeSessionId.value
@@ -569,61 +507,58 @@ export const useChatOrchestratorStore = defineStore('chat-orchestrator', () => {
   }
 
   function cancelPendingSends(sessionId?: string) {
-    for (const queued of pendingQueuedSends.value) {
-      if (sessionId && queued.sessionId !== sessionId)
-        continue
-
-      queued.cancelled = true
-      queued.deferred.reject(new Error('Chat session was reset before send could start'))
-    }
-
-    pendingQueuedSends.value = sessionId
-      ? pendingQueuedSends.value.filter(item => item.sessionId !== sessionId)
-      : []
+    runtime.cancelPendingSends(sessionId)
   }
 
   function getPendingQueuedSendSnapshot() {
-    return pendingQueuedSends.value.map(queued => ({
-      sessionId: queued.sessionId,
-      generation: queued.generation,
-      cancelled: !!queued.cancelled,
-      messagePreview: queued.sendingMessage.slice(0, 120),
-      hasAttachments: !!queued.options.attachments?.length,
-      inputType: queued.options.input?.type,
-    } satisfies QueuedSendSnapshot))
+    return runtime.getPendingQueuedSendSnapshot()
   }
 
   return {
     sending,
+    activeSendSessionId,
+    activeStreamingMessage,
     pendingQueuedSendCount,
 
+    initialize,
+    dispose,
+    cleanup,
+    deleteSession,
     ingest,
     ingestOnFork,
+    rerunToolCall,
+    retry,
+    send,
     cancelPendingSends,
     getPendingQueuedSendSnapshot,
 
-    clearHooks: hooks.clearHooks,
+    clearHooks: runtime.hooks.clearHooks,
 
-    emitBeforeMessageComposedHooks: hooks.emitBeforeMessageComposedHooks,
-    emitAfterMessageComposedHooks: hooks.emitAfterMessageComposedHooks,
-    emitBeforeSendHooks: hooks.emitBeforeSendHooks,
-    emitAfterSendHooks: hooks.emitAfterSendHooks,
-    emitTokenLiteralHooks: hooks.emitTokenLiteralHooks,
-    emitTokenSpecialHooks: hooks.emitTokenSpecialHooks,
-    emitStreamEndHooks: hooks.emitStreamEndHooks,
-    emitAssistantResponseEndHooks: hooks.emitAssistantResponseEndHooks,
-    emitAssistantMessageHooks: hooks.emitAssistantMessageHooks,
-    emitChatTurnCompleteHooks: hooks.emitChatTurnCompleteHooks,
+    emitBeforeMessageComposedHooks: runtime.hooks.emitBeforeMessageComposedHooks,
+    emitAfterMessageComposedHooks: runtime.hooks.emitAfterMessageComposedHooks,
+    emitBeforeSendHooks: runtime.hooks.emitBeforeSendHooks,
+    emitAfterSendHooks: runtime.hooks.emitAfterSendHooks,
+    emitTokenLiteralHooks: runtime.hooks.emitTokenLiteralHooks,
+    emitTokenSpecialHooks: runtime.hooks.emitTokenSpecialHooks,
+    emitStreamEndHooks: runtime.hooks.emitStreamEndHooks,
+    emitAssistantResponseEndHooks: runtime.hooks.emitAssistantResponseEndHooks,
+    emitAssistantMessageHooks: runtime.hooks.emitAssistantMessageHooks,
+    emitChatTurnCompleteHooks: runtime.hooks.emitChatTurnCompleteHooks,
 
-    onBeforeMessageComposed: hooks.onBeforeMessageComposed,
-    onAfterMessageComposed: hooks.onAfterMessageComposed,
-    onBeforeSend: hooks.onBeforeSend,
-    onAfterSend: hooks.onAfterSend,
-    onTokenLiteral: hooks.onTokenLiteral,
-    onTokenSpecial: hooks.onTokenSpecial,
-    onStreamEnd: hooks.onStreamEnd,
-    onAssistantResponseEnd: hooks.onAssistantResponseEnd,
-    onAssistantMessage: hooks.onAssistantMessage,
-    onChatTurnComplete: hooks.onChatTurnComplete,
+    onBeforeMessageComposed: runtime.hooks.onBeforeMessageComposed,
+    onAfterMessageComposed: runtime.hooks.onAfterMessageComposed,
+    onBeforeSend: runtime.hooks.onBeforeSend,
+    onAfterSend: runtime.hooks.onAfterSend,
+    onTokenLiteral: runtime.hooks.onTokenLiteral,
+    onTokenSpecial: runtime.hooks.onTokenSpecial,
+    onStreamEnd: runtime.hooks.onStreamEnd,
+    onAssistantResponseEnd: runtime.hooks.onAssistantResponseEnd,
+    onAssistantMessage: runtime.hooks.onAssistantMessage,
+    onChatTurnComplete: runtime.hooks.onChatTurnComplete,
   }
+}, {
+  synced: {
+    actions: ['cleanup', 'deleteSession', 'rerunToolCall', 'retry', 'send'],
+    state: true,
+  },
 })

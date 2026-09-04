@@ -1,2 +1,4 @@
 export * from './expression-store'
-export * from './live2d'
+export * from './model-parameters'
+export * from './motion-control'
+export * from './view-control'

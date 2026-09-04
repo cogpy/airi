@@ -1,14 +1,9 @@
 import type { JsonSchema } from 'xsschema'
 
-import z from 'zod/v4'
-
 import { ContextUpdateStrategy } from '@proj-airi/server-sdk'
-import { rawTool } from '@xsai/tool'
 import { describe, expect, it, vi } from 'vitest'
-import { toJsonSchema } from 'xsschema'
 
 import { createSparkCommandTool } from './spark-command'
-import { normalizeNullableAnyOf, sparkNotifyCommandItemSchema } from './spark-command-shared'
 
 function isJsonSchema(value: JsonSchema | boolean | undefined): value is JsonSchema {
   return Boolean(value && typeof value === 'object')
@@ -54,39 +49,6 @@ function findObjectSchema(schema: JsonSchema | undefined, predicate: (schema: Js
 }
 
 describe('tools/character/orchestrator/spark-command', () => {
-  it('normalizes scalar|null anyOf into a type array', async () => {
-    const schemaTestUnion = await toJsonSchema(z.object({
-      testField: z.union([z.string(), z.null()]),
-    }))
-    const normalized = normalizeNullableAnyOf(schemaTestUnion as JsonSchema)
-
-    expect((normalized.properties?.testField as JsonSchema).type).toEqual(['string', 'null'])
-    expect((normalized.properties?.testField as JsonSchema).anyOf).toBeUndefined()
-  })
-
-  it('deduplicates primitive types after normalization', async () => {
-    const schemaTestUnion = await toJsonSchema(z.object({
-      testField: z.union([z.literal('force'), z.literal('soft'), z.literal(false)]),
-    }))
-    const normalized = normalizeNullableAnyOf(schemaTestUnion as JsonSchema)
-
-    expect((normalized.properties?.testField as JsonSchema).type).toEqual(['string', 'boolean'])
-    expect((normalized.properties?.testField as JsonSchema).anyOf).toBeUndefined()
-  })
-
-  it('should render sparkNotifyCommandItemSchema into correct schema', async () => {
-    const schemaTest = await toJsonSchema(sparkNotifyCommandItemSchema)
-    const normalized = normalizeNullableAnyOf(schemaTest as JsonSchema)
-
-    const res = rawTool({
-      name: 'test_tool',
-      strict: true,
-      parameters: normalized,
-      execute: () => ({ success: true }),
-    })
-    expect(res.function.parameters).toStrictEqual(normalized)
-  })
-
   it('emits a strict parameter schema', async () => {
     const tools = await createSparkCommandTool({
       sendSparkCommand: () => undefined,
@@ -110,6 +72,35 @@ describe('tools/character/orchestrator/spark-command', () => {
 
     expect(guidancePersona.propertyNames).toBeUndefined()
     expect(metadata.propertyNames).toBeUndefined()
+  })
+
+  it('preserves heterogeneous nullable metadata values as anyOf', async () => {
+    const tools = await createSparkCommandTool({
+      sendSparkCommand: () => undefined,
+    })
+
+    const schema = tools[0].function.parameters as JsonSchema
+    const contexts = getArraySchema(schema.properties?.contexts as JsonSchema)
+    const contextItem = contexts?.items as JsonSchema
+    const metadata = getArraySchema(contextItem.properties?.metadata as JsonSchema)
+    const metadataItem = metadata?.items as JsonSchema
+    const metadataValue = metadataItem.properties?.value as JsonSchema
+
+    // ROOT CAUSE:
+    //
+    // A global normalizer collapsed this union into `type: ['string', 'number',
+    // 'boolean', 'null']`. The Gemini conversion in OpenRouter then removed the
+    // metadata properties but kept the `required` keys.
+    //
+    // The tool now keeps the canonical `anyOf`. Provider adapters can convert
+    // this schema when their target rejects the canonical form.
+    expect(metadataValue.type).toBeUndefined()
+    expect(metadataValue.anyOf).toEqual([
+      { type: 'string' },
+      { type: 'number' },
+      { type: 'boolean' },
+      { type: 'null' },
+    ])
   })
 
   it('uses explicit required keys for nested strict option objects', async () => {
@@ -253,5 +244,29 @@ describe('tools/character/orchestrator/spark-command', () => {
     expect(command.contexts?.[0].contextId).toEqual(expect.any(String))
     expect(result).toContain('spark:command sent')
     expect(result).toContain(command.commandId)
+  })
+
+  it('reports a broadcast without crashing when the channel sender clears destinations', async () => {
+    // The real sendSparkCommand (stores/ai/chat-llm/llm.ts) deletes command.destinations to broadcast to every
+    // authenticated peer; the success message must not then call .join on undefined.
+    const sendSparkCommand = vi.fn((command: { destinations?: unknown }) => {
+      delete command.destinations
+    })
+    const tools = await createSparkCommandTool({ sendSparkCommand })
+
+    const result = await tools[0].execute({
+      destinations: [],
+      interrupt: 'soft',
+      priority: 'normal',
+      intent: 'action',
+      ack: null,
+      parentEventId: null,
+      guidance: null,
+      contexts: null,
+    }, { messages: [], toolCallId: 'tool-call-id' })
+
+    expect(sendSparkCommand).toHaveBeenCalledOnce()
+    expect(result).toContain('spark:command sent')
+    expect(result).toContain('broadcast')
   })
 })

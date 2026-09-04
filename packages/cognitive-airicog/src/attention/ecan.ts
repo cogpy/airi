@@ -128,15 +128,8 @@ export class ECAN {
    * of focus in the system — {@link ECAN.isInFocus} and {@link ECAN.getStats}
    * are derived from it, so a member's STI can never exceed the focus average.
    *
-   * Use when:
-   * - You need the atoms currently under cognitive consideration
-   *
-   * Expects:
-   * - Nothing; does not record an access, so inspecting the focus does not
-   *   itself earn the focus wages
-   *
-   * Returns:
-   * - Focus members ordered by descending STI, possibly empty
+   * Ordered by descending STI. Does not record an access, so inspecting the
+   * focus does not itself earn the focus wages.
    */
   getAttentionalFocus(): Atom[] {
     return this.atomSpace
@@ -147,16 +140,8 @@ export class ECAN {
   /**
    * Check if an atom is in the attentional focus.
    *
-   * Use when:
-   * - You need a membership test that agrees with
-   *   {@link ECAN.getAttentionalFocus}
-   *
-   * Expects:
-   * - An atom id; unknown ids are simply not in focus
-   *
-   * Returns:
-   * - Whether the atom is a current focus member. Costs a focus computation,
-   *   so prefer {@link ECAN.getAttentionalFocus} when testing many atoms
+   * Unknown ids are simply not in focus. Costs a whole focus computation, so
+   * prefer {@link ECAN.getAttentionalFocus} when testing more than one atom.
    */
   isInFocus(atomId: string): boolean {
     return this.getAttentionalFocus().some(atom => atom.id === atomId)
@@ -165,16 +150,12 @@ export class ECAN {
   /**
    * Stimulate an atom, moving importance from the bank onto it.
    *
-   * Use when:
-   * - Something the agent did should make an atom matter more
+   * The grant is capped by the bank balance and by the atom's remaining
+   * headroom, so a request is only partially filled when either runs out.
+   * Unknown ids and non-positive amounts are no-ops.
    *
-   * Expects:
-   * - An atom id; unknown ids and non-positive amounts are no-ops. The grant is
-   *   capped by the bank balance and by the atom's remaining headroom, so the
-   *   request is only partially filled when either runs out
-   *
-   * Returns:
-   * - The importance actually transferred, which is exactly what left the bank
+   * Returns the importance actually transferred, which is exactly what left
+   * the bank — the caller cannot assume it got what it asked for.
    */
   stimulate(atomId: string, amount: number = 0.1): number {
     const atom = this.atomSpace.getAtom(atomId)
@@ -198,16 +179,9 @@ export class ECAN {
   /**
    * Inhibit an atom, returning importance from it to the bank.
    *
-   * Use when:
-   * - An atom should stop competing for cognitive resources
-   *
-   * Expects:
-   * - An atom id; unknown ids and non-positive amounts are no-ops. An atom
-   *   cannot repay more than it holds, so STI never goes negative
-   *
-   * Returns:
-   * - The importance actually transferred, which is exactly what reached the
-   *   bank
+   * An atom cannot repay more than it holds, so STI never goes negative and
+   * the return value is exactly what reached the bank. Unknown ids and
+   * non-positive amounts are no-ops.
    */
   inhibit(atomId: string, amount: number = 0.1): number {
     const atom = this.atomSpace.getAtom(atomId)
@@ -229,18 +203,11 @@ export class ECAN {
   /**
    * Spread importance from a source atom to connected atoms.
    *
-   * Use when:
-   * - Activating an atom should pull its neighbourhood into consideration
-   *
-   * Expects:
-   * - A source atom id. Spreading is performed by the AtomSpace, which boosts
-   *   atoms without consulting the bank and off the attention lattice, so the
-   *   result is reconciled afterwards: the boosted atoms are projected back
-   *   onto the lattice and the importance they gained is charged to the bank
-   *
-   * Returns:
-   * - Nothing; inspect {@link ECAN.getAttentionBank} to see what the spread
-   *   cost
+   * Spreading is performed by the AtomSpace, which boosts atoms without
+   * consulting the bank and off the attention lattice, so the result is
+   * reconciled afterwards: the boosted atoms are projected back onto the
+   * lattice and the importance they gained is charged to the bank. Inspect
+   * {@link ECAN.getAttentionBank} to see what the spread cost.
    */
   spreadImportance(spec: ImportanceSpreadSpec): void {
     const { sourceId, amount, linkTypes, maxHops = 3 } = spec
@@ -283,19 +250,13 @@ export class ECAN {
    * Re-derive the bank from the atoms, absorbing importance that entered or
    * left the economy without a banking counterpart.
    *
-   * Use when:
-   * - Atoms have been added, decayed, or mutated outside ECAN and the ledger
-   *   needs to be trued up (`step` does this for you)
+   * Every atom's STI is projected onto the attention lattice and clamped to
+   * [0, 1], after which `bank + sum(sti) === attentionFunds` holds exactly.
+   * {@link ECAN.step} does this for you.
    *
-   * Expects:
-   * - Nothing. Every atom's STI is projected onto the attention lattice and
-   *   clamped to [0, 1], after which the invariant
-   *   `bank + sum(sti) === attentionFunds` holds exactly
-   *
-   * Returns:
-   * - The signed change to the bank. Negative means the AtomSpace minted
-   *   importance ECAN never issued; positive means importance vanished from
-   *   atoms without being repaid
+   * Returns the signed change to the bank: negative means the AtomSpace minted
+   * importance ECAN never issued, positive means importance vanished from
+   * atoms without being repaid.
    */
   reconcile(): number {
     let allocated = 0
@@ -442,9 +403,8 @@ export class ECAN {
    * debited the full request and credited a clamped sum, destroying the
    * difference.
    *
-   * Returns:
-   * - The importance transferred; 0 when the bank is empty, the atom is
-   *   saturated, or the request was not positive
+   * Transfers 0 when the bank is empty, the atom is saturated, or the request
+   * was not positive.
    */
   private withdraw(atom: Atom, requested: number): number {
     const granted = quantizeAttention(
@@ -539,17 +499,9 @@ export class ECAN {
   /**
    * Issue new importance into the economy.
    *
-   * Use when:
-   * - The agent has earned the right to think harder and the economy should
-   *   grow
-   *
-   * Expects:
-   * - A non-negative amount; it is added to both the bank and the total funds,
-   *   because raising the balance alone would break the ledger invariant
-   *
-   * Returns:
-   * - Nothing; the new balance is available from
-   *   {@link ECAN.getAttentionBank}
+   * The amount is added to both the bank and the total funds, because raising
+   * the balance alone would break the ledger invariant. Negative amounts are
+   * no-ops.
    */
   deposit(amount: number): void {
     const issued = quantizeAttention(Math.max(0, amount))

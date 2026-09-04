@@ -29,18 +29,8 @@
 export const QUANTA_PER_UNIT = 2 ** 20
 
 /**
- * Converts an importance value to its whole number of attention quanta.
- *
- * Use when:
- * - You need the integer partition underlying an importance value
- * - You are comparing two importance values for exact ledger equality
- *
- * Expects:
- * - A finite number; non-finite input yields 0 so a poisoned value cannot
- *   propagate into the ledger
- *
- * Returns:
- * - The nearest integer quanta count, ties rounding half away from zero
+ * Non-finite input yields 0 rather than propagating NaN or Infinity into the
+ * ledger, where it would silently destroy the conservation invariant.
  */
 export function toQuanta(value: number): number {
   if (!Number.isFinite(value))
@@ -48,42 +38,17 @@ export function toQuanta(value: number): number {
   return Math.round(value * QUANTA_PER_UNIT)
 }
 
-/**
- * Converts a whole number of attention quanta back to an importance value.
- *
- * Use when:
- * - You have done ledger arithmetic in integer quanta and need the [0, 1]
- *   importance projection again
- *
- * Expects:
- * - An integer quanta count within the safe-integer range
- *
- * Returns:
- * - The exactly representable dyadic rational `quanta / QUANTA_PER_UNIT`
- */
 export function fromQuanta(quanta: number): number {
   return quanta / QUANTA_PER_UNIT
 }
 
 /**
- * Snaps an importance value onto the attention quantum lattice.
+ * Snaps an importance value onto the attention quantum lattice, so that
+ * subsequent addition and subtraction of lattice values are exact.
  *
- * Before:
- * - 0.30000000000000004 (the float sum 0.1 + 0.2)
- * - 0.1 + 0.2 - 0.2 accumulated over many steps
- *
- * After:
- * - 0.30000019073486328 (an exact multiple of 1 / 2^20)
- * - a value that survives addition and subtraction without drift
- *
- * Use when:
- * - Any importance value enters or moves within the attention economy
- *
- * Expects:
- * - Any number; non-finite input is projected to 0
- *
- * Returns:
- * - The nearest lattice point, exactly representable in float64
+ * @example
+ * quantizeAttention(0.1 + 0.2)
+ * // => 0.30000019073486328
  */
 export function quantizeAttention(value: number): number {
   return fromQuanta(toQuanta(value))

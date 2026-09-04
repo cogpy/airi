@@ -336,17 +336,10 @@ export class AtomSpace {
   /**
    * Get every atom in the AtomSpace without recording an access.
    *
-   * Use when:
-   * - You are auditing or summarising the whole space (statistics, ledger
-   *   reconciliation) rather than reasoning over it
-   *
-   * Expects:
-   * - Nothing; the returned array is a fresh shallow copy, but the atoms
-   *   themselves are live references
-   *
-   * Returns:
-   * - All atoms in insertion order, with `lastAccessedAt` left untouched so
-   *   bookkeeping passes do not masquerade as cognitive activity
+   * For auditing or summarising the whole space rather than reasoning over it.
+   * `lastAccessedAt` is left untouched, so bookkeeping passes do not
+   * masquerade as cognitive activity. The array is a fresh shallow copy in
+   * insertion order, but the atoms themselves are live references.
    */
   getAllAtoms(): Atom[] {
     return Array.from(this.atoms.values())
@@ -355,16 +348,9 @@ export class AtomSpace {
   /**
    * Get the total Short-Term Importance currently allocated across the space.
    *
-   * Use when:
-   * - You need the conserved quantity of an attention economy built on this
-   *   AtomSpace (see the ECAN ledger invariant)
-   *
-   * Expects:
-   * - Nothing; does not record an access on any atom
-   *
-   * Returns:
-   * - The sum of every atom's STI. Exact when the atoms sit on the attention
-   *   quantum lattice, and subject to ordinary float error otherwise
+   * This is the allocated half of the ECAN ledger invariant. Exact when the
+   * atoms sit on the attention quantum lattice, and subject to ordinary float
+   * error otherwise. Does not record an access on any atom.
    */
   getTotalSti(): number {
     let total = 0

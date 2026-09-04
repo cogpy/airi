@@ -31,12 +31,17 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "examples": "tsx src/run-examples.ts"
   },
   "dependencies": {
     "@moeru/std": "catalog:",
+    "@proj-airi/cognitive-airicog": "workspace:^",
     "@proj-airi/stream-kit": "workspace:^",
-    "clustr": "catalog:"
+    "clustr": "catalog:",
+    "es-toolkit": "catalog:"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vitest": "catalog:vitest"
+  }
 }

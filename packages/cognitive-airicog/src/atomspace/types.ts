@@ -11,9 +11,9 @@
  */
 export interface TruthValue {
   /** Probability/certainty (0.0 to 1.0) */
-  strength: number;
+  strength: number
   /** Confidence in the strength value (0.0 to 1.0) */
-  confidence: number;
+  confidence: number
 }
 
 /**
@@ -22,134 +22,134 @@ export interface TruthValue {
  */
 export interface AttentionValue {
   /** Short-Term Importance (0.0 to 1.0) - current focus */
-  sti: number;
+  sti: number
   /** Long-Term Importance (0.0 to 1.0) - persistent relevance */
-  lti: number;
+  lti: number
   /** Very Long-Term Importance (0.0 to 1.0) - core knowledge */
-  vlti: number;
+  vlti: number
 }
 
 /**
  * Node Types in the AtomSpace hypergraph
  */
-export type NodeType =
-  | 'ConceptNode'      // General concepts
-  | 'PredicateNode'    // Properties and predicates
-  | 'NumberNode'       // Numeric values
-  | 'VariableNode'     // Variables for pattern matching
-  | 'SchemaNode'       // Procedures/functions
-  | 'GroundedSchemaNode' // Executable procedures
-  | 'TypeNode'         // Type definitions
-  | 'AnchorNode'       // Named anchor points
-  | 'AgentNode'        // Cognitive agents
-  | 'ActionNode'       // Actions/behaviors
-  | 'GoalNode'         // Goals and objectives
-  | 'EmotionNode'      // Emotional states
-  | 'PersonaNode';     // Character personas
+export type NodeType
+  = | 'ConceptNode' // General concepts
+    | 'PredicateNode' // Properties and predicates
+    | 'NumberNode' // Numeric values
+    | 'VariableNode' // Variables for pattern matching
+    | 'SchemaNode' // Procedures/functions
+    | 'GroundedSchemaNode' // Executable procedures
+    | 'TypeNode' // Type definitions
+    | 'AnchorNode' // Named anchor points
+    | 'AgentNode' // Cognitive agents
+    | 'ActionNode' // Actions/behaviors
+    | 'GoalNode' // Goals and objectives
+    | 'EmotionNode' // Emotional states
+    | 'PersonaNode' // Character personas
 
 /**
  * Link Types in the AtomSpace hypergraph
  */
-export type LinkType =
-  | 'InheritanceLink'   // Is-a relationships
-  | 'SimilarityLink'    // Similarity relationships
-  | 'EvaluationLink'    // Evaluations and assessments
-  | 'ExecutionLink'     // Execution/action relationships
-  | 'StateLink'         // State tracking
-  | 'ContextLink'       // Contextual relationships
-  | 'MemberLink'        // Set membership
-  | 'ListLink'          // Ordered lists
-  | 'SetLink'           // Unordered sets
-  | 'AndLink'           // Logical AND
-  | 'OrLink'            // Logical OR
-  | 'NotLink'           // Logical NOT
-  | 'ImplicationLink'   // Logical implication
-  | 'EquivalenceLink'   // Logical equivalence
-  | 'BindLink'          // Pattern binding
-  | 'GetLink'           // Query/retrieval
-  | 'PutLink'           // Substitution
-  | 'AssociativeLink'   // General associations
-  | 'CausalLink'        // Causal relationships
-  | 'TemporalLink'      // Temporal ordering
-  | 'AttentionLink';    // Attention flow
+export type LinkType
+  = | 'InheritanceLink' // Is-a relationships
+    | 'SimilarityLink' // Similarity relationships
+    | 'EvaluationLink' // Evaluations and assessments
+    | 'ExecutionLink' // Execution/action relationships
+    | 'StateLink' // State tracking
+    | 'ContextLink' // Contextual relationships
+    | 'MemberLink' // Set membership
+    | 'ListLink' // Ordered lists
+    | 'SetLink' // Unordered sets
+    | 'AndLink' // Logical AND
+    | 'OrLink' // Logical OR
+    | 'NotLink' // Logical NOT
+    | 'ImplicationLink' // Logical implication
+    | 'EquivalenceLink' // Logical equivalence
+    | 'BindLink' // Pattern binding
+    | 'GetLink' // Query/retrieval
+    | 'PutLink' // Substitution
+    | 'AssociativeLink' // General associations
+    | 'CausalLink' // Causal relationships
+    | 'TemporalLink' // Temporal ordering
+    | 'AttentionLink' // Attention flow
 
 /**
  * Base interface for all Atoms
  */
 export interface AtomBase {
   /** Unique identifier */
-  id: string;
+  id: string
   /** Truth value for probabilistic reasoning */
-  truthValue: TruthValue;
+  truthValue: TruthValue
   /** Attention value for cognitive resource allocation */
-  attentionValue: AttentionValue;
+  attentionValue: AttentionValue
   /** Creation timestamp */
-  createdAt: number;
+  createdAt: number
   /** Last access timestamp */
-  lastAccessedAt: number;
+  lastAccessedAt: number
   /** Custom metadata */
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown>
 }
 
 /**
  * Node Atom - represents concepts, values, and entities
  */
 export interface Node extends AtomBase {
-  kind: 'node';
+  kind: 'node'
   /** Type of the node */
-  type: NodeType;
+  type: NodeType
   /** Name/value of the node */
-  name: string;
+  name: string
 }
 
 /**
  * Link Atom - represents relationships between atoms
  */
 export interface Link extends AtomBase {
-  kind: 'link';
+  kind: 'link'
   /** Type of the link */
-  type: LinkType;
+  type: LinkType
   /** Outgoing atoms (targets of the link) */
-  outgoing: string[]; // Atom IDs
+  outgoing: string[] // Atom IDs
 }
 
 /**
  * Union type for all atoms
  */
-export type Atom = Node | Link;
+export type Atom = Node | Link
 
 /**
  * Pattern for matching atoms in queries
  */
 export interface AtomPattern {
   /** Match by atom ID */
-  id?: string;
+  id?: string
   /** Match by kind (node or link) */
-  kind?: 'node' | 'link';
+  kind?: 'node' | 'link'
   /** Match by node type */
-  nodeType?: NodeType | NodeType[];
+  nodeType?: NodeType | NodeType[]
   /** Match by link type */
-  linkType?: LinkType | LinkType[];
+  linkType?: LinkType | LinkType[]
   /** Match by name (supports wildcards with *) */
-  name?: string;
+  name?: string
   /** Match by truth value range */
   truthValue?: {
-    minStrength?: number;
-    maxStrength?: number;
-    minConfidence?: number;
-    maxConfidence?: number;
-  };
+    minStrength?: number
+    maxStrength?: number
+    minConfidence?: number
+    maxConfidence?: number
+  }
   /** Match by attention value range */
   attentionValue?: {
-    minSti?: number;
-    maxSti?: number;
-    minLti?: number;
-    maxLti?: number;
-  };
+    minSti?: number
+    maxSti?: number
+    minLti?: number
+    maxLti?: number
+  }
   /** Match by outgoing atom IDs */
-  outgoing?: string[];
+  outgoing?: string[]
   /** Match by metadata properties */
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown>
 }
 
 /**
@@ -157,15 +157,15 @@ export interface AtomPattern {
  */
 export interface SpreadActivationOptions {
   /** Initial activation intensity */
-  intensity: number;
+  intensity: number
   /** Decay factor per hop (0.0 to 1.0) */
-  decay: number;
+  decay: number
   /** Maximum number of hops */
-  maxHops: number;
+  maxHops: number
   /** Link types to follow */
-  followLinks?: LinkType[];
+  followLinks?: LinkType[]
   /** Minimum STI to continue spreading */
-  minSti?: number;
+  minSti?: number
 }
 
 /**
@@ -173,19 +173,19 @@ export interface SpreadActivationOptions {
  */
 export interface AtomSpaceStats {
   /** Total number of atoms */
-  totalAtoms: number;
+  totalAtoms: number
   /** Number of nodes */
-  nodeCount: number;
+  nodeCount: number
   /** Number of links */
-  linkCount: number;
+  linkCount: number
   /** Breakdown by node type */
-  nodesByType: Record<NodeType, number>;
+  nodesByType: Record<NodeType, number>
   /** Breakdown by link type */
-  linksByType: Record<LinkType, number>;
+  linksByType: Record<LinkType, number>
   /** Average truth value strength */
-  avgStrength: number;
+  avgStrength: number
   /** Average attention STI */
-  avgSti: number;
+  avgSti: number
 }
 
 /**
@@ -193,29 +193,29 @@ export interface AtomSpaceStats {
  */
 export interface AtomSpaceConfig {
   /** Name/identifier for this AtomSpace */
-  name?: string;
+  name?: string
   /** Enable attention decay over time */
-  enableAttentionDecay?: boolean;
+  enableAttentionDecay?: boolean
   /** Attention decay rate per second */
-  attentionDecayRate?: number;
+  attentionDecayRate?: number
   /** Maximum number of atoms to keep in active memory */
-  maxActiveAtoms?: number;
+  maxActiveAtoms?: number
   /** Forgetting threshold (atoms below this STI may be archived) */
-  forgettingThreshold?: number;
+  forgettingThreshold?: number
 }
 
 /**
  * Create default truth value
  */
 export function createDefaultTruthValue(): TruthValue {
-  return { strength: 1.0, confidence: 0.9 };
+  return { strength: 1.0, confidence: 0.9 }
 }
 
 /**
  * Create default attention value
  */
 export function createDefaultAttentionValue(): AttentionValue {
-  return { sti: 0.5, lti: 0.3, vlti: 0.1 };
+  return { sti: 0.5, lti: 0.3, vlti: 0.1 }
 }
 
 /**
@@ -223,20 +223,20 @@ export function createDefaultAttentionValue(): AttentionValue {
  */
 export function reviseTruthValues(tv1: TruthValue, tv2: TruthValue): TruthValue {
   // PLN revision formula
-  const c1 = tv1.confidence;
-  const c2 = tv2.confidence;
-  const totalConfidence = c1 + c2 - c1 * c2;
+  const c1 = tv1.confidence
+  const c2 = tv2.confidence
+  const totalConfidence = c1 + c2 - c1 * c2
 
   if (totalConfidence === 0) {
-    return { strength: 0.5, confidence: 0 };
+    return { strength: 0.5, confidence: 0 }
   }
 
-  const revisedStrength = (tv1.strength * c1 + tv2.strength * c2 - tv1.strength * tv2.strength * c1 * c2) / totalConfidence;
+  const revisedStrength = (tv1.strength * c1 + tv2.strength * c2 - tv1.strength * tv2.strength * c1 * c2) / totalConfidence
 
   return {
     strength: Math.max(0, Math.min(1, revisedStrength)),
     confidence: Math.max(0, Math.min(1, totalConfidence)),
-  };
+  }
 }
 
 /**
@@ -246,7 +246,7 @@ export function inheritanceTruthValue(parentTV: TruthValue, childTV: TruthValue)
   return {
     strength: parentTV.strength * childTV.strength,
     confidence: parentTV.confidence * childTV.confidence,
-  };
+  }
 }
 
 /**
@@ -257,7 +257,7 @@ export function boostAttention(av: AttentionValue, boost: number): AttentionValu
     sti: Math.min(1, av.sti + boost),
     lti: Math.min(1, av.lti + boost * 0.5),
     vlti: av.vlti, // VLTI is more stable
-  };
+  }
 }
 
 /**
@@ -268,5 +268,5 @@ export function decayAttention(av: AttentionValue, decayRate: number): Attention
     sti: Math.max(0, av.sti * (1 - decayRate)),
     lti: Math.max(0, av.lti * (1 - decayRate * 0.5)),
     vlti: av.vlti, // VLTI doesn't decay
-  };
+  }
 }

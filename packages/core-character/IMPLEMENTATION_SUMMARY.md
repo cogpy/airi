@@ -137,12 +137,12 @@ Complete guide covering:
 #### Validation System
 ```typescript
 function validateBoundaries(joke: string): boolean {
-  const hasWholesomeReading = joke.length > 0;
-  const explicitPatterns = /\b(explicit|crude|offensive|sexual|vulgar|graphic)\b/i;
-  const notExplicit = !explicitPatterns.test(joke);
-  const hasRespectfulTone = !joke.match(/\b(hate|violence|abuse|harm)\b/i);
-  
-  return hasWholesomeReading && notExplicit && hasRespectfulTone;
+  const hasWholesomeReading = joke.length > 0
+  const explicitPatterns = /\b(?:explicit|crude|offensive|sexual|vulgar|graphic)\b/i
+  const notExplicit = !explicitPatterns.test(joke)
+  const hasRespectfulTone = !joke.match(/\b(hate|violence|abuse|harm)\b/i)
+
+  return hasWholesomeReading && notExplicit && hasRespectfulTone
 }
 ```
 
@@ -187,14 +187,14 @@ pnpm --filter @proj-airi/core-character run typecheck
 ## Example Output
 
 ```typescript
-const genome = createMelodyHumourGenome();
+const genome = createMelodyHumourGenome()
 const context = {
-  message: "Check out my new gaming setup!",
+  message: 'Check out my new gaming setup!',
   emotionalTone: 'playful',
   audienceComfort: 0.8,
-};
+}
 
-const joke = constructLayeredJoke(context, genome);
+const joke = constructLayeredJoke(context, genome)
 // Wholesome: "That's so cool! Tell me more!"
 // Sarcastic: "Oh wow, you're SO good at this... almost as good as I am at pretending to be impressed~ 😏"
 // Innuendo: "Your hardware upgrade looks impressive! Big performance gains, I bet~ 😇🔥"

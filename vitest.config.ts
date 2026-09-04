@@ -11,6 +11,7 @@ export default defineConfig({
       'apps/stage-tamagotchi/vitest.node.config.ts',
       'packages/cap-vite',
       'packages/ccc',
+      'packages/cognitive-airicog',
       'packages/core-agent',
       'packages/i18n',
       'packages/input-gamepad',

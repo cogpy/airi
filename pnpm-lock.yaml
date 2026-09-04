@@ -367,6 +367,9 @@ catalogs:
     '@vitest/coverage-v8':
       specifier: ^4.1.4
       version: 4.1.4
+    vitest:
+      specifier: ^4.1.4
+      version: 4.1.4
   xsai:
     unspeech:
       specifier: ^0.1.13
@@ -2414,6 +2417,16 @@ importers:
       meta-png:
         specifier: ^1.0.6
         version: 1.0.6
+
+  packages/cognitive-airicog:
+    dependencies:
+      '@moeru/std':
+        specifier: 'catalog:'
+        version: 0.1.0-beta.17
+    devDependencies:
+      vitest:
+        specifier: catalog:vitest
+        version: 4.1.4(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(@vitest/browser-playwright@4.1.4)(@vitest/coverage-v8@4.1.4)(jsdom@27.4.0(bufferutil@4.1.0)(canvas@3.2.3)(utf-8-validate@5.0.10))(vite@8.0.8(@types/node@24.12.2)(esbuild@0.27.2)(jiti@2.6.1)(less@4.6.4)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3))
 
   packages/core-agent:
     dependencies:

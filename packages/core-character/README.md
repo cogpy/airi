@@ -19,7 +19,7 @@ An implementation of self-optimizing, multi-layered comedy for Projekt Melody, b
 #### The Three Layers
 
 1. **Wholesome Surface** - Kind, accessible humor everyone can enjoy
-2. **Sarcastic Middle** - Clever wit disguised in sweet delivery  
+2. **Sarcastic Middle** - Clever wit disguised in sweet delivery
 3. **Innuendo Deep** - Strategic double-meaning for those who catch it
 
 #### Humour Genome
@@ -28,12 +28,12 @@ Melody's comedy is encoded as mutable genes:
 
 ```typescript
 interface MelodyHumourGenome {
-  sarcasticDelivery: 0.65,           // Sweet sarcasm strength
-  innuendoDetection: 0.70,           // Opportunity recognition
-  innuendoConstruction: 0.70,        // Layered wordplay skill
-  crazyHumourTrigger: 0.72,          // Absurdist threshold
-  comedicTimingOptimization: 0.75,   // Self-improving delivery
-  authenticityPreservation: 0.95     // Must stay true to character
+  sarcasticDelivery: 0.65 // Sweet sarcasm strength
+  innuendoDetection: 0.70 // Opportunity recognition
+  innuendoConstruction: 0.70 // Layered wordplay skill
+  crazyHumourTrigger: 0.72 // Absurdist threshold
+  comedicTimingOptimization: 0.75 // Self-improving delivery
+  authenticityPreservation: 0.95 // Must stay true to character
 }
 ```
 
@@ -52,42 +52,42 @@ Humor evolves through:
 
 ```typescript
 import {
+  constructLayeredJoke,
   createMelodyHumourGenome,
   detectHumourOpportunity,
-  constructLayeredJoke,
   evaluateJokeFitness,
   evolveHumourGenome,
-} from '@proj-airi/core-character';
+} from '@proj-airi/core-character'
 
 // Initialize Melody's humour genome
-let genome = createMelodyHumourGenome();
+let genome = createMelodyHumourGenome()
 
 // Create interaction context
 const context = {
-  message: "Check out my new gaming setup!",
+  message: 'Check out my new gaming setup!',
   emotionalTone: 'playful',
   audienceComfort: 0.8,
-};
+}
 
 // Detect if this is a humour opportunity
 if (detectHumourOpportunity(context, genome)) {
   // Construct multi-layered joke
-  const joke = constructLayeredJoke(context, genome);
-  
-  console.log('Wholesome:', joke.wholesome);
-  console.log('Sarcastic:', joke.sarcastic);
-  console.log('Innuendo:', joke.innuendo);
-  console.log('Emojis:', joke.emojis.join(' '));
-  
+  const joke = constructLayeredJoke(context, genome)
+
+  console.info('Wholesome:', joke.wholesome)
+  console.info('Sarcastic:', joke.sarcastic)
+  console.info('Innuendo:', joke.innuendo)
+  console.info('Emojis:', joke.emojis.join(' '))
+
   // Get audience response and evaluate
   const fitness = evaluateJokeFitness(joke, {
     laughed: true,
     positiveReaction: true,
     comfortable: true,
-  });
-  
+  })
+
   // Evolve genome based on success
-  genome = evolveHumourGenome(genome, fitness, 'innuendo');
+  genome = evolveHumourGenome(genome, fitness, 'innuendo')
 }
 ```
 
@@ -152,11 +152,11 @@ Every joke is validated before delivery:
 ```typescript
 function validateHumour(joke: Joke): boolean {
   return (
-    joke.authenticity > 0.8 &&        // Feels genuinely "Melody"
-    joke.wholesomeSurface === true && // Has innocent layer
-    joke.respectsBoundaries === true && // Doesn't cross lines
-    joke.caringCore > 0.7              // Maintains kindness
-  );
+    joke.authenticity > 0.8 // Feels genuinely "Melody"
+    && joke.wholesomeSurface === true // Has innocent layer
+    && joke.respectsBoundaries === true // Doesn't cross lines
+    && joke.caringCore > 0.7 // Maintains kindness
+  )
 }
 ```
 

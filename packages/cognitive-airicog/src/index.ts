@@ -14,15 +14,15 @@
  */
 
 // AtomSpace - Knowledge Representation
-import { createAtomSpace } from './atomspace/atomspace';
-import { createECAN, createRelevanceRealization } from './attention/ecan';
-import { createPLN } from './reasoning/pln';
-import { createOrchestrator } from './orchestration/orchestrator';
+import { createAtomSpace } from './atomspace/atomspace'
+import { createECAN, createRelevanceRealization } from './attention/ecan'
+import { createOrchestrator } from './orchestration/orchestrator'
+import { createPLN } from './reasoning/pln'
 
 export {
   AtomSpace,
   createAtomSpace,
-} from './atomspace/atomspace';
+} from './atomspace/atomspace'
 
 export {
   // Types
@@ -32,107 +32,114 @@ export {
   type AtomSpaceConfig,
   type AtomSpaceStats,
   type AttentionValue,
-  type Link,
-  type LinkType,
-  type Node,
-  type NodeType,
-  type SpreadActivationOptions,
-  type TruthValue,
   // Functions
   boostAttention,
   createDefaultAttentionValue,
   createDefaultTruthValue,
   decayAttention,
   inheritanceTruthValue,
+  type Link,
+  type LinkType,
+  type Node,
+  type NodeType,
   reviseTruthValues,
-} from './atomspace/types';
+  type SpreadActivationOptions,
+  type TruthValue,
+} from './atomspace/types'
 
 // Attention - Economic Attention Networks
 export {
-  ECAN,
   createECAN,
   createRelevanceRealization,
-  RelevanceRealization,
+  ECAN,
   type ECANConfig,
   type ECANStats,
   type ImportanceSpreadSpec,
-} from './attention/ecan';
+  RelevanceRealization,
+} from './attention/ecan'
 
-// Reasoning - Probabilistic Logic Networks
 export {
-  PLN,
-  createPLN,
-  TVFormulas,
-  type InferenceResult,
-  type InferenceRuleType,
-  type InferenceStep,
-  type PLNConfig,
-} from './reasoning/pln';
-
-// Orchestration - Multi-Agent Coordination
-export {
-  CognitiveOrchestrator,
-  createOrchestrator,
-  type AgentState,
-  type KnowledgeShareRequest,
-  type OrchestratorConfig,
-  type OrchestratorEvent,
-  type OrchestratorEventListener,
-  type OrchestratorEventType,
-} from './orchestration/orchestrator';
+  fromQuanta,
+  QUANTA_PER_UNIT,
+  quantizeAttention,
+  toQuanta,
+} from './attention/quanta'
 
 // Ontogenesis - Self-Generating Kernels
 export {
   // Types
   type CognitiveGene,
   type CognitiveGenome,
-  type DevelopmentEvent,
-  type DevelopmentStage,
-  type GenerationStats,
-  type KernelCapability,
-  type KernelMetrics,
-  type OntogeneticKernel,
-  type OntogeneticState,
-  type OntogenesisConfig,
   // Functions
   createDefaultGenes,
+  type DevelopmentEvent,
+  type DevelopmentStage,
   evaluateFitness,
+  type GenerationStats,
   getExpressedGenes,
   getGeneValue,
   initializeKernel,
   isGeneExpressed,
+  type KernelCapability,
+  type KernelMetrics,
+  type OntogenesisConfig,
+  type OntogeneticKernel,
+  type OntogeneticState,
   reproduce,
   runOntogenesis,
   selfGenerate,
   selfOptimize,
-} from './ontogenesis/kernel';
+} from './ontogenesis/kernel'
+
+// Orchestration - Multi-Agent Coordination
+export {
+  type AgentState,
+  CognitiveOrchestrator,
+  createOrchestrator,
+  type KnowledgeShareRequest,
+  type OrchestratorConfig,
+  type OrchestratorEvent,
+  type OrchestratorEventListener,
+  type OrchestratorEventType,
+} from './orchestration/orchestrator'
+
+// Reasoning - Probabilistic Logic Networks
+export {
+  createPLN,
+  type InferenceResult,
+  type InferenceRuleType,
+  type InferenceStep,
+  PLN,
+  type PLNConfig,
+  TVFormulas,
+} from './reasoning/pln'
 
 /**
  * Create a complete AiriCog cognitive system
  */
 export function createAiriCog(config?: {
-  name?: string;
-  enableAttentionDecay?: boolean;
-  enableAutoUpdate?: boolean;
-  maxAgents?: number;
+  name?: string
+  enableAttentionDecay?: boolean
+  enableAutoUpdate?: boolean
+  maxAgents?: number
 }) {
   const atomSpace = createAtomSpace({
     name: config?.name ?? 'airicog',
     enableAttentionDecay: config?.enableAttentionDecay ?? false,
-  });
+  })
 
   const ecan = createECAN(atomSpace, {
     autoUpdate: config?.enableAutoUpdate ?? false,
-  });
+  })
 
-  const pln = createPLN(atomSpace);
+  const pln = createPLN(atomSpace)
 
-  const relevance = createRelevanceRealization(ecan, atomSpace);
+  const relevance = createRelevanceRealization(ecan, atomSpace)
 
   const orchestrator = createOrchestrator({
     maxAgents: config?.maxAgents ?? 100,
     enableSharedKB: true,
-  });
+  })
 
   return {
     atomSpace,
@@ -145,17 +152,17 @@ export function createAiriCog(config?: {
      * Dispose all resources
      */
     dispose() {
-      ecan.dispose();
-      atomSpace.dispose();
-      orchestrator.dispose();
+      ecan.dispose()
+      atomSpace.dispose()
+      orchestrator.dispose()
     },
-  };
+  }
 }
 
 /**
  * AiriCog version
  */
-export const AIRICOG_VERSION = '0.8.0-alpha.4';
+export const AIRICOG_VERSION = '0.8.0-alpha.4'
 
 /**
  * Package information
@@ -167,4 +174,4 @@ export const AIRICOG_INFO = {
   repository: 'https://github.com/moeru-ai/airi',
   license: 'MIT',
   inspired_by: 'OpenCog (https://opencog.org)',
-};
+}

@@ -1,12 +1,142 @@
 import type { BrowserWindow, Rectangle } from 'electron'
 
+import type { DisplayArea } from '../../../shared/utils/electron/display'
+
 import { screen } from 'electron'
+
+import { findDominantDisplayArea } from '../../../shared/utils/electron/display'
 
 export function currentDisplayBounds(window: BrowserWindow) {
   const bounds = window.getBounds()
   const nearbyDisplay = screen.getDisplayMatching(bounds)
 
   return nearbyDisplay.bounds
+}
+
+/**
+ * Computes bounds that center a window inside an Electron display work area.
+ *
+ * Use when:
+ * - Recovering a desktop window that was moved outside the visible work area
+ * - Preserving the current window size while changing only its position
+ *
+ * Expects:
+ * - Both rectangles use Electron logical display coordinates
+ * - The display work area excludes menu bars, docks, and taskbars
+ *
+ * Returns:
+ * - Centered bounds that preserve the window width and height
+ */
+export function computeCenteredWindowBounds(options: {
+  displayWorkArea: Rectangle
+  windowBounds: Rectangle
+}): Rectangle {
+  const centeredOffsetX = Math.floor((options.displayWorkArea.width - options.windowBounds.width) / 2)
+  const centeredOffsetY = Math.floor((options.displayWorkArea.height - options.windowBounds.height) / 2)
+
+  return {
+    x: options.displayWorkArea.x + Math.max(0, centeredOffsetX),
+    y: options.displayWorkArea.y + Math.max(0, centeredOffsetY),
+    width: options.windowBounds.width,
+    height: options.windowBounds.height,
+  }
+}
+
+/**
+ * Centers and reveals an Electron window on the display matching its current bounds.
+ *
+ * Use when:
+ * - A renderer requests recovery of an off-screen AIRI window
+ * - A hidden window must become visible after its position is restored
+ *
+ * Expects:
+ * - The window is alive and supports Electron's bounds APIs
+ *
+ * Returns:
+ * - The centered bounds applied to the window
+ */
+export function centerWindowOnDisplay(window: Pick<BrowserWindow, 'getBounds' | 'isDestroyed' | 'setBounds' | 'show'> | undefined): Rectangle {
+  if (!window || window.isDestroyed())
+    throw new Error('Main AIRI window is not available.')
+
+  const windowBounds = window.getBounds()
+  const displayWorkArea = screen.getDisplayMatching(windowBounds).workArea
+  const centeredBounds = computeCenteredWindowBounds({ displayWorkArea, windowBounds })
+
+  window.setBounds(centeredBounds)
+  window.show()
+
+  return centeredBounds
+}
+
+export interface DominantDisplayResizeOptions {
+  /** Current window bounds in Electron display coordinates. */
+  currentBounds: Rectangle
+  /** Desired size before display work-area clamping. */
+  targetSize: Pick<Rectangle, 'width' | 'height'>
+  /** Displays from Electron screen APIs. */
+  displays: readonly DisplayArea[]
+}
+
+/**
+ * Computes resize bounds from the display that owns most of the current window.
+ */
+export function computeResizedBoundsAnchoredToDominantDisplay(options: DominantDisplayResizeOptions): Rectangle {
+  const targetWidth = Math.round(options.targetSize.width)
+  const targetHeight = Math.round(options.targetSize.height)
+  const display = findDominantDisplayArea(options.currentBounds, options.displays)
+
+  if (!display) {
+    return {
+      ...options.currentBounds,
+      width: targetWidth,
+      height: targetHeight,
+    }
+  }
+
+  const workArea = display.workArea
+
+  // Target sizes may come from a larger display preset. Clamp them before
+  // deriving anchors so the right/bottom edge math never asks for coordinates
+  // outside the selected display's usable area.
+  const width = Math.min(targetWidth, workArea.width)
+  const height = Math.min(targetHeight, workArea.height)
+  const workAreaRight = workArea.x + workArea.width
+  const workAreaBottom = workArea.y + workArea.height
+  const currentRight = options.currentBounds.x + options.currentBounds.width
+  const currentBottom = options.currentBounds.y + options.currentBounds.height
+
+  // The quadrant is based on the current window center, not the top-left
+  // corner, so a window crossing displays behaves according to where most of
+  // the visible window lives inside the selected work area.
+  const currentCenterX = options.currentBounds.x + options.currentBounds.width / 2
+  const currentCenterY = options.currentBounds.y + options.currentBounds.height / 2
+  const workAreaCenterX = workArea.x + workArea.width / 2
+  const workAreaCenterY = workArea.y + workArea.height / 2
+
+  // Left/top quadrants keep the original x/y. Right/bottom quadrants keep the
+  // opposite edge visually fixed by subtracting the new size from the current
+  // right/bottom edge.
+  const x = currentCenterX > workAreaCenterX
+    ? currentRight - width
+    : options.currentBounds.x
+  const y = currentCenterY > workAreaCenterY
+    ? currentBottom - height
+    : options.currentBounds.y
+
+  // The anchor can still land just outside the work area when the previous
+  // window crossed a screen boundary. Clamp after anchoring so resize intent
+  // wins first, then display safety.
+  return {
+    x: Math.round(clamp(x, workArea.x, workAreaRight - width)),
+    y: Math.round(clamp(y, workArea.y, workAreaBottom - height)),
+    width,
+    height,
+  }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
 }
 
 interface SizeActual { actual: number }
@@ -90,7 +220,7 @@ export function mapForBreakpoints<
   basedOn: number,
   sizes: { [key in keyof B]?: number } | number,
   options?: { breakpoints: B },
-) {
+): number {
   if (typeof sizes === 'number') {
     return sizes
   }
@@ -114,8 +244,16 @@ export function mapForBreakpoints<
     .sort((a, b) => b.min - a.min) // Sort descending by min width
 
   const fallback = sortedSizes.find(s => s.min <= basedOn)
+  if (fallback?.value != null) {
+    return fallback.value
+  }
 
-  return fallback?.value ?? Object.values(sizes)?.[0] ?? 0
+  // `basedOn` is below every supplied breakpoint (e.g. height < 640 with sm/md/lg
+  // sizes): use the breakpoint with the smallest minimum width. Selecting by min
+  // instead of `Object.values(sizes)[0]` keeps the result stable when the sizes
+  // object keys are reordered (e.g. by lint sorting rules).
+  const smallest = sortedSizes[sortedSizes.length - 1]
+  return smallest?.value ?? 0
 }
 
 /**

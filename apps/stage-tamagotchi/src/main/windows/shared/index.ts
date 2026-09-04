@@ -1,1 +1,1 @@
-export { toggleWindowShow, transparentWindowConfig } from './window'
+export { protectPrivilegedWindowNavigation, setWindowAlwaysOnTop, toggleWindowShow, transparentWindowConfig } from './window'

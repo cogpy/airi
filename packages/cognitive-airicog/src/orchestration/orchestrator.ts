@@ -193,48 +193,24 @@ export class CognitiveOrchestrator {
   }
 
   /**
-   * Terminate an agent and evict it from the orchestrator.
-   *
-   * Termination is final: the agent's resources are released and its id is
-   * free to be claimed again by {@link CognitiveOrchestrator.createAgent}. The
-   * orchestrator keeps no tombstone, because a long-lived system would
-   * accumulate dead agents that still counted towards `agentCount` and the
-   * `maxAgents` limit.
-   *
-   * The terminal state is therefore handed back to the caller rather than left
-   * somewhere to be looked up — {@link CognitiveOrchestrator.getAgent} reports
-   * a terminated agent as absent, which is the same answer it gives for an
-   * agent that never existed.
-   *
-   * Use when:
-   * - An agent's work is finished and its AtomSpace should be released
-   *
-   * Expects:
-   * - An agent id; terminating an unknown or already terminated agent is a
-   *   no-op
-   *
-   * Returns:
-   * - The agent's final state with `status` set to `'terminated'`, or
-   *   `undefined` if there was no such agent
+   * Terminate an agent
    */
-  terminateAgent(agentId: string): AgentState | undefined {
+  terminateAgent(agentId: string): boolean {
     const agent = this.agents.get(agentId)
     if (!agent)
-      return undefined
+      return false
 
     agent.status = 'terminated'
     agent.ecan.dispose()
     agent.atomSpace.dispose()
 
-    this.agents.delete(agentId)
-
     this.emit({
       type: 'agent_terminated',
       timestamp: Date.now(),
-      data: { agentId, status: agent.status },
+      data: { agentId },
     })
 
-    return agent
+    return true
   }
 
   /**

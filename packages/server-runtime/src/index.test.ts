@@ -1,8 +1,12 @@
 import type { WebSocketBaseEvent, WebSocketEvents } from '@proj-airi/server-shared/types'
 
+import type { ConsumerStickyAssignment } from './server-ws/airi/consumers'
+
 import { describe, expect, it } from 'vitest'
 
-import { detectHeartbeatControlFrame, resolveDeliveryConfig, selectConsumerPeerId } from './index'
+import { heartbeatFrameFrom } from './server-ws/airi/codec'
+import { selectConsumerPeerId } from './server-ws/airi/consumers'
+import { resolveEventDelivery } from './server-ws/airi/routing'
 
 function createInputTextEvent(
   overrides: Partial<WebSocketBaseEvent<'input:text', WebSocketEvents['input:text']>> = {},
@@ -27,9 +31,9 @@ function createInputTextEvent(
   }
 }
 
-describe('resolveDeliveryConfig', () => {
+describe('resolveEventDelivery', () => {
   it('uses protocol event metadata defaults for input:text', () => {
-    const delivery = resolveDeliveryConfig(createInputTextEvent())
+    const delivery = resolveEventDelivery(createInputTextEvent())
 
     expect(delivery).toEqual({
       mode: 'consumer-group',
@@ -39,7 +43,7 @@ describe('resolveDeliveryConfig', () => {
   })
 
   it('allows route delivery to override protocol defaults', () => {
-    const delivery = resolveDeliveryConfig(createInputTextEvent({
+    const delivery = resolveEventDelivery(createInputTextEvent({
       route: {
         delivery: {
           required: true,
@@ -59,7 +63,7 @@ describe('resolveDeliveryConfig', () => {
   })
 
   it('returns explicit route delivery for events without protocol defaults', () => {
-    const delivery = resolveDeliveryConfig({
+    const delivery = resolveEventDelivery({
       type: 'spark:notify',
       data: {
         id: 'spark-1',
@@ -133,7 +137,7 @@ describe('selectConsumerPeerId', () => {
   })
 
   it('keeps sticky delivery on the same consumer when available', () => {
-    const stickyAssignments = new Map<string, string>()
+    const stickyAssignments = new Map<string, ConsumerStickyAssignment>()
 
     const firstSelectedPeerId = selectConsumerPeerId({
       eventType: 'input:text',
@@ -196,15 +200,15 @@ describe('selectConsumerPeerId', () => {
   })
 })
 
-describe('detectHeartbeatControlFrame', () => {
+describe('heartbeatFrameFrom', () => {
   it('recognizes raw websocket control frame text without treating it as protocol JSON', () => {
-    expect(detectHeartbeatControlFrame('ping')).toBe('ping')
-    expect(detectHeartbeatControlFrame('pong')).toBe('pong')
+    expect(heartbeatFrameFrom('ping')).toBe('ping')
+    expect(heartbeatFrameFrom('pong')).toBe('pong')
   })
 
   it('ignores non-control payloads', () => {
-    expect(detectHeartbeatControlFrame('')).toBeUndefined()
-    expect(detectHeartbeatControlFrame('🩵')).toBeUndefined()
-    expect(detectHeartbeatControlFrame('{"type":"transport:connection:heartbeat"}')).toBeUndefined()
+    expect(heartbeatFrameFrom('')).toBeUndefined()
+    expect(heartbeatFrameFrom('🩵')).toBeUndefined()
+    expect(heartbeatFrameFrom('{"type":"transport:connection:heartbeat"}')).toBeUndefined()
   })
 })

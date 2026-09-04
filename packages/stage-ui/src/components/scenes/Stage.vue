@@ -1,15 +1,23 @@
 <script setup lang="ts">
 import type { Live2DLipSync, Live2DLipSyncOptions } from '@proj-airi/model-driver-lipsync'
 import type { Profile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
+import type { CaptionChannelEvent } from '@proj-airi/stage-shared'
+import type { VrmInteractionTarget } from '@proj-airi/stage-ui-three'
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { UnElevenLabsOptions } from 'unspeech'
 
 import type { EmotionPayload } from '../../constants/emotions'
+import type { SpeechTransport, StageTtsSession, StreamingSessionSnapshot } from '../../libs/speech/tts-session'
 
+import { defineInvokeHandler } from '@moeru/eventa'
+import { sleep } from '@moeru/std'
 import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
 import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
-import { createPlaybackManager, createSpeechPipeline } from '@proj-airi/pipelines-audio'
-import { Live2DScene, useLive2d } from '@proj-airi/stage-ui-live2d'
+import { createPlaybackManager, createSpeechPipeline, normalizeActPayload } from '@proj-airi/pipelines-audio'
+import { defaultLive2DMotionControlDynamics, Live2DScene, useLive2DMotionControl, useLive2dParams, useSettingsLive2d } from '@proj-airi/stage-ui-live2d'
+import { MMDScene } from '@proj-airi/stage-ui-mmd'
+import { SpineScene } from '@proj-airi/stage-ui-spine'
+import { TachieScene } from '@proj-airi/stage-ui-tachie'
 import { ThreeScene } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { createQueue } from '@proj-airi/stream-kit'
@@ -18,34 +26,41 @@ import { useBroadcastChannel } from '@vueuse/core'
 // import { createTransformers } from '@xsai-transformers/embed'
 // import embedWorkerURL from '@xsai-transformers/embed/worker?worker&url'
 // import { embed } from '@xsai/embed'
-import { generateSpeech } from '@xsai/generate-speech'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 
-import { useDelayMessageQueue, useEmotionsMessageQueue } from '../../composables/queues'
-import { useAuthProviderSync } from '../../composables/use-auth-provider-sync'
+import StageRenderError from './stage-render-error.vue'
+
 import { useDuckDb } from '../../composables/use-duck-db'
 import { useIOTraceBridge } from '../../composables/use-io-trace-bridge'
 import { initIOTracer } from '../../composables/use-io-tracer'
-import { llmInferenceEndToken } from '../../constants'
-import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
+import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
+import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
+import { getDefinedProvider } from '../../libs/providers/providers'
+import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
+import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
+import { createStageTtsSession } from '../../libs/speech/tts-session'
+import { getSpeechBusContext, speechOutputGetPlaybackState } from '../../services/speech/bus'
+import { useLlmStreamingControlStore } from '../../stores/ai/chat-llm/streaming-control'
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
 import { useBackgroundStore } from '../../stores/background'
-import { useChatOrchestratorStore } from '../../stores/chat'
+import { useChatStore } from '../../stores/chat'
 import { useAiriCardStore } from '../../stores/modules'
 import { useSpeechStore } from '../../stores/modules/speech'
-import { useProvidersStore } from '../../stores/providers'
+import { useProviderConfigStore } from '../../stores/providers/config'
+import { useProviderStore } from '../../stores/providers/provider'
 import { useSettings } from '../../stores/settings'
+import { useSpeechOutputControlStore } from '../../stores/speech-output-control'
 import { useSpeechRuntimeStore } from '../../stores/speech-runtime'
-import { shouldRunLive2dLipSyncLoop } from './runtime'
 
 const props = withDefaults(defineProps<{
+  cursorPosition?: { x: number, y: number }
+  enableOrbitControls?: boolean
   paused?: boolean
-  focusAt: { x: number, y: number }
-  xOffset?: number | string
-  yOffset?: number | string
-  scale?: number
-}>(), { paused: false, scale: 1 })
+}>(), {
+  enableOrbitControls: true,
+  paused: false,
+})
 
 const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
 
@@ -54,44 +69,136 @@ const { getDb } = useDuckDb()
 
 const vrmViewerRef = ref<InstanceType<typeof ThreeScene>>()
 const live2dSceneRef = ref<InstanceType<typeof Live2DScene>>()
+const spineSceneRef = ref<InstanceType<typeof SpineScene>>()
+const tachieSceneRef = ref<InstanceType<typeof TachieScene>>()
+const mmdSceneRef = ref<InstanceType<typeof MMDScene>>()
 
 const settingsStore = useSettings()
 const {
   stageModelRenderer,
   stageViewControlsEnabled,
-  live2dDisableFocus,
   stageModelSelectedUrl,
   stageModelSelected,
   themeColorsHue,
   themeColorsHueDynamic,
-  live2dIdleAnimationEnabled,
-  live2dAutoBlinkEnabled,
-  live2dForceAutoBlinkEnabled,
-  live2dExpressionEnabled,
+
+} = storeToRefs(settingsStore)
+const {
+  live2dMotionDriver,
   live2dShadowEnabled,
   live2dMaxFps,
   live2dRenderScale,
+} = storeToRefs(useSettingsLive2d())
+const live2dMotionControl = useLive2DMotionControl()
+const { exclusiveOwnerId: live2dMotionControlOwnerId } = storeToRefs(live2dMotionControl)
+const {
+  forceViewTarget: live2dMagicForceViewTarget,
+  profileId: live2dMagicProfileId,
+  skipMouthOpen: live2dMagicSkipMouthOpen,
+} = storeToRefs(useLive2DMotionMagicSettings())
+const live2dMagicMotion = useLive2DMotionMagic({
+  dataset: () => live2dMotionMagicProfiles[live2dMagicProfileId.value].dataset,
+  forceViewTarget: live2dMagicForceViewTarget,
+  skipMouthOpen: live2dMagicSkipMouthOpen,
+  disabled: () => live2dMotionControlOwnerId.value !== null,
+  publishPose: pose => live2dMotionControl.setPose('stage:live2d-motion-magic', pose, defaultLive2DMotionControlDynamics),
+  releasePose: () => live2dMotionControl.release('stage:live2d-motion-magic'),
+})
+let live2dMagicActivationRequest = 0
+
+watch(
+  [stageModelRenderer, live2dMotionDriver, live2dMagicProfileId, () => props.paused, live2dMotionControlOwnerId],
+  async ([renderer, driver, , paused, controlOwnerId]) => {
+    const request = ++live2dMagicActivationRequest
+    if (renderer !== 'live2d' || driver !== 'magic' || paused || controlOwnerId !== null) {
+      live2dMagicMotion.stop()
+      return
+    }
+
+    if (live2dMagicMotion.status.value === 'idle')
+      await live2dMagicMotion.initialize()
+
+    if (
+      request !== live2dMagicActivationRequest
+      || stageModelRenderer.value !== 'live2d'
+      || live2dMotionDriver.value !== 'magic'
+      || props.paused
+      || live2dMotionControlOwnerId.value !== null
+    ) {
+      return
+    }
+
+    live2dMagicMotion.start()
+  },
+  { immediate: true },
+)
+const {
+  spinePremultipliedAlpha,
+  spineDefaultMixDuration,
+  spineIdleAnimationEnabled,
+  spineMaxFps,
+  spineRenderScale,
 } = storeToRefs(settingsStore)
-const { mouthOpenSize } = storeToRefs(useSpeakingStore())
+const { mouthOpenSize, nowSpeaking } = storeToRefs(useSpeakingStore())
+const disposePlaybackStateHandler = defineInvokeHandler(
+  getSpeechBusContext(),
+  speechOutputGetPlaybackState,
+  () => ({ speaking: nowSpeaking.value }),
+)
 const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
+const speechOutputControlStore = useSpeechOutputControlStore()
+const { latestStopRequest, speechMuted } = storeToRefs(speechOutputControlStore)
+const lastVrmInteractionAt = new Map<VrmInteractionTarget, number>()
+const VRM_INTERACTION_COOLDOWN_MS = 450
 
-const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatOrchestratorStore()
+function getVrmInteractionExpression(target: VrmInteractionTarget) {
+  if (target === 'head')
+    return 'happy'
+  if (target === 'leftFoot' || target === 'rightFoot')
+    return 'relaxed'
+  return 'surprised'
+}
+
+function onVRMInteract(target: VrmInteractionTarget) {
+  const now = Date.now()
+  const lastTriggeredAt = lastVrmInteractionAt.get(target) ?? 0
+  if (now - lastTriggeredAt < VRM_INTERACTION_COOLDOWN_MS)
+    return
+  lastVrmInteractionAt.set(target, now)
+  vrmViewerRef.value?.setExpression(getVrmInteractionExpression(target), 1)
+}
+
+const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatStore()
 const chatHookCleanups: Array<() => void> = []
 // WORKAROUND: clear previous handlers on unmount to avoid duplicate calls when this component remounts.
 //             We keep per-hook disposers instead of wiping the global chat hooks to play nicely with
 //             cross-window broadcast wiring.
 
-const providersStore = useProvidersStore()
-useAuthProviderSync()
-const live2dStore = useLive2d()
+const providersStore = useProviderStore()
+
+const providerStore = useProviderConfigStore()
+const live2dStore = useLive2dParams()
 const showStage = ref(true)
+const stageRenderError = shallowRef<Error>()
 const viewUpdateCleanups: Array<() => void> = []
 
+function handleStageRenderError(error: Error) {
+  stageRenderError.value = error
+}
+
+async function retryStageRenderer() {
+  stageRenderError.value = undefined
+  showStage.value = false
+  await nextTick()
+  showStage.value = true
+}
+
+watch([stageModelRenderer, stageModelSelected, stageModelSelectedUrl], () => {
+  stageRenderError.value = undefined
+})
+
 // Caption + Presentation broadcast channels
-type CaptionChannelEvent
-  = | { type: 'caption-speaker', text: string }
-    | { type: 'caption-assistant', text: string }
 const { post: postCaption } = useBroadcastChannel<CaptionChannelEvent, CaptionChannelEvent>({ name: 'airi-caption-overlay' })
 const assistantCaption = ref('')
 
@@ -109,11 +216,30 @@ viewUpdateCleanups.push(live2dStore.onShouldUpdateView(async () => {
 }))
 
 const audioAnalyser = ref<AnalyserNode>()
-const nowSpeaking = ref(false)
 const lipSyncStarted = ref(false)
 const lipSyncLoopId = ref<number>()
 const live2dLipSync = ref<Live2DLipSync>()
 const live2dLipSyncOptions: Live2DLipSyncOptions = { mouthUpdateIntervalMs: 50, mouthLerpWindowMs: 50 }
+
+function resetAssistantSpeechSurface(source: string) {
+  nowSpeaking.value = false
+  mouthOpenSize.value = 0
+  assistantCaption.value = ''
+
+  try {
+    postCaption({ type: 'caption-assistant', text: '' })
+  }
+  catch (error) {
+    console.warn(`[Stage] Failed to post caption reset for ${source} (channel may be closed)`, { error })
+  }
+
+  try {
+    postPresent({ type: 'assistant-reset' })
+  }
+  catch (error) {
+    console.warn(`[Stage] Failed to post present reset for ${source} (channel may be closed)`, { error })
+  }
+}
 
 const { activeCard } = storeToRefs(useAiriCardStore())
 const speechStore = useSpeechStore()
@@ -123,7 +249,7 @@ const speechRuntimeStore = useSpeechRuntimeStore()
 const backgroundStore = useBackgroundStore()
 const { activeBackgroundUrl } = storeToRefs(backgroundStore)
 
-const { currentMotion } = storeToRefs(useLive2d())
+const { currentMotion } = storeToRefs(useLive2dParams())
 
 const emotionsQueue = createQueue<EmotionPayload>({
   handlers: [
@@ -139,26 +265,86 @@ const emotionsQueue = createQueue<EmotionPayload>({
       else if (stageModelRenderer.value === 'live2d') {
         currentMotion.value = { group: EMOTION_EmotionMotionName_value[ctx.data.name] }
       }
+      else if (stageModelRenderer.value === 'spine') {
+        spineSceneRef.value?.setEmotion(ctx.data.name, ctx.data.intensity)
+      }
+      else if (stageModelRenderer.value === 'tachie') {
+        tachieSceneRef.value?.setEmotion(ctx.data.name, ctx.data.intensity)
+      }
+      else if (stageModelRenderer.value === 'mmd') {
+        mmdSceneRef.value?.setEmotion(ctx.data.name, ctx.data.intensity)
+      }
     },
   ],
 })
 
-const emotionMessageContentQueue = useEmotionsMessageQueue(emotionsQueue)
-emotionMessageContentQueue.onHandlerEvent('emotion', (emotion) => {
-  // eslint-disable-next-line no-console
-  console.debug('emotion detected', emotion)
-})
+const streamingControl = useLlmStreamingControlStore()
 
-const delaysQueue = useDelayMessageQueue()
-delaysQueue.onHandlerEvent('delay', (delay) => {
-  // eslint-disable-next-line no-console
-  console.debug('delay detected', delay)
-})
+function toStageEmotionPayload(payload: { name: string, intensity: number }): EmotionPayload | undefined {
+  switch (payload.name) {
+    case 'happy':
+      return { name: Emotion.Happy, intensity: payload.intensity }
+    case 'sad':
+      return { name: Emotion.Sad, intensity: payload.intensity }
+    case 'angry':
+      return { name: Emotion.Angry, intensity: payload.intensity }
+    case 'think':
+      return { name: Emotion.Think, intensity: payload.intensity }
+    case 'surprised':
+      return { name: Emotion.Surprise, intensity: payload.intensity }
+    case 'awkward':
+      return { name: Emotion.Awkward, intensity: payload.intensity }
+    case 'question':
+      return { name: Emotion.Question, intensity: payload.intensity }
+    case 'curious':
+      return { name: Emotion.Curious, intensity: payload.intensity }
+    case 'neutral':
+      return { name: Emotion.Neutral, intensity: payload.intensity }
+    default:
+      return undefined
+  }
+}
 
-// Play special token: delay or emotion
-function playSpecialToken(special: string) {
-  delaysQueue.enqueue(special)
-  emotionMessageContentQueue.enqueue(special)
+chatHookCleanups.push(streamingControl.onSignal(async (signal) => {
+  if (signal.type === 'act') {
+    const act = normalizeActPayload(signal.payload)
+    if (act.motion && stageModelRenderer.value === 'live2d') {
+      currentMotion.value = { group: act.motion }
+      return
+    }
+    if (act.emotion) {
+      const emotion = toStageEmotionPayload(act.emotion)
+      if (!emotion)
+        return
+
+      // eslint-disable-next-line no-console
+      console.debug('emotion detected', emotion)
+      emotionsQueue.enqueue(emotion)
+    }
+    return
+  }
+
+  if (signal.type === 'delay') {
+    // eslint-disable-next-line no-console
+    console.debug('delay detected', signal.seconds)
+    await sleep(signal.seconds * 1000)
+  }
+}))
+
+// Play special token: plugin CALL, delay, or emotion.
+async function playSpecialToken(
+  special: string,
+  options?: {
+    turnId?: string
+    intentId?: string
+    streamId?: string
+  },
+) {
+  await streamingControl.dispatchWith(special, {
+    turnId: options?.turnId,
+    intentId: options?.intentId,
+    streamId: options?.streamId,
+  })
 }
 const lipSyncNode = ref<AudioNode>()
 
@@ -174,6 +360,13 @@ async function playFunction(item: Parameters<Parameters<typeof createPlaybackMan
     catch {
       return
     }
+  }
+
+  if (stageModelRenderer.value === 'live2d' && !lipSyncStarted.value) {
+    // NOTICE: Playback can be triggered by non-chat speech intents, so initialize
+    // the wLipSync graph here before connecting the AudioBufferSourceNode.
+    setupAnalyser()
+    await setupLipSync()
   }
 
   const source = audioContext.createBufferSource()
@@ -234,9 +427,19 @@ const playbackManager = createPlaybackManager<AudioBuffer>({
   ownerOverflowPolicy: 'steal-oldest',
 })
 
+/**
+ * Classifies chat auto-TTS voice usage before forwarding analytics to the server.
+ */
+function resolveStageVoiceType(): 'official_selected' | 'custom_configured' {
+  return activeSpeechProvider.value === OFFICIAL_SPEECH_PROVIDER_ID || activeSpeechProvider.value === OFFICIAL_SPEECH_STREAMING_PROVIDER_ID ? 'official_selected' : 'custom_configured'
+}
+
 const speechPipeline = createSpeechPipeline<AudioBuffer>({
   tts: async (request, signal) => {
     if (signal.aborted)
+      return null
+
+    if (speechMuted.value)
       return null
 
     if (activeSpeechProvider.value === 'speech-noop')
@@ -244,6 +447,23 @@ const speechPipeline = createSpeechPipeline<AudioBuffer>({
 
     if (!activeSpeechProvider.value)
       return null
+
+    // Streaming provider must NEVER reach this per-segment callback. The
+    // streaming code path opens its own ws at `onBeforeMessageComposed`
+    // and bypasses speech-pipeline entirely. If we got here while the
+    // streaming provider is active, the open path failed (most often:
+    // voice catalog hadn't finished loading when the user sent the
+    // message). The old fallback would silently re-open a fresh ws per
+    // segment — exactly the behavior the refactor is meant to delete.
+    // Codex review MEDIUM #3: refuse loudly instead.
+    if (resolveSpeechTransport(activeSpeechProvider.value) === 'bidirectional-ws') {
+      console.warn('[Speech Pipeline] bidirectional-ws provider reached per-segment fallback', {
+        reason: 'streaming session was not opened at intent start (voice unset?)',
+        provider: activeSpeechProvider.value,
+        segment: request.text?.slice(0, 40),
+      })
+      return null
+    }
 
     const provider = await providersStore.getProviderInstance(activeSpeechProvider.value) as SpeechProviderWithExtraOptions<string, UnElevenLabsOptions>
     if (!provider) {
@@ -254,7 +474,7 @@ const speechPipeline = createSpeechPipeline<AudioBuffer>({
     if (!request.text && !request.special)
       return null
 
-    const providerConfig = providersStore.getProviderConfig(activeSpeechProvider.value)
+    const providerConfig = providerStore.getProviderConfig(activeSpeechProvider.value)
 
     // For OpenAI Compatible providers, always use provider config for model and voice
     // since these are manually configured in provider settings
@@ -301,16 +521,33 @@ const speechPipeline = createSpeechPipeline<AudioBuffer>({
     if (!model || !voice)
       return null
 
-    const input = ssmlEnabled.value
-      ? speechStore.generateSSML(request.text, voice, { ...providerConfig, pitch: pitch.value })
-      : request.text
-
     try {
-      const res = await generateSpeech({
-        ...provider.speech(model, providerConfig),
-        input,
-        voice: voice.id,
+      const speechRequest = speechStore.resolveSpeechInput({
+        text: request.text,
+        voice,
+        providerConfig: {
+          ...providerConfig,
+          pitch: ssmlEnabled.value ? pitch.value : undefined,
+        },
+        forceSSML: ssmlEnabled.value,
+        supportsSSML: speechStore.supportsSSML,
       })
+
+      // Non-streaming providers only: synth via REST. Streaming provider
+      // was already early-returned above; it owns its own ws path opened
+      // in `onBeforeMessageComposed`.
+      const res = await speechStore.speech(
+        provider,
+        model,
+        speechRequest.input,
+        voice.id,
+        speechRequest.providerConfig,
+        {
+          trigger: 'auto',
+          source: 'chat_auto_tts',
+          voice_type: resolveStageVoiceType(),
+        },
+      )
 
       if (signal.aborted || !res || res.byteLength === 0)
         return null
@@ -318,7 +555,20 @@ const speechPipeline = createSpeechPipeline<AudioBuffer>({
       const audioBuffer = await audioContext.decodeAudioData(res)
       return audioBuffer
     }
-    catch {
+    catch (err) {
+      // Surface the error with context. Pipeline still drops the segment
+      // (returning null) so the conversation keeps going, but operators see
+      // the failure in devtools instead of silent truncation. Streaming
+      // failures (truncated session, network drop, billing rejection) now
+      // produce visible diagnostic lines — see codex review item #6.
+      if (!signal.aborted) {
+        console.error('[Speech Pipeline] tts() failed', {
+          provider: activeSpeechProvider.value,
+          model,
+          voice: voice?.id,
+          error: err,
+        })
+      }
       return null
     }
   },
@@ -330,36 +580,53 @@ useIOTraceBridge(speechPipeline)
 void speechRuntimeStore.registerHost(speechPipeline)
 
 speechPipeline.on('onSpecial', (segment) => {
-  if (segment.special)
-    playSpecialToken(segment.special)
+  if (segment.special) {
+    void playSpecialToken(segment.special, {
+      turnId: segment.turnId,
+      intentId: segment.intentId,
+      streamId: segment.streamId,
+    })
+  }
 })
 
-playbackManager.onEnd(({ item }) => {
-  if (item.special)
-    playSpecialToken(item.special)
+speechPipeline.on('onTurnEnd', (turnId) => {
+  streamingControl.completeTurn(turnId)
+})
 
+speechPipeline.on('onTurnCancel', ({ turnId }) => {
+  streamingControl.cancelTurn(turnId)
+})
+
+function resetSpeakingState() {
   nowSpeaking.value = false
   mouthOpenSize.value = 0
-})
+}
 
-playbackManager.onStart(({ item }) => {
-  nowSpeaking.value = true
-  // NOTICE: postCaption and postPresent may throw errors if the BroadcastChannel is closed
-  // (e.g., when navigating away from the page). We wrap these in try-catch to prevent
-  // breaking playback when the channel is unavailable.
-  assistantCaption.value += ` ${item.text}`
-  try {
-    postCaption({ type: 'caption-assistant', text: assistantCaption.value })
-  }
-  catch {
-    // BroadcastChannel may be closed - don't break playback
-  }
-  try {
-    postPresent({ type: 'assistant-append', text: item.text })
-  }
-  catch {
-    // BroadcastChannel may be closed - don't break playback
-  }
+bindSpeakingStateToPlaybackManager(playbackManager, {
+  setSpeaking: (speaking) => {
+    if (!speaking)
+      resetSpeakingState()
+    else
+      nowSpeaking.value = true
+  },
+  onStart: ({ item }) => {
+    // NOTICE: postCaption and postPresent may throw errors if the BroadcastChannel is closed
+    // (e.g., when navigating away from the page). We wrap these in try-catch to prevent
+    // breaking playback when the channel is unavailable.
+    assistantCaption.value += ` ${item.text}`
+    try {
+      postCaption({ type: 'caption-assistant', text: item.text })
+    }
+    catch {
+      // BroadcastChannel may be closed - don't break playback
+    }
+    try {
+      postPresent({ type: 'assistant-append', text: item.text })
+    }
+    catch {
+      // BroadcastChannel may be closed - don't break playback
+    }
+  },
 })
 
 function startLipSyncLoop() {
@@ -404,10 +671,7 @@ function resetLive2dLipSync() {
 }
 
 function syncLipSyncLoop() {
-  if (shouldRunLive2dLipSyncLoop({
-    stageModelRenderer: stageModelRenderer.value,
-    paused: Boolean(props.paused),
-  }) && lipSyncStarted.value) {
+  if (stageModelRenderer.value === 'live2d' && !props.paused && lipSyncStarted.value) {
     startLipSyncLoop()
     return
   }
@@ -444,40 +708,155 @@ function setupAnalyser() {
   }
 }
 
-let currentChatIntent: ReturnType<typeof speechRuntimeStore.openIntent> | null = null
+// One TTS session per LLM intent. The active provider determines which
+// adapter `createStageTtsSession` returns: the segmenter-based adapter for
+// every non-streaming provider, or the bidirectional WebSocket adapter
+// for the official streaming provider. Stage.vue intentionally does NOT
+// branch on provider id anywhere below — the factory is the single
+// decision point. See `packages/stage-ui/src/libs/speech/tts-session.ts`.
+let currentSession: StageTtsSession | null = null
 
-chatHookCleanups.push(onBeforeMessageComposed(async () => {
+function stopSpeechOutput(reason: string) {
+  currentSession?.cancel(reason)
+  currentSession = null
+  speechPipeline.stopAll(reason)
+  playbackManager.stopAll(reason)
+  resetAssistantSpeechSurface(reason)
+}
+
+/**
+ * Resolves the official streaming TTS model for the current Stage session.
+ */
+function resolveStreamingSessionModel(): string | null {
+  const activeModel = activeSpeechModel.value as string | undefined
+  const sessionModel = activeModel?.includes('/')
+    ? activeModel
+    : providersStore.getDefaultModelForProvider(OFFICIAL_SPEECH_STREAMING_PROVIDER_ID)
+  if (!sessionModel?.includes('/'))
+    return null
+  return sessionModel
+}
+
+function buildStreamingSnapshot(turnId: string): StreamingSessionSnapshot | null {
+  if (speechMuted.value)
+    return null
+
+  // Snapshotted once per session, so a mid-session provider/voice swap
+  // does not corrupt an in-flight session — the watcher below detects
+  // changes and tears down explicitly. Returns `null` when streaming
+  // can't be opened (no voice picked, no audioContext, no model);
+  // `createStageTtsSession` falls back to the segmenter adapter in that
+  // case, which is the right behaviour for the rest of the providers too.
+  const voiceId = activeSpeechVoice.value?.id
+  if (!voiceId)
+    return null
+  // Resolve the concrete streaming model id. The active speech model is only
+  // valid here when it carries the `<backend>/<api_resource_id>` shape the ws
+  // upstream expects — the HTTP TTS `auto` alias (and an empty selection after
+  // a provider switch) must NOT reach the bridge, so fall back to the
+  // server-curated default instead of a hardcoded id. Returns null (segmenter
+  // fallback) when neither resolves, rather than guessing a resource id.
+  const sessionModel = resolveStreamingSessionModel()
+  if (!sessionModel)
+    return null
+  const apiResourceId = sessionModel.split('/', 2)[1]
+  // TTS 2.0 / ICL 2.0 ship subtitles asynchronously relative to audio
+  // (per the wire spec), so chunk-on-sentence-end would drop frames.
+  // Buffer the entire session and decode at session.finished instead.
+  const bufferEntireSession = apiResourceId.startsWith('seed-tts-2.0') || apiResourceId.startsWith('seed-icl-2.0')
+  return {
+    model: sessionModel,
+    voice: voiceId,
+    voiceType: resolveStageVoiceType(),
+    bufferEntireSession,
+    extraBody: {
+      api_resource_id: apiResourceId,
+      audio: { sample_rate: 24000, bit_rate: 64000 },
+    },
+    ownerId: activeCardId.value,
+    onImmediateSpecial: special => playSpecialToken(special, { turnId }),
+  }
+}
+
+function resolveSpeechTransport(providerId: string | null | undefined): SpeechTransport | undefined {
+  if (!providerId)
+    return undefined
+  // Read straight from the unified ProviderDefinition registry — keeps the
+  // factory transport-agnostic and lets a new provider opt into streaming
+  // by setting `capabilities.speech.transport: 'bidirectional-ws'` in its
+  // own `defineProvider` call (no Stage / factory edits needed).
+  return getDefinedProvider(providerId)?.capabilities?.speech?.transport
+}
+
+function openTtsSession(turnId: string): StageTtsSession {
+  // A session must only clear the module-level `currentSession` if it IS that session. The previous
+  // code cleared it whenever any `stream-` session completed, which is unsafe once sessions exist that
+  // are not assigned to `currentSession` (e.g. one-off read-aloud sessions): one of those finishing
+  // would null a still-active chat session and drop the rest of the reply. Capture the session and
+  // compare identity; the `stream-` guard is preserved so segmenter sessions still don't self-clear.
+  let session: StageTtsSession | null = null
+  const clearIfActive = () => {
+    if (session && currentSession === session && session.intentId.startsWith('stream-'))
+      currentSession = null
+  }
+  session = createStageTtsSession<AudioBuffer>({
+    transport: resolveSpeechTransport(activeSpeechProvider.value),
+    streaming: () => buildStreamingSnapshot(turnId),
+    audioContext,
+    playbackManager,
+    openIntent: opts => speechRuntimeStore.openIntent(opts),
+    intentOptions: () => ({
+      turnId,
+      ownerId: activeCardId.value,
+      priority: 'normal',
+      behavior: 'queue',
+    }),
+    hooks: {
+      onError: (err) => {
+        console.error('[Speech Pipeline] streaming session error', {
+          provider: activeSpeechProvider.value,
+          model: activeSpeechModel.value,
+          error: err,
+        })
+        // Drop the failed session so no further audio is queued, but let the
+        // playback manager keep draining already-queued audio and emit its own
+        // terminal events. Calling resetSpeakingState() here would force the
+        // mouth shut while audio is still playing.
+        clearIfActive()
+      },
+      onDone: () => {
+        clearIfActive()
+      },
+    },
+  })
+  return session
+}
+
+watch(latestStopRequest, (request) => {
+  if (!request)
+    return
+
+  stopSpeechOutput(request.reason)
+})
+
+watch(speechMuted, (muted) => {
+  if (muted)
+    stopSpeechOutput('muted')
+}, { immediate: true })
+
+chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   playbackManager.stopAll('new-message')
+  resetAssistantSpeechSurface('new-message')
+
+  currentSession?.cancel('new-message')
+  currentSession = null
+
+  if (speechMuted.value)
+    return
 
   setupAnalyser()
   await setupLipSync()
-  // Reset assistant caption for a new message
-  assistantCaption.value = ''
-  try {
-    postCaption({ type: 'caption-assistant', text: '' })
-  }
-  catch (error) {
-    // BroadcastChannel may be closed if user navigated away - don't break flow
-    console.warn('[Stage] Failed to post caption reset (channel may be closed)', { error })
-  }
-  try {
-    postPresent({ type: 'assistant-reset' })
-  }
-  catch (error) {
-    // BroadcastChannel may be closed if user navigated away - don't break flow
-    console.warn('[Stage] Failed to post present reset (channel may be closed)', { error })
-  }
-
-  if (currentChatIntent) {
-    currentChatIntent.cancel('new-message')
-    currentChatIntent = null
-  }
-
-  currentChatIntent = speechRuntimeStore.openIntent({
-    ownerId: activeCardId.value,
-    priority: 'normal',
-    behavior: 'queue',
-  })
+  currentSession = openTtsSession(context.turnId)
 }))
 
 chatHookCleanups.push(onBeforeSend(async () => {
@@ -485,22 +864,33 @@ chatHookCleanups.push(onBeforeSend(async () => {
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal) => {
-  currentChatIntent?.writeLiteral(literal)
+  currentSession?.appendText(literal)
 }))
 
-chatHookCleanups.push(onTokenSpecial(async (special) => {
-  // console.debug('Stage received special token:', special)
-  currentChatIntent?.writeSpecial(special)
+chatHookCleanups.push(onTokenSpecial(async (special, context) => {
+  // Muting speech must not suppress non-audio signals such as emotion, motion,
+  // delay, or plugin calls that normally travel through the TTS session.
+  if (speechMuted.value) {
+    await playSpecialToken(special, { turnId: context.turnId })
+    return
+  }
+
+  currentSession?.appendSpecial(special)
 }))
 
 chatHookCleanups.push(onStreamEnd(async () => {
-  delaysQueue.enqueue(llmInferenceEndToken)
-  currentChatIntent?.writeFlush()
+  currentSession?.finishInput()
 }))
 
 chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
-  currentChatIntent?.end()
-  currentChatIntent = null
+  currentSession?.end()
+  // Streaming sessions null-out via the onDone hook; segmenter sessions
+  // stay around until the next `onBeforeMessageComposed` cancels them
+  // (the segmenter pipeline's IntentHandle.end is idempotent and
+  // ResourceMessages still arrive after end() — clearing here would
+  // race with the pipeline's own cleanup). Keep the ref pointing at
+  // the just-ended session; it costs nothing and the next message
+  // replaces it.
   // const res = await embed({
   //   ...transformersProvider.embed('Xenova/nomic-embed-text-v1'),
   //   input: message,
@@ -508,6 +898,32 @@ chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
 
   // await db.value?.execute(`INSERT INTO memory_test (vec) VALUES (${JSON.stringify(res.embedding)});`)
 }))
+
+// Mid-session provider / voice / model swaps would otherwise keep feeding
+// tokens to the OLD adapter (segmenter for the new provider, or stale ws
+// for the streaming provider). Cancel the active session so the next LLM
+// token after the swap falls through `currentSession?.` cleanly (silent
+// drop is acceptable — we don't try to fork-replay text into a new
+// adapter with potentially different voice/model).
+watch(
+  [activeSpeechProvider, () => activeSpeechVoice.value?.id, activeSpeechModel],
+  ([provider, voiceId, model], [prevProvider, prevVoiceId, prevModel]) => {
+    if (!currentSession)
+      return
+    if (provider === prevProvider && voiceId === prevVoiceId && model === prevModel)
+      return
+    console.warn('[Speech Pipeline] provider/voice/model changed mid-session, tearing down', {
+      provider,
+      prevProvider,
+      voiceId,
+      prevVoiceId,
+      model,
+      prevModel,
+    })
+    currentSession.cancel('provider-or-voice-changed')
+    currentSession = null
+  },
+)
 
 // Resume audio context on first user interaction (browser requirement)
 let audioContextResumed = false
@@ -551,6 +967,15 @@ function canvasElement() {
 
   else if (stageModelRenderer.value === 'vrm')
     return vrmViewerRef.value?.canvasElement()
+
+  else if (stageModelRenderer.value === 'spine')
+    return spineSceneRef.value?.canvasElement()
+
+  else if (stageModelRenderer.value === 'tachie')
+    return tachieSceneRef.value?.canvasElement()
+
+  else if (stageModelRenderer.value === 'mmd')
+    return mmdSceneRef.value?.canvasElement()
 }
 
 function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, radius: number) {
@@ -560,10 +985,21 @@ function readRenderTargetRegionAtClientPoint(clientX: number, clientY: number, r
   return vrmViewerRef.value?.readRenderTargetRegionAtClientPoint?.(clientX, clientY, radius) ?? null
 }
 
+async function captureCharacterFrame() {
+  if (stageModelRenderer.value === 'live2d')
+    return live2dSceneRef.value?.captureFrame()
+  if (stageModelRenderer.value === 'vrm')
+    return vrmViewerRef.value?.captureFrame()
+  if (stageModelRenderer.value === 'spine')
+    return spineSceneRef.value?.captureFrame()
+  if (stageModelRenderer.value === 'tachie')
+    return tachieSceneRef.value?.captureFrame()
+  if (stageModelRenderer.value === 'mmd')
+    return mmdSceneRef.value?.captureFrame()
+}
+
 async function captureFrame() {
-  const charBlob = await (stageModelRenderer.value === 'live2d'
-    ? live2dSceneRef.value?.captureFrame()
-    : vrmViewerRef.value?.captureFrame())
+  const charBlob = await captureCharacterFrame()
 
   if (!activeBackgroundUrl.value || !charBlob)
     return charBlob
@@ -611,9 +1047,18 @@ async function captureFrame() {
 }
 
 onUnmounted(() => {
+  disposePlaybackStateHandler()
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
   viewUpdateCleanups.forEach(dispose => dispose?.())
+  // Tear down any in-flight TTS session (segmenter or streaming) and
+  // drain playback. Without this, a still-open streaming ws keeps
+  // feeding sentences into a playbackManager whose listeners still
+  // mutate component refs (caption / nowSpeaking). Codex review: HIGH
+  // #1 + MEDIUM #5.
+  currentSession?.cancel('unmount')
+  currentSession = null
+  playbackManager.stopAll('unmount')
 })
 
 defineExpose({
@@ -649,32 +1094,74 @@ defineExpose({
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
-        :focus-at="focusAt"
+        :cursor-position="cursorPosition"
         :mouth-open-size="mouthOpenSize"
+        :now-speaking="nowSpeaking"
         :paused="paused"
-        :x-offset="xOffset"
-        :y-offset="yOffset"
-        :scale="scale"
-        :disable-focus-at="live2dDisableFocus"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
-        :live2d-idle-animation-enabled="live2dIdleAnimationEnabled"
-        :live2d-auto-blink-enabled="live2dAutoBlinkEnabled"
-        :live2d-force-auto-blink-enabled="live2dForceAutoBlinkEnabled"
-        :live2d-expression-enabled="live2dExpressionEnabled"
         :live2d-shadow-enabled="live2dShadowEnabled"
         :live2d-max-fps="live2dMaxFps"
         :live2d-render-scale="live2dRenderScale"
+        @error="handleStageRenderError"
       />
       <ThreeScene
         v-if="stageModelRenderer === 'vrm' && showStage"
         ref="vrmViewerRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
+        :model-id="stageModelSelected"
         :model-src="stageModelSelectedUrl"
+        :cursor-position="cursorPosition"
         :idle-animation="animations.idleLoop.toString()"
         :paused="paused"
         :show-axes="stageViewControlsEnabled"
+        :enable-orbit-controls="props.enableOrbitControls"
+        :audio-context="audioContext"
+        :current-audio-source="currentAudioSource"
+        @error="console.error"
+        @vrm-interact="onVRMInteract"
+      />
+      <SpineScene
+        v-if="stageModelRenderer === 'spine' && showStage"
+        ref="spineSceneRef"
+        v-model:state="componentState"
+        min-w="50% <lg:full" min-h="100 sm:100"
+        h-full w-full flex-1
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :paused="paused"
+        :premultiplied-alpha="spinePremultipliedAlpha"
+        :default-mix-duration="spineDefaultMixDuration"
+        :idle-animation-enabled="spineIdleAnimationEnabled"
+        :max-fps="spineMaxFps"
+        :render-scale="spineRenderScale"
+      />
+      <TachieScene
+        v-if="stageModelRenderer === 'tachie' && showStage"
+        ref="tachieSceneRef"
+        v-model:state="componentState"
+        min-w="50% <lg:full" min-h="100 sm:100"
+        h-full w-full flex-1
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :paused="paused"
+        :theme-colors-hue="themeColorsHue"
+        :theme-colors-hue-dynamic="themeColorsHueDynamic"
+        @error="console.error"
+      />
+      <MMDScene
+        v-if="stageModelRenderer === 'mmd' && showStage"
+        ref="mmdSceneRef"
+        v-model:state="componentState"
+        min-w="50% <lg:full" min-h="100 sm:100"
+        h-full w-full flex-1
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :paused="paused"
+        :cursor-position="cursorPosition"
+        :enable-orbit-controls="props.enableOrbitControls"
+        :audio-context="audioContext"
         :current-audio-source="currentAudioSource"
         @error="console.error"
       />
@@ -698,6 +1185,14 @@ defineExpose({
           </Callout>
         </div>
       </div>
+
+      <StageRenderError
+        v-if="stageRenderError"
+        :error="stageRenderError"
+        renderer="Live2D"
+        :model-id="stageModelSelected"
+        @retry="retryStageRenderer"
+      />
     </div>
   </div>
 </template>

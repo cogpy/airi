@@ -1,7 +1,7 @@
 {
   "name": "@proj-airi/core-agent",
   "type": "module",
-  "version": "0.9.0-alpha.35",
+  "version": "0.12.0-beta.5",
   "private": true,
   "description": "Core agent runtime orchestration for AIRI",
   "author": {
@@ -40,8 +40,10 @@
   "dependencies": {
     "@moeru/std": "catalog:",
     "@proj-airi/pipelines-audio": "workspace:^",
+    "@proj-airi/plugin-protocol": "workspace:^",
     "@proj-airi/server-sdk": "workspace:^",
     "@proj-airi/server-shared": "workspace:^",
+    "@proj-airi/stream-kit": "workspace:^",
     "@xsai-ext/providers": "catalog:",
     "@xsai/generate-speech": "catalog:",
     "@xsai/generate-text": "catalog:",
@@ -50,13 +52,20 @@
     "@xsai/shared-chat": "catalog:",
     "@xsai/stream-text": "catalog:",
     "@xsai/tool": "catalog:",
-    "nanoid": "^5.1.9",
+    "nanoid": "catalog:",
+    "rehype-parse": "catalog:",
+    "rehype-stringify": "catalog:",
+    "unified": "catalog:",
+    "unist-util-visit": "catalog:",
     "vieval": "catalog:",
     "xsschema": "catalog:",
-    "zod": "^4.3.6"
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/hast": "catalog:",
+    "@types/node": "catalog:",
+    "@types/unist": "catalog:",
     "tsdown": "catalog:",
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

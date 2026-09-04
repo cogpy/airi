@@ -1,13 +1,18 @@
 {
   lib,
   stdenvNoCC,
-
-  pnpm,
+  fetchPnpmDeps,
 
   cacert,
   gitMinimal,
   nodejs,
+  pnpm_11,
+  pnpmConfigHook,
 }:
+
+let
+  pnpm = pnpm_11;
+in
 
 stdenvNoCC.mkDerivation (final: {
   pname = "airi";
@@ -24,9 +29,10 @@ stdenvNoCC.mkDerivation (final: {
       !isEditorMetadataDirectory;
   };
 
-  pnpmDeps = pnpm.fetchDeps {
+  pnpmDeps = fetchPnpmDeps {
     inherit (final) pname version src;
-    fetcherVersion = 2;
+    inherit pnpm;
+    fetcherVersion = 4;
     hash = builtins.readFile ./pnpm-deps-hash.txt;
   };
 
@@ -39,14 +45,14 @@ stdenvNoCC.mkDerivation (final: {
       cacert # For network request
       gitMinimal # For unplugin-info
       nodejs
-      pnpm.configHook
+      pnpm
+      pnpmConfigHook
     ];
 
     buildPhase = ''
       runHook preBuild
 
-      pnpm run build:packages
-      pnpm -F @proj-airi/stage-web run build
+      pnpm -F @proj-airi/stage-web... run build
 
       runHook postBuild
     '';

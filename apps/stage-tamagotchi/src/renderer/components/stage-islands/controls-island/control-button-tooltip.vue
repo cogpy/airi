@@ -1,9 +1,25 @@
 <script setup lang="ts">
-import { TooltipContent, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
+import type { TooltipContentProps } from 'reka-ui'
 
-const { side = 'top' } = defineProps<{
-  side?: 'top' | 'right' | 'bottom' | 'left'
-}>()
+import { TooltipContent, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui'
+import { computed } from 'vue'
+
+import { useControlsIslandPlacement } from './use-controls-island-placement'
+
+const props = withDefaults(defineProps<{
+  side?: TooltipContentProps['side'] | 'inward'
+}>(), {
+  side: 'top',
+})
+
+const { isLeft } = useControlsIslandPlacement()
+const resolvedSide = computed<NonNullable<TooltipContentProps['side']>>(() => {
+  if (props.side === 'inward') {
+    return isLeft.value ? 'right' : 'left'
+  }
+
+  return props.side
+})
 </script>
 
 <template>
@@ -22,9 +38,9 @@ const { side = 'top' } = defineProps<{
             'bg-neutral-50/80 dark:bg-neutral-800/70',
             'w-fit flex items-center self-end justify-center px-1.5 py-1',
             'rounded-lg backdrop-blur-md',
-            'text-xs',
+            'max-w-[min(18rem,calc(100vw-1rem))] break-words text-center text-xs leading-4 whitespace-normal',
           ]"
-          :side="side"
+          :side="resolvedSide"
           :side-offset="4"
         >
           <slot name="tooltip" />

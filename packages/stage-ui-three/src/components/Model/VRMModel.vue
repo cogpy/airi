@@ -17,7 +17,6 @@ import type {
   Texture,
   WebGLRenderer,
 } from 'three'
-import type { Ref, WatchStopHandle } from 'vue'
 
 import type {
   VrmDisposeHookContext,
@@ -26,13 +25,14 @@ import type {
   VrmLoadHookContext,
   VrmMaterialHookContext,
 } from '../../composables/vrm/hooks'
-import type { SceneBootstrap, Vec3 } from '../../stores/model-store'
+import type { VrmInteractionColliderSet } from '../../composables/vrm/interaction'
+import type { SceneBootstrap, TrackingMode, Vec3 } from '../../stores/model-store'
 import type { VrmLifecycleReason } from '../../trace'
 import type { ManagedVrmInstance } from './vrm-instance-cache'
 
 import { VRMUtils } from '@pixiv/three-vrm'
 import { useLoop, useTresContext } from '@tresjs/core'
-import { until, useMouse } from '@vueuse/core'
+import { until } from '@vueuse/core'
 import {
   AnimationMixer,
   Box3,
@@ -40,11 +40,9 @@ import {
   Mesh,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
-  Plane,
   Raycaster,
 
   SRGBColorSpace,
-  Vector2,
   Vector3,
 } from 'three'
 import {
@@ -60,6 +58,7 @@ import {
 
 } from 'vue'
 
+import { useVRMEyeFocusFor } from '../../composables/eye-tracking'
 import {
   createIblProbeController,
   injectDiffuseIBL,
@@ -76,6 +75,7 @@ import {
 } from '../../composables/vrm/animation'
 import { loadVrm } from '../../composables/vrm/core'
 import { useVRMEmote } from '../../composables/vrm/expression'
+import { createVrmInteractionColliders } from '../../composables/vrm/interaction'
 import { resolveInternalVrmHooks } from '../../composables/vrm/internal-hooks'
 import { useVRMLipSync } from '../../composables/vrm/lip-sync'
 import {
@@ -98,6 +98,7 @@ import {
 
 /*
   * Props:
+  * - modelId: stable display model identity
   * - modelSrc: model src string to load model asset
   * - idleAnimation: animation src for model
   * - loadAnimations: TBC
@@ -108,8 +109,14 @@ import {
   * - modelRotationY: The rotation of the model (y-axis)
 */
 const props = withDefaults(defineProps<{
+  /** The context that owns `currentAudioSource`. */
+  audioContext?: AudioContext
   currentAudioSource?: AudioBufferSourceNode
-  lastCommittedModelSrc?: string
+  cursorPosition?: { x: number, y: number }
+  /** The stable identity of the last model that completed scene binding. */
+  lastCommittedModelId?: string
+  /** Stable display model identity. Runtime resource URLs can change across reloads. */
+  modelId: string
   modelSrc?: string
   idleAnimation: string
   // loadAnimations?: string[]
@@ -121,9 +128,9 @@ const props = withDefaults(defineProps<{
 
   modelOffset: Vec3
   modelRotationY: number
-  lookAtTarget: Vec3
-  trackingMode: string
+  trackingMode: TrackingMode
   eyeHeight: number
+  screenBoundingBox: () => { top: number, left: number, width: number, height: number }
   cameraPosition: Vec3
 
   camera: PerspectiveCamera
@@ -141,15 +148,16 @@ const emit = defineEmits<{
   (e: 'loadingProgress', value: number): void
   (e: 'loadStart', value: 'initial-load' | 'model-reload' | 'model-switch'): void
   (e: 'sceneBootstrap', value: SceneBootstrap): void
-  (e: 'lookAtTarget', value: Vec3): void
 
   (e: 'error', value: unknown): void
   (e: 'loaded', value: string): void
 }>()
 
 const {
+  audioContext,
   currentAudioSource,
-  lastCommittedModelSrc,
+  lastCommittedModelId,
+  modelId,
   modelSrc,
   idleAnimation,
   // loadAnimations, // TBC
@@ -161,10 +169,7 @@ const {
 
   modelOffset,
   modelRotationY,
-  lookAtTarget,
-  trackingMode,
   eyeHeight,
-  cameraPosition,
 
   camera,
 } = toRefs(props)
@@ -174,14 +179,11 @@ const { renderer, scene } = useTresContext()
 const vrm = shallowRef<VRM>()
 const vrmGroup = shallowRef<Group>()
 const modelLoaded = ref<boolean>(false)
+const interactionColliders = shallowRef<VrmInteractionColliderSet>()
+
 let loadSequence = 0
 // for eye tracking modes
-const { x: mouseX, y: mouseY } = useMouse()
 const raycaster = new Raycaster()
-const mouse = new Vector2()
-const mouseTarget = shallowRef<Vec3>()
-let stopMouseWatch: WatchStopHandle | undefined
-let stopCameraWatch: WatchStopHandle | undefined
 
 // Animation related ref
 const vrmAnimationMixer = ref<AnimationMixer>()
@@ -201,7 +203,7 @@ type UpdatableMaterial = Material & {
 const blink = useBlink()
 const idleEyeSaccades = useIdleEyeSaccades()
 const vrmEmote = ref<ReturnType<typeof useVRMEmote>>()
-const vrmLipSync = useVRMLipSync(currentAudioSource)
+const vrmLipSync = useVRMLipSync(audioContext, currentAudioSource)
 
 // For sky box update
 const nprProgramVersion = ref(0)
@@ -222,6 +224,13 @@ function measureFrameStep(enabled: boolean, fn: () => void) {
 
 function getRendererInstance() {
   return renderer?.instance as WebGLRenderer | undefined
+}
+
+function updateIblProbe(mode = normalizeEnvMode(envSelect.value)) {
+  if (!airiIblProbe && scene.value)
+    airiIblProbe = createIblProbeController(scene.value)
+
+  airiIblProbe?.update(mode, skyBoxIntensity.value, nprIrrSH.value ?? null)
 }
 
 function toErrorMessage(error: unknown) {
@@ -292,6 +301,7 @@ function getActiveManagedVrmInstance() {
   return createManagedVrmInstance({
     emote: vrmEmote.value,
     group: vrmGroup.value,
+    interactionColliders: interactionColliders.value!,
     mixer: vrmAnimationMixer.value,
     vrm: vrm.value,
   })
@@ -302,13 +312,27 @@ function clearActiveManagedVrmRefs() {
   vrmEmote.value = undefined
   vrm.value = undefined
   vrmGroup.value = undefined
+  interactionColliders.value = undefined
+}
+
+function applyModelTransform(group: Group) {
+  group.position.set(
+    modelOffset.value.x,
+    modelOffset.value.y,
+    modelOffset.value.z,
+  )
+  group.rotation.y = MathUtils.degToRad(modelRotationY.value)
 }
 
 function applyManagedVrmInstance(instance: ManagedVrmInstance) {
+  // A reload creates a new group while the saved transform can stay unchanged.
+  // Apply it during every commit because the value watchers will not run again.
+  applyModelTransform(instance.group)
   vrm.value = instance.vrm
   vrmGroup.value = instance.group
   vrmAnimationMixer.value = instance.mixer
   vrmEmote.value = instance.emote
+  interactionColliders.value = instance.interactionColliders
 }
 
 function destroyManagedVrmInstance(instance?: ManagedVrmInstance) {
@@ -317,6 +341,7 @@ function destroyManagedVrmInstance(instance?: ManagedVrmInstance) {
 
   instance.emote.dispose()
   instance.mixer.stopAllAction()
+  instance.interactionColliders.dispose()
   disposeDetachedVrm(instance.vrm, instance.group)
 }
 
@@ -454,7 +479,6 @@ function bindManagedVrmInstanceRenderLoop() {
     })
     const blinkAndSaccadeMs = measureFrameStep(tracingEnabled, () => {
       blink.update(activeVrm, delta)
-      idleEyeSaccades.update(activeVrm, lookAtTarget, delta)
     })
     const emoteMs = measureFrameStep(tracingEnabled, () => {
       vrmEmote.value?.update(delta)
@@ -493,7 +517,16 @@ function bindManagedVrmInstanceRenderLoop() {
   }).off
 }
 
-function commitManagedVrmInstance(instance: ManagedVrmInstance) {
+function commitManagedVrmInstance(
+  instance: ManagedVrmInstance,
+  reason: 'initial-load' | 'model-reload' | 'model-switch',
+) {
+  // Keep the active model visible until its replacement is ready. No asynchronous
+  // work occurs between this cleanup and the replacement scene commit.
+  if (reason !== 'initial-load')
+    componentCleanUp(reason, { invalidate: false })
+
+  updateIblProbe()
   scene.value?.add(instance.group)
   applyManagedVrmInstance(instance)
   bindManagedVrmInstanceRenderLoop()
@@ -563,40 +596,7 @@ function componentCleanUp(
   }
 }
 
-// look at mouse
-function lookAtMouse(
-  mouseX: number,
-  mouseY: number,
-  camera: Ref<PerspectiveCamera>,
-): Vec3 {
-  mouse.x = (mouseX / window.innerWidth) * 2 - 1
-  mouse.y = -(mouseY / window.innerHeight) * 2 + 1
-
-  // Raycast from the mouse position
-  raycaster.setFromCamera(mouse, camera.value)
-
-  // Create a plane in front of the camera
-  const cameraDirection = new Vector3()
-  camera.value.getWorldDirection(cameraDirection) // Get camera's forward direction
-
-  const plane = new Plane()
-  plane.setFromNormalAndCoplanarPoint(
-    cameraDirection,
-    camera.value.position.clone().add(cameraDirection.multiplyScalar(1)), // 1 unit in front of the camera
-  )
-
-  const intersection = new Vector3()
-  raycaster.ray.intersectPlane(plane, intersection)
-  return { x: intersection.x, y: intersection.y, z: intersection.z }
-}
-
-function defaultTookAt(eyeHeight: number): Vec3 {
-  return {
-    x: 0,
-    y: eyeHeight,
-    z: -100,
-  }
-}
+const defaultTookAt = computed(() => new Vector3(0, eyeHeight.value, -100))
 
 function computeBoundingBox(vrmScene: Object3D) {
   const box = new Box3()
@@ -661,7 +661,7 @@ function buildSceneBootstrap(activeVrm: VRM, cacheHit: boolean): SceneBootstrap 
     cameraDistance: cameraPosition.distanceTo(modelCenter),
     cameraPosition: { x: cameraPosition.x, y: cameraPosition.y, z: cameraPosition.z },
     eyeHeight: eyePositionY,
-    lookAtTarget: defaultTookAt(eyePositionY),
+    lookAtTarget: defaultTookAt.value,
     modelOffset: {
       x: bootstrapRoot.position.x,
       y: bootstrapRoot.position.y,
@@ -673,10 +673,10 @@ function buildSceneBootstrap(activeVrm: VRM, cacheHit: boolean): SceneBootstrap 
 }
 
 function resolveVrmLoadReason(): 'initial-load' | 'model-reload' | 'model-switch' {
-  if (!lastCommittedModelSrc.value)
+  if (!lastCommittedModelId.value)
     return 'initial-load'
 
-  if (lastCommittedModelSrc.value !== modelSrc.value)
+  if (lastCommittedModelId.value !== modelId.value)
     return 'model-switch'
 
   return 'model-reload'
@@ -732,13 +732,6 @@ async function loadModel() {
         nextVrmAnimationMixer = reusableInstance.mixer
         nextVrmEmote = reusableInstance.emote
 
-        if (!airiIblProbe && scene.value)
-          airiIblProbe = createIblProbeController(scene.value)
-
-        if (currentLoadReason === 'model-switch') {
-          componentCleanUp('model-switch', { invalidate: false })
-        }
-
         runVrmLoadHooks({
           cacheHit: true,
           camera: camera.value,
@@ -747,7 +740,7 @@ async function loadModel() {
           vrmGroup: reusableInstance.group,
         })
         emit('sceneBootstrap', buildSceneBootstrap(reusableInstance.vrm, true))
-        commitManagedVrmInstance(reusableInstance)
+        commitManagedVrmInstance(reusableInstance, currentLoadReason)
         didCommitLoad = true
 
         if (isStageThreeRuntimeTraceEnabled()) {
@@ -850,10 +843,6 @@ async function loadModel() {
       injectDiffuseIBL(mat)
     }
 
-    // MToon material sky box lightProbe setting
-    if (!airiIblProbe && scene.value)
-      airiIblProbe = createIblProbeController(scene.value)
-
     // Material traverse setting
     _vrm.scene.traverse((child) => {
       if (child instanceof Mesh && child.material) {
@@ -891,18 +880,17 @@ async function loadModel() {
       }
     })
 
-    if (currentLoadReason === 'model-switch') {
-      componentCleanUp('model-switch', { invalidate: false })
-    }
-
     emit('sceneBootstrap', buildSceneBootstrap(_vrm, false))
+
+    const nextInteractionColliders = createVrmInteractionColliders(_vrm)
 
     commitManagedVrmInstance(createManagedVrmInstance({
       emote: nextVrmEmote,
       group: _vrmGroup,
+      interactionColliders: nextInteractionColliders,
       mixer: nextVrmAnimationMixer,
       vrm: _vrm,
-    }))
+    }), currentLoadReason)
     didCommitLoad = true
 
     if (isStageThreeRuntimeTraceEnabled()) {
@@ -940,6 +928,18 @@ async function loadModel() {
   }
 }
 
+const focusPos = useVRMEyeFocusFor({
+  cameraPosition: () => props.cameraPosition,
+  context: () => ({
+    camera: camera.value,
+    raycaster,
+    defaultLookAt: defaultTookAt.value,
+  }),
+  screenBoundingBox: props.screenBoundingBox,
+  source: () => props.cursorPosition,
+  trackingMode: () => props.trackingMode,
+})
+
 onMounted(async () => {
   // watch if the model needs to be reloaded
   // Registered BEFORE the initial load to avoid missing src changes
@@ -969,19 +969,13 @@ onMounted(async () => {
   }, { immediate: true })
   // update model position
   watch(modelOffset, () => {
-    if (vrmGroup.value) {
-      vrmGroup.value.position.set(
-        modelOffset.value.x,
-        modelOffset.value.y,
-        modelOffset.value.z,
-      )
-    }
+    if (vrmGroup.value)
+      applyModelTransform(vrmGroup.value)
   }, { immediate: true, deep: true })
   // update model rotation
-  watch(modelRotationY, (newRotationY) => {
-    if (vrmGroup.value) {
-      vrmGroup.value.rotation.y = MathUtils.degToRad(newRotationY)
-    }
+  watch(modelRotationY, () => {
+    if (vrmGroup.value)
+      applyModelTransform(vrmGroup.value)
   }, { immediate: true })
   // update NPR sky box
   watch([envSelect, skyBoxIntensity, nprIrrSH], async () => {
@@ -1021,34 +1015,11 @@ onMounted(async () => {
       intensity: skyBoxIntensity.value,
       sh: nprIrrSH.value ?? null,
     })
-    airiIblProbe?.update(mode, skyBoxIntensity.value, nprIrrSH.value ?? null)
+    updateIblProbe(mode)
   }, { immediate: true })
-  // update eye tracking mode
-  watch(trackingMode, (newMode) => {
-    stopCameraWatch?.()
-    stopCameraWatch = undefined
-    stopMouseWatch?.()
-    stopMouseWatch = undefined
-    if (newMode === 'camera') {
-      stopCameraWatch = watch(cameraPosition, (newPosition) => {
-        // watch to update look at target to camera
-        emit('lookAtTarget', newPosition)
-      }, { immediate: true, deep: true })
-    }
-    else if (newMode === 'mouse') {
-      stopMouseWatch = watch([mouseX, mouseY], ([newX, newY]) => {
-        mouseTarget.value = lookAtMouse(newX, newY, camera)
-        // watch to update look at target to mouse
-        emit('lookAtTarget', mouseTarget.value)
-      }, { immediate: true, deep: true })
-    }
-    else {
-      emit('lookAtTarget', defaultTookAt(eyeHeight.value))
-    }
+  watch(focusPos, (newPos) => {
+    idleEyeSaccades.instantUpdate(vrm.value, newPos)
   }, { immediate: true })
-  watch(lookAtTarget, (newTarget) => {
-    idleEyeSaccades.instantUpdate(vrm.value, newTarget)
-  }, { deep: true })
 })
 
 onUnmounted(() => {
@@ -1063,6 +1034,7 @@ if (import.meta.hot) {
 }
 
 defineExpose({
+  getInteractionColliders: () => interactionColliders.value?.colliders ?? [],
   setExpression(expression: string, intensity = 1) {
     vrmEmote.value?.setEmotionWithResetAfter(expression, 3000, intensity)
   },

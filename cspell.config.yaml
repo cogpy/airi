@@ -9,13 +9,16 @@ words:
   - aihubmix
   - airi
   - airi-vtuber
+  - aivis
   - Alaya
   - alexanderolsen
   - alibabacloud
+  - alint
   - aliyun
   - aliyuncs
   - allseto
   - animejs
+  - antfu
   - APNG
   - APPSTORE
   - Armbruster
@@ -27,17 +30,20 @@ words:
   - audioworklet
   - autoplay
   - awilix
+  - axios
   - Ayaka
   - Backquote
   - baichuan
   - baiducloud
   - bailian
+  - Basemove
   - bestmove
   - bigserial
   - bilibili
   - Bitstream
   - bootkit
   - browserbasehq
+  - bufferutil
   - buildless
   - bumpp
   - byteorder
@@ -51,6 +57,7 @@ words:
   - clippy
   - clustr
   - cmdorctrl
+  - codenames
   - codesign
   - collectblock
   - colorjs
@@ -80,6 +87,7 @@ words:
   - culori
   - cuteen
   - dataurl
+  - davey
   - deepseek
   - defu
   - demi
@@ -88,6 +96,7 @@ words:
   - devlog
   - devlogs
   - directml
+  - discordjs
   - Dismissable
   - dokidoki
   - dompurify
@@ -105,11 +114,15 @@ words:
   - eastasia
   - elevenlabs
   - elfutils
+  - embla
   - Equirectangular
   - esaxx
+  - esbuild
   - eventa
   - Factorio
+  - fakemic
   - feaxios
+  - fflate
   - Flathub
   - flexsearch
   - formkit
@@ -131,10 +144,12 @@ words:
   - hfup
   - highpass
   - higress
+  - hiroshiba
   - histoire
   - hiyori
   - Holo
   - homeassistant
+  - hono
   - huggingface
   - huggingspace
   - hunyuan
@@ -143,23 +158,29 @@ words:
   - injeca
   - injecta
   - intlify
+  - ioredis
   - ITCHIO
   - itmstransporter
   - jlumbroso
+  - jsdom
   - jszip
+  - katex
   - Kawaii
   - kebabcase
   - keyup
   - Keyyable
   - kirakira
   - knip
+  - kokoro
   - kwaa
+  - kysely
   - Landmarker
   - lemonneko
   - lemonnekogh
   - lerp
   - libsamplerate
   - libsodium
+  - libuiohook
   - lightningcss
   - lipsync
   - listhen
@@ -174,6 +195,7 @@ words:
   - lowpass
   - lucide
   - luoling
+  - lydell
   - Maekawa
   - magnifer
   - Makito
@@ -185,10 +207,12 @@ words:
   - MeshToonMaterial
   - meteocons
   - micvad
+  - MikuMikuDance
   - mineflayer
   - mingcute
   - minimizable
   - minisearch
+  - mkcert
   - mkdist
   - mobileprovision
   - Mocap
@@ -201,10 +225,12 @@ words:
   - msvc
   - multisampling
   - Myriam
+  - napi
   - ndarray
   - Neko
   - nekomeowww
   - nekopaw
+  - nemo
   - neuri
   - Neuro
   - Neuro-sama
@@ -232,6 +258,7 @@ words:
   - otelcol
   - owenthereal
   - oxlint
+  - pathe
   - pbxproj
   - pglite
   - pgvector
@@ -250,6 +277,7 @@ words:
   - pretrained
   - prismarine
   - prng
+  - protobufjs
   - pthread
   - pulseaudio
   - quanlai
@@ -266,6 +294,7 @@ words:
   - rlib
   - rmcp
   - rolldown
+  - rollup
   - rushstack
   - Rynco
   - Saccade
@@ -273,6 +302,7 @@ words:
   - safetensors
   - SAVEPOINT
   - Screenable
+  - SDEF
   - sdkmanager
   - sensenova
   - serde
@@ -284,6 +314,7 @@ words:
   - siliconcloud
   - sizecheck
   - smallserial
+  - snazzah
   - Sniglet
   - softprops
   - sonarjs
@@ -293,6 +324,7 @@ words:
   - splitpanes
   - splt
   - srgb
+  - srvx
   - ssml
   - staticlib
   - stepfun
@@ -301,6 +333,9 @@ words:
   - supergroup
   - superjson
   - systempreferences
+  - tabler
+  - tachie
+  - takumi
   - tamagotchi
   - tauri
   - taze
@@ -308,33 +343,45 @@ words:
   - temurin
   - testflight
   - tinyexec
+  - tinyglobby
   - togetherapi
   - tolist
+  - toon
   - tresjs
   - Triggerable
+  - truncatable
   - tsdown
   - ttft
   - turborepo
+  - twemoji
+  - uiohook
   - unbird
   - unbundle
   - unconfig
+  - unconfigured
   - uncrypto
+  - undici
   - unhead
   - Unlisten
   - unocss
   - unplugin
   - unref
   - unspeech
+  - unstub
   - upterm
   - userversion
   - valibot
   - vaul
   - velin
   - vieval
+  - virtua
   - vishot
   - VITE
+  - vitejs
   - vitepress
+  - vitest
   - vllm
+  - Voicevox
   - Volcengine
   - vrma
   - vrms
@@ -342,13 +389,14 @@ words:
   - vueuse
   - waapi
   - Waifu
-  - warpdrive
   - Warudo
   - wavefile
+  - webgl
   - webgpu
   - webworkers
   - weeb
   - wgpu
+  - whatwg
   - wlipsync
   - worklet
   - worklets
@@ -360,6 +408,8 @@ words:
   - xiaolai
   - xsai
   - xsschema
+  - xwayland
+  - yauzl
   - zhipu
 ignoreWords:
   - smol-toml

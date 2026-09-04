@@ -1,10 +1,11 @@
-import type { CognitiveOrchestrator, OrchestratorEvent } from './orchestrator'
+import type {
+  CognitiveOrchestrator,
+} from './orchestrator'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
   createOrchestrator,
-
 } from './orchestrator'
 
 describe('cognitiveOrchestrator', () => {
@@ -53,51 +54,9 @@ describe('cognitiveOrchestrator', () => {
 
   describe('terminateAgent', () => {
     it('marks the agent as terminated', () => {
-      // ROOT CAUSE:
-      //
-      // terminateAgent() set agent.status = 'terminated' and then deleted the
-      // agent from the map, so the write was dead: getAgent() returned
-      // undefined and the terminal status could not be observed anywhere. The
-      // 'terminated' member of the status union was unreachable in practice.
-      //
-      //   agent.status = 'terminated';
-      //   this.agents.delete(agentId);
-      //   return true;
-      //
-      // Fixed by returning the final AgentState instead of a bare boolean, so
-      // the terminal status is reported to the caller without keeping a
-      // tombstone that would inflate agentCount and consume the maxAgents
-      // budget forever.
       orch.createAgent('bye')
-
-      const terminated = orch.terminateAgent('bye')
-
-      expect(terminated?.status).toBe('terminated')
-      expect(orch.getAgent('bye')).toBeUndefined()
-    })
-
-    it('reports the terminal status on the agent_terminated event', () => {
-      const events: OrchestratorEvent[] = []
-      orch.on('agent_terminated', event => events.push(event))
-      orch.createAgent('observed')
-
-      orch.terminateAgent('observed')
-
-      expect(events).toHaveLength(1)
-      expect(events[0].data.agentId).toBe('observed')
-      expect(events[0].data.status).toBe('terminated')
-    })
-
-    it('returns undefined for an agent that was never created', () => {
-      expect(orch.terminateAgent('never-existed')).toBeUndefined()
-    })
-
-    it('frees the id for reuse after termination', () => {
-      orch.createAgent('recycled')
-      orch.terminateAgent('recycled')
-
-      expect(() => orch.createAgent('recycled')).not.toThrow()
-      expect(orch.getAgent('recycled')?.status).toBe('active')
+      orch.terminateAgent('bye')
+      expect(orch.getAgent('bye')?.status).toBe('terminated')
     })
   })
 

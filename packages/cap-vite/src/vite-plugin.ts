@@ -12,39 +12,147 @@ import * as readline from 'node:readline'
 import { x } from 'tinyexec'
 
 import { parseCapacitorPlatform, pickServerUrl, resolveCapRunArgs, shouldRestartForNativeChange } from './native'
+import { errorMessageFromValue } from './utils/error-message'
 
 export interface CapVitePluginOptions {
   capArgs: string[]
 }
 
-async function stopCapProcess(current: Result | undefined) {
-  if (!current) {
-    return
+export function capVitePlugin(options: CapVitePluginOptions): Plugin {
+  const platform = parseCapacitorPlatform(options.capArgs[0])
+  if (!platform) {
+    throw new Error('The first `cap run` argument must be `ios` or `android`.')
   }
+  const resolvedPlatform: CapacitorPlatform = platform
 
-  current.kill('SIGINT')
+  return {
+    apply: 'serve',
+    async configureServer(server) {
+      const resolvedCapArgs = await resolveCapRunArgs(options.capArgs)
+      const cwd = resolve(server.config.root)
+      const platformRoot = resolve(cwd, resolvedPlatform)
+      const debounceMs = 300
+      const logger = server.config.logger
 
-  try {
-    await current
-  }
-  catch {
-    // tinyexec rejects when a process is stopped during a restart.
-  }
-}
+      let currentCapProcess: Result | undefined
+      let restartTask: Promise<void> | undefined
+      let queuedRestartReason: string | undefined
+      let disposeShortcut: (() => void) | undefined
+      let shuttingDown = false
+      let restartTimer: NodeJS.Timeout | undefined
 
-function startCapProcess(cwd: string, capArgs: string[], url: URL) {
-  return x('cap', ['run', ...capArgs], {
-    throwOnError: false,
-    nodeOptions: {
-      cwd,
-      env: {
-        CAPACITOR_DEV_SERVER_URL: url.toString(),
-      },
-      // NOTICE: cap-vite owns the terminal shortcuts, so cap run should not
-      // consume stdin while still mirroring its stdout/stderr to the console.
-      stdio: ['ignore', 'inherit', 'inherit'],
+      function launchCapProcess() {
+        const url = pickServerUrl(server)
+        currentCapProcess = startCapProcess(cwd, resolvedCapArgs, url)
+        currentCapProcess.then(() => {
+          logger.info(`[cap-vite] Ran "cap run ${resolvedCapArgs.join(' ')}". Press R to re-run. Press Ctrl+C to exit.`)
+        })
+      }
+
+      function requestRestart(reason: string) {
+        if (shuttingDown) {
+          return
+        }
+
+        queuedRestartReason = reason
+        if (!restartTask) {
+          restartTask = flushPendingRestarts()
+        }
+      }
+
+      async function flushPendingRestarts() {
+        try {
+          while (queuedRestartReason) {
+            const activeReason = queuedRestartReason
+            queuedRestartReason = undefined
+
+            if (shuttingDown) {
+              return
+            }
+
+            logger.info(`[cap-vite] ${activeReason}. Re-running "cap run ${resolvedCapArgs.join(' ')}".`)
+            const previous = currentCapProcess
+            currentCapProcess = undefined
+            await stopCapProcess(previous)
+
+            if (shuttingDown) {
+              return
+            }
+
+            launchCapProcess()
+          }
+        }
+        catch (error) {
+          logger.error(`[cap-vite] ${errorMessageFromValue(error)}`)
+          await shutdown()
+        }
+        finally {
+          restartTask = undefined
+        }
+      }
+
+      /**
+       * Requests a Capacitor restart after a native project file changes.
+       *
+       * Triggering workflow:
+       *
+       * `server.watcher`
+       *   -> `all`
+       *     -> `onWatcherEvent`
+       *       -> `requestRestart`
+       *
+       * Upstream:
+       * - `server.watcher`
+       *
+       * Downstream:
+       * - `requestRestart`
+       */
+      function onWatcherEvent(_event: string, file: string) {
+        if (!shouldRestartForNativeChange(file, resolvedPlatform, cwd)) {
+          return
+        }
+
+        clearTimeout(restartTimer)
+        restartTimer = setTimeout(() => {
+          requestRestart(`native file changed: ${resolve(cwd, file)}`)
+        }, debounceMs)
+      }
+
+      function handleShutdownRequest() {
+        void shutdown()
+      }
+
+      async function shutdown() {
+        if (shuttingDown) {
+          return
+        }
+
+        shuttingDown = true
+        clearTimeout(restartTimer)
+        queuedRestartReason = undefined
+        const disposeBoundShortcut = disposeShortcut
+        disposeShortcut = undefined
+        disposeBoundShortcut?.()
+        server.watcher.off('all', onWatcherEvent)
+        process.off('SIGINT', handleShutdownRequest)
+        process.off('SIGTERM', handleShutdownRequest)
+        await server.watcher.unwatch(platformRoot)
+        await stopCapProcess(currentCapProcess)
+      }
+
+      server.watcher.add(platformRoot)
+      server.watcher.on('all', onWatcherEvent)
+
+      server.httpServer?.once('listening', () => {
+        launchCapProcess()
+        disposeShortcut = bindCapViteShortcuts(() => requestRestart('manual restart requested'), shutdown)
+      })
+      server.httpServer?.once('close', handleShutdownRequest)
+      process.once('SIGINT', handleShutdownRequest)
+      process.once('SIGTERM', handleShutdownRequest)
     },
-  })
+    name: 'cap-vite:run-capacitor',
+  }
 }
 
 function bindCapViteShortcuts(
@@ -100,123 +208,32 @@ function bindCapViteShortcuts(
   }
 }
 
-export function capVitePlugin(options: CapVitePluginOptions): Plugin {
-  const resolvedCapArgs = resolveCapRunArgs(options.capArgs)
-  const platform = parseCapacitorPlatform(resolvedCapArgs[0])
-  if (!platform) {
-    throw new Error('The first `cap run` argument must be `ios` or `android`.')
-  }
-  const resolvedPlatform: CapacitorPlatform = platform
-
-  return {
-    apply: 'serve',
-    name: 'cap-vite:run-capacitor',
-    configureServer(server) {
-      const cwd = resolve(server.config.root)
-      const platformRoot = resolve(cwd, resolvedPlatform)
-      const debounceMs = 300
-      const logger = server.config.logger
-
-      let currentCapProcess: Result | undefined
-      let restartTask: Promise<void> | undefined
-      let queuedRestartReason: string | undefined
-      let disposeShortcut: (() => void) | undefined
-      let shuttingDown = false
-      let restartTimer: NodeJS.Timeout | undefined
-
-      function launchCapProcess() {
-        const url = pickServerUrl(server)
-        currentCapProcess = startCapProcess(cwd, resolvedCapArgs, url)
-        currentCapProcess.then(() => {
-          logger.info(`[cap-vite] Ran "cap run ${resolvedCapArgs.join(' ')}". Press R to re-run. Press Ctrl+C to exit.`)
-        })
-      }
-
-      function requestRestart(reason: string) {
-        if (shuttingDown) {
-          return
-        }
-
-        queuedRestartReason = reason
-        if (!restartTask) {
-          restartTask = flushPendingRestarts()
-        }
-      }
-
-      async function flushPendingRestarts() {
-        try {
-          while (queuedRestartReason) {
-            const activeReason = queuedRestartReason
-            queuedRestartReason = undefined
-
-            if (shuttingDown) {
-              return
-            }
-
-            logger.info(`[cap-vite] ${activeReason}. Re-running "cap run ${resolvedCapArgs.join(' ')}".`)
-            const previous = currentCapProcess
-            currentCapProcess = undefined
-            await stopCapProcess(previous)
-
-            if (shuttingDown) {
-              return
-            }
-
-            launchCapProcess()
-          }
-        }
-        catch (error) {
-          logger.error(`[cap-vite] ${error instanceof Error ? error.message : String(error)}`)
-          await shutdown()
-        }
-        finally {
-          restartTask = undefined
-        }
-      }
-
-      function onWatcherEvent(_event, file) {
-        if (!shouldRestartForNativeChange(file, resolvedPlatform, cwd)) {
-          return
-        }
-
-        clearTimeout(restartTimer)
-        restartTimer = setTimeout(() => {
-          requestRestart(`native file changed: ${resolve(cwd, file)}`)
-        }, debounceMs)
-      }
-
-      function handleShutdownRequest() {
-        void shutdown()
-      }
-
-      async function shutdown() {
-        if (shuttingDown) {
-          return
-        }
-
-        shuttingDown = true
-        clearTimeout(restartTimer)
-        queuedRestartReason = undefined
-        const disposeBoundShortcut = disposeShortcut
-        disposeShortcut = undefined
-        disposeBoundShortcut?.()
-        server.watcher.off('all', onWatcherEvent)
-        process.off('SIGINT', handleShutdownRequest)
-        process.off('SIGTERM', handleShutdownRequest)
-        await server.watcher.unwatch(platformRoot)
-        await stopCapProcess(currentCapProcess)
-      }
-
-      server.watcher.add(platformRoot)
-      server.watcher.on('all', onWatcherEvent)
-
-      server.httpServer?.once('listening', () => {
-        launchCapProcess()
-        disposeShortcut = bindCapViteShortcuts(() => requestRestart('manual restart requested'), shutdown)
-      })
-      server.httpServer?.once('close', handleShutdownRequest)
-      process.once('SIGINT', handleShutdownRequest)
-      process.once('SIGTERM', handleShutdownRequest)
+function startCapProcess(cwd: string, capArgs: string[], url: URL) {
+  return x('cap', ['run', ...capArgs], {
+    nodeOptions: {
+      cwd,
+      env: {
+        CAPACITOR_DEV_SERVER_URL: url.toString(),
+      },
+      // NOTICE: cap-vite owns the terminal shortcuts, so cap run should not
+      // consume stdin while still mirroring its stdout/stderr to the console.
+      stdio: ['ignore', 'inherit', 'inherit'],
     },
+    throwOnError: false,
+  })
+}
+
+async function stopCapProcess(current: Result | undefined) {
+  if (!current) {
+    return
+  }
+
+  current.kill('SIGINT')
+
+  try {
+    await current
+  }
+  catch {
+    // tinyexec rejects when a process is stopped during a restart.
   }
 }

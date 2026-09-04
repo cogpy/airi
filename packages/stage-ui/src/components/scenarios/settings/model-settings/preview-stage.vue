@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { ModelSettingsRuntimeSnapshot } from './runtime'
 
-import { Live2DScene, useLive2d } from '@proj-airi/stage-ui-live2d'
+import { Live2DScene } from '@proj-airi/stage-ui-live2d'
+import { MMDScene } from '@proj-airi/stage-ui-mmd'
+import { SpineScene } from '@proj-airi/stage-ui-spine'
+import { TachieScene } from '@proj-airi/stage-ui-tachie'
 import { ThreeScene, useModelStore } from '@proj-airi/stage-ui-three'
 import { useMouse } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
@@ -16,40 +19,50 @@ import {
 const props = defineProps<{
   live2dSceneClass?: string | string[]
   vrmSceneClass?: string | string[]
+  spineSceneClass?: string | string[]
+  tachieSceneClass?: string | string[]
+  mmdSceneClass?: string | string[]
 }>()
 
 const emit = defineEmits<{
   (e: 'runtimeSnapshotChanged', value: ModelSettingsRuntimeSnapshot): void
 }>()
 
-const positionCursor = useMouse()
 const settingsStore = useSettings()
-const live2dStore = useLive2d()
 const modelStore = useModelStore()
 const live2dSceneRef = ref<{ canvasElement: () => HTMLCanvasElement | undefined }>()
 const vrmSceneRef = ref<{ canvasElement: () => HTMLCanvasElement | undefined }>()
+const spineSceneRef = ref<{ canvasElement: () => HTMLCanvasElement | undefined }>()
+const tachieSceneRef = ref<{ canvasElement: () => HTMLCanvasElement | undefined }>()
+const mmdSceneRef = ref<{ canvasElement: () => HTMLCanvasElement | undefined }>()
 const live2dComponentState = ref<'pending' | 'loading' | 'mounted'>('pending')
+const spineComponentState = ref<'pending' | 'loading' | 'mounted'>('pending')
+const tachieComponentState = ref<'pending' | 'loading' | 'mounted'>('pending')
+const mmdComponentState = ref<'pending' | 'loading' | 'mounted'>('pending')
 const vrmPreviewStageInstanceId = `model-settings-preview-stage:${Math.random().toString(36).slice(2, 10)}`
 
 const {
-  live2dDisableFocus,
   stageModelSelected,
   stageModelSelectedUrl,
   stageModelRenderer,
   themeColorsHue,
   themeColorsHueDynamic,
-  live2dIdleAnimationEnabled,
-  live2dAutoBlinkEnabled,
-  live2dForceAutoBlinkEnabled,
-  live2dShadowEnabled,
-  live2dMaxFps,
-  live2dRenderScale,
+
 } = storeToRefs(settingsStore)
-const { scale: live2dScale } = storeToRefs(live2dStore)
+const {
+  spinePremultipliedAlpha,
+  spineDefaultMixDuration,
+  spineIdleAnimationEnabled,
+  spineMaxFps,
+  spineRenderScale,
+} = storeToRefs(settingsStore)
 const { sceneMutationLocked, scenePhase } = storeToRefs(modelStore)
 
 const live2dSceneClassList = computed(() => normalizeClassList(props.live2dSceneClass))
 const vrmSceneClassList = computed(() => normalizeClassList(props.vrmSceneClass))
+const spineSceneClassList = computed(() => normalizeClassList(props.spineSceneClass))
+const tachieSceneClassList = computed(() => normalizeClassList(props.tachieSceneClass))
+const mmdSceneClassList = computed(() => normalizeClassList(props.mmdSceneClass))
 
 function normalizeClassList(value?: string | string[]) {
   if (!value)
@@ -73,6 +86,15 @@ async function capturePreviewFrame() {
 
   if (stageModelRenderer.value === 'vrm')
     return captureCanvasFrame(vrmSceneRef.value?.canvasElement())
+
+  if (stageModelRenderer.value === 'spine')
+    return captureCanvasFrame(spineSceneRef.value?.canvasElement())
+
+  if (stageModelRenderer.value === 'tachie')
+    return captureCanvasFrame(tachieSceneRef.value?.canvasElement())
+
+  if (stageModelRenderer.value === 'mmd')
+    return captureCanvasFrame(mmdSceneRef.value?.canvasElement())
 
   return undefined
 }
@@ -106,6 +128,48 @@ const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
     })
   }
 
+  if (stageModelRenderer.value === 'spine') {
+    const phase = resolveComponentStateToRuntimePhase(spineComponentState.value, { hasModel })
+
+    return createEmptyModelSettingsRuntimeSnapshot({
+      ownerInstanceId: vrmPreviewStageInstanceId,
+      renderer: 'spine',
+      phase,
+      controlsLocked: hasModel ? phase !== 'mounted' : false,
+      previewAvailable: hasModel,
+      canCapturePreview: !!spineSceneRef.value?.canvasElement(),
+      updatedAt: Date.now(),
+    })
+  }
+
+  if (stageModelRenderer.value === 'tachie') {
+    const phase = resolveComponentStateToRuntimePhase(tachieComponentState.value, { hasModel })
+
+    return createEmptyModelSettingsRuntimeSnapshot({
+      ownerInstanceId: vrmPreviewStageInstanceId,
+      renderer: 'tachie',
+      phase,
+      controlsLocked: hasModel ? phase !== 'mounted' : false,
+      previewAvailable: hasModel,
+      canCapturePreview: !!tachieSceneRef.value?.canvasElement(),
+      updatedAt: Date.now(),
+    })
+  }
+
+  if (stageModelRenderer.value === 'mmd') {
+    const phase = resolveComponentStateToRuntimePhase(mmdComponentState.value, { hasModel })
+
+    return createEmptyModelSettingsRuntimeSnapshot({
+      ownerInstanceId: vrmPreviewStageInstanceId,
+      renderer: 'mmd',
+      phase,
+      controlsLocked: hasModel ? phase !== 'mounted' : false,
+      previewAvailable: hasModel,
+      canCapturePreview: !!mmdSceneRef.value?.canvasElement(),
+      updatedAt: Date.now(),
+    })
+  }
+
   if (stageModelRenderer.value === 'godot') {
     return createEmptyModelSettingsRuntimeSnapshot({
       ownerInstanceId: vrmPreviewStageInstanceId,
@@ -129,6 +193,12 @@ watch(runtimeSnapshot, snapshot => emit('runtimeSnapshotChanged', snapshot), { i
 defineExpose({
   capturePreviewFrame,
 })
+
+const { x: mouseX, y: mouseY } = useMouse()
+const cursorPosition = computed(() => ({
+  x: mouseX.value,
+  y: mouseY.value,
+}))
 </script>
 
 <template>
@@ -137,25 +207,56 @@ defineExpose({
       <Live2DScene
         ref="live2dSceneRef"
         v-model:state="live2dComponentState"
-        :focus-at="{ x: positionCursor.x.value, y: positionCursor.y.value }"
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
-        :disable-focus-at="live2dDisableFocus"
-        :scale="live2dScale"
+        :cursor-position="cursorPosition"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
-        :live2d-idle-animation-enabled="live2dIdleAnimationEnabled"
-        :live2d-auto-blink-enabled="live2dAutoBlinkEnabled"
-        :live2d-force-auto-blink-enabled="live2dForceAutoBlinkEnabled"
-        :live2d-shadow-enabled="live2dShadowEnabled"
-        :live2d-max-fps="live2dMaxFps"
-        :live2d-render-scale="live2dRenderScale"
       />
     </div>
   </template>
   <template v-if="stageModelRenderer === 'vrm'">
     <div :class="vrmSceneClassList">
-      <ThreeScene ref="vrmSceneRef" :model-src="stageModelSelectedUrl" />
+      <ThreeScene ref="vrmSceneRef" :cursor-position="cursorPosition" :model-id="stageModelSelected" :model-src="stageModelSelectedUrl" />
+    </div>
+  </template>
+  <template v-if="stageModelRenderer === 'spine'">
+    <div :class="spineSceneClassList">
+      <SpineScene
+        ref="spineSceneRef"
+        v-model:state="spineComponentState"
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :premultiplied-alpha="spinePremultipliedAlpha"
+        :default-mix-duration="spineDefaultMixDuration"
+        :idle-animation-enabled="spineIdleAnimationEnabled"
+        :max-fps="spineMaxFps"
+        :render-scale="spineRenderScale"
+      />
+    </div>
+  </template>
+  <template v-if="stageModelRenderer === 'mmd'">
+    <div :class="mmdSceneClassList">
+      <MMDScene
+        ref="mmdSceneRef"
+        v-model:state="mmdComponentState"
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :cursor-position="cursorPosition"
+        :enable-orbit-controls="true"
+      />
+    </div>
+  </template>
+  <template v-if="stageModelRenderer === 'tachie'">
+    <div :class="tachieSceneClassList">
+      <TachieScene
+        ref="tachieSceneRef"
+        v-model:state="tachieComponentState"
+        :model-src="stageModelSelectedUrl"
+        :model-id="stageModelSelected"
+        :theme-colors-hue="themeColorsHue"
+        :theme-colors-hue-dynamic="themeColorsHueDynamic"
+      />
     </div>
   </template>
 </template>

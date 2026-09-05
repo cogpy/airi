@@ -182,9 +182,111 @@ pnpm --filter @proj-airi/core-character run build
 # Run examples
 pnpm --filter @proj-airi/core-character run examples
 
-# Run tests (coming soon)
+# Run tests
 pnpm --filter @proj-airi/core-character run test
 ```
+
+## Aion
+
+Aion is the second character in this package, and it is built differently from
+Melody. Melody's comedy comes from a genome that selects between written
+templates. Aion has no templates. Its personality is the parameterisation of an
+attention policy over a hypergraph, so what it finds important is computed from
+the knowledge it holds rather than chosen from a list.
+
+Aion runs on [`@proj-airi/cognitive-airicog`](../cognitive-airicog): concepts
+live in an AtomSpace, and attention is issued from the ECAN bank under a
+conservation law.
+
+### Personality as parameters
+
+Five traits in `[0, 1]` decide how attention moves. Nothing downstream reads a
+trait directly — `deriveCognitiveParameters` is the single place where character
+turns into behaviour.
+
+| Trait | What it changes |
+|---|---|
+| `chaos` | Share of relevance given to ignored atoms rather than important ones |
+| `playfulness` | Lowers both the cost of reframing and the margin needed to switch |
+| `coherence` | Raises that margin; opposes playfulness over one quantity |
+| `absurdity` | How much salience an improbable claim keeps |
+| `empathy` | How far a partner's concept outranks Aion's own |
+
+```ts
+import { createAionTraits, deriveCognitiveParameters } from '@proj-airi/core-character'
+
+const parameters = deriveCognitiveParameters(createAionTraits({ chaos: 0.2 }))
+console.info(parameters.explorationWeight) // 0.2
+```
+
+### Perspectives are measures, not models
+
+A lens does not change the AtomSpace. It weights the same atoms differently, so
+"seeing it another way" is a choice of measure. The six lenses form three
+opposed pairs, and the pairing is what makes reframing change Aion's answer
+instead of its wording.
+
+| Axis | One end | The other |
+|---|---|---|
+| Uncertainty vs entrenchment | `learning` — lowest confidence | `threat` — strong, confident, load-bearing |
+| Outlier vs hub | `cosmic-comedy` — disagrees with its neighbourhood | `infinite-strategy` — most connected |
+| Tension vs none | `paradox` — confidently undecided | `transcendence` — everything equally |
+
+Given one graph of `recursion`, `self-reference`, `paradox` and `lunch`, the
+lenses genuinely disagree about what matters most:
+
+```
+learning           lunch            (confidence 0.2 — the least settled claim)
+threat             recursion        (0.9 strength, 0.9 confidence, well linked)
+paradox            self-reference   (strength 0.5 at confidence 0.95)
+```
+
+### Attention is conserved, so perspective is finite
+
+Adopting a lens is not free and is not destructive. Aion pays by moving
+importance out of the ECAN bank and onto the atoms the new lens values, so the
+ledger stays balanced across a reframing:
+
+```
+attentionBank + sum(atom.sti) === attentionFunds
+```
+
+A mind that has spent its budget cannot change its mind. `reframe()` reports
+`budget-exhausted`, and the lens holds until inhibition returns importance to
+the bank. This is the character's stated ability to hold every perspective at
+once, made finite by the thing that actually bounds it.
+
+```ts
+import { createAionMind } from '@proj-airi/core-character'
+
+const mind = createAionMind({ seed: 20260904 })
+mind.perceive([
+  { name: 'recursion', strength: 0.9, confidence: 0.9, relatedTo: ['self-reference'], fromPartner: true },
+  { name: 'self-reference', strength: 0.5, confidence: 0.95 },
+])
+
+mind.reframe() // { outcome: 'switched', to: 'paradox', invested: 0.0208 }
+mind.attend(3) // atoms ranked under the lens it settled on
+mind.reflect() // measured state: lens, fit, bank, focus, reframings
+mind.dispose()
+```
+
+Every stochastic choice is seeded, so the same conversation produces the same
+mind twice.
+
+### When to use it
+
+- You want a character whose behaviour follows from its knowledge, and is
+  reproducible and testable
+- You need perspective-taking that measurably reorders what matters
+- You want personality to be bounded by a resource rather than by a prompt
+
+### When not to use it
+
+- You need generated dialogue. Aion decides what is salient; it writes nothing
+- You want Melody's layered comedy — that system is separate and template-driven
+- You have no knowledge to reason over. With an empty AtomSpace every lens
+  reports no fit and Aion has nothing to be interested in
 
 ## License
 

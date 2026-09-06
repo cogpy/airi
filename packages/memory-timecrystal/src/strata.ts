@@ -38,7 +38,7 @@
  *   -> {@link StratifiedCache.conservation}      the ledger
  */
 
-import { isLevelActive, TIME_CRYSTAL_PERIODS } from './ladder'
+import { isPeriodActive, TIME_CRYSTAL_PERIODS } from './ladder'
 
 /** One slot's contents, copied out for inspection. */
 export interface StratumSlot {
@@ -119,6 +119,11 @@ export class StratifiedCache {
   private readonly pendingFirst: Float64Array
   private readonly pendingLast: Float64Array
 
+  // Scratch for the divide step in foldPending. Safe to share across levels
+  // because push copies out of it before anything else can write to it.
+  private readonly foldKey: Float64Array
+  private readonly foldValue: Float64Array
+
   private tokensSeen = 0
   private forgotten = 0
 
@@ -135,6 +140,11 @@ export class StratifiedCache {
       throw new Error(`every capacity must be a positive integer, received [${capacities.join(', ')}]`)
     if (periods.some(period => period <= 0 || !Number.isInteger(period)))
       throw new Error(`every period must be a positive integer, received [${periods.join(', ')}]`)
+    // Level 0 ingests unconditionally — it is the exact window, not a folding
+    // rung — so a period other than 1 there would be silently ignored rather
+    // than honoured, and would also break the reach formula.
+    if (periods[0] !== 1)
+      throw new Error(`the fastest period must be 1, received ${periods[0]}`)
 
     this.dim = options.dim
     this.periods = [...periods]
@@ -159,6 +169,8 @@ export class StratifiedCache {
     this.pendingMasses = new Float64Array(levels)
     this.pendingFirst = new Float64Array(levels)
     this.pendingLast = new Float64Array(levels)
+    this.foldKey = new Float64Array(this.dim)
+    this.foldValue = new Float64Array(this.dim)
   }
 
   get levels(): number {
@@ -183,7 +195,7 @@ export class StratifiedCache {
     // level l can spill into level l+1's accumulator, and when both levels act
     // on the same token, level l+1 must fold with that spill already included.
     for (let level = 1; level < this.levels; level++) {
-      if (isLevelActive(token, this.periods[level]) && this.pendingMasses[level] > 0)
+      if (isPeriodActive(token, this.periods[level]) && this.pendingMasses[level] > 0)
         this.foldPending(level)
     }
 
@@ -375,12 +387,10 @@ export class StratifiedCache {
   private foldPending(level: number): void {
     const mass = this.pendingMasses[level]
     const pendingBase = level * this.dim
-    const key = new Float64Array(this.dim)
-    const value = new Float64Array(this.dim)
 
     for (let component = 0; component < this.dim; component++) {
-      key[component] = this.pendingKeys[pendingBase + component] / mass
-      value[component] = this.pendingValues[pendingBase + component] / mass
+      this.foldKey[component] = this.pendingKeys[pendingBase + component] / mass
+      this.foldValue[component] = this.pendingValues[pendingBase + component] / mass
       this.pendingKeys[pendingBase + component] = 0
       this.pendingValues[pendingBase + component] = 0
     }
@@ -391,7 +401,7 @@ export class StratifiedCache {
     this.pendingFirst[level] = 0
     this.pendingLast[level] = 0
 
-    this.push(level, key, value, mass, firstToken, lastToken)
+    this.push(level, this.foldKey, this.foldValue, mass, firstToken, lastToken)
   }
 }
 

@@ -63,13 +63,13 @@ export const TIME_CRYSTAL_PERIODS = Object.freeze([1, 3, 7, 13, 19, 31, 41, 61, 
 export const TIME_CRYSTAL_LEVELS = TIME_CRYSTAL_PERIODS.length
 
 /**
- * Whether level `level` acts on token `token`.
+ * Whether a rung of period `period` acts on token `token`.
  *
  * Tokens are counted from 1, so that no rung is spuriously active at the
  * origin: every period divides 0, which would make the first token look like a
  * global synchronization event it is not.
  */
-export function isLevelActive(token: number, period: number): boolean {
+export function isPeriodActive(token: number, period: number): boolean {
   return token > 0 && token % period === 0
 }
 
@@ -83,7 +83,7 @@ export function activeLevels(
 ): number[] {
   const active: number[] = []
   for (let level = 0; level < periods.length; level++) {
-    if (isLevelActive(token, periods[level]))
+    if (isPeriodActive(token, periods[level]))
       active.push(level)
   }
   return active
@@ -107,7 +107,7 @@ export function phaseSignature(
 ): number {
   let signature = 0
   for (let level = 0; level < periods.length; level++) {
-    if (isLevelActive(token, periods[level]))
+    if (isPeriodActive(token, periods[level]))
       signature |= 1 << level
   }
   return signature

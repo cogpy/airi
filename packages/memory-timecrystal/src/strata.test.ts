@@ -173,6 +173,10 @@ describe('construction and reuse', () => {
     expect(() => createStratifiedCache({ dim: 4, capacities: [1, 2] })).toThrow(/match the periods/)
     expect(() => createStratifiedCache({ dim: 4, periods: [1, 2], capacities: [4, 0] })).toThrow(/capacity/)
     expect(() => createStratifiedCache({ dim: 4, periods: [1, 0], capacities: [4, 4] })).toThrow(/period/)
+    // Level 0 is the exact window rather than a folding rung, so a period other
+    // than 1 there would be quietly ignored instead of honoured.
+    expect(() => createStratifiedCache({ dim: 4, periods: [2, 5], capacities: [4, 4] }))
+      .toThrow(/fastest period must be 1/)
   })
 
   it('rejects a token whose width is not the cache\'s', () => {

@@ -92,6 +92,32 @@ mass-weighted centroid of the values, the output vector matches too.
 So the compression is lossless wherever the folded tokens agreed, and the error
 is confined entirely to how far they disagreed. Nothing is lost on the read.
 
+## The budget
+
+Arithmetic, not a benchmark. Qwen2-0.5B — 24 layers, 2 KV heads, head dim 64 —
+with the usual `2 · n_layer · n_head_kv · head_dim · positions · bytes` for keys
+and values together:
+
+| | positions | bytes each | KV cache | per token |
+|---|---|---|---|---|
+| full, f16, 2K context | 2,048 | 2 | 24.0 MiB | 12.3 KB |
+| stratified, f32, default ladder | 288 | 4 | 6.75 MiB | 0.71 KB |
+
+Slot metadata — mass and token bounds — is shared across every layer and head,
+since they all see the same stream and therefore fold on the same tokens. At 24
+bytes per slot that is 6.9 KB in total, which does not move the figures.
+
+The two rows are not the same thing and the table should not be read as though
+they were. The first holds 2,048 tokens verbatim; the second reaches roughly
+9,700 with only its newest 32 verbatim and the rest coarsening with age. What
+the comparison does show is where the trade sits: about a quarter of the memory
+for about five times the reach, paid for in fidelity that decays with distance
+rather than in a wall at 2,048.
+
+Storing slots at f16 would halve the second row again. This implementation does
+not — keys and values are f32, and quantizing them is the obvious next step for
+anything actually shipping to a browser.
+
 ## Usage
 
 ```ts

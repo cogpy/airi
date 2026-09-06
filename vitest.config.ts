@@ -18,6 +18,7 @@ export default defineConfig({
       'packages/input-gamepad',
       'packages/input-gamepad-vueuse',
       'packages/input-playstation-dualsense-5',
+      'packages/memory-timecrystal',
       'packages/model-driver-lipsync',
       'packages/better-ws',
       'packages/plugin-sdk',

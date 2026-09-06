@@ -146,8 +146,18 @@ jobs:
       - name: Build macOS app
         if: matrix.depot == 'macos'
         run: |
-          echo "$CSC_CONTENT" | base64 --decode > apps/stage-tamagotchi/apple-developer-code-signing.p12
-          export CSC_LINK="./apple-developer-code-signing.p12"
+          # NOTICE:
+          # Forks and runners without Apple signing secrets receive an empty CSC_CONTENT.
+          # Decoding it produces an invalid p12 and electron-builder fails on
+          # `security import` with "SecKeychainItemImport: One or more parameters passed
+          # to a function were not valid". Skip CSC_LINK in that case so electron-builder
+          # falls back to unsigned packaging (identity: null).
+          if [[ -n "$CSC_CONTENT" ]]; then
+            echo "$CSC_CONTENT" | base64 --decode > apps/stage-tamagotchi/apple-developer-code-signing.p12
+            export CSC_LINK="./apple-developer-code-signing.p12"
+          else
+            echo "CSC_CONTENT is not configured; building without code signing."
+          fi
           pnpm run -F @proj-airi/stage-tamagotchi build
           pnpm -F @proj-airi/stage-tamagotchi exec electron-builder build ${{ matrix.builder-args }} --publish=never
         env:

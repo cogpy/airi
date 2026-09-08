@@ -1,6 +1,6 @@
 /**
  * @proj-airi/core-character
- * 
+ *
  * Core character implementations for AIRI project
  */
 

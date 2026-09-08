@@ -31,6 +31,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "examples": "tsx src/run-examples.ts"
   },
   "dependencies": {
@@ -38,5 +39,7 @@
     "@proj-airi/stream-kit": "workspace:^",
     "clustr": "catalog:"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vitest": "catalog:vitest"
+  }
 }

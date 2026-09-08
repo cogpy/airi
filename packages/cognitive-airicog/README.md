@@ -46,91 +46,111 @@ This is a private workspace package. Reference it in your `package.json` as:
 ### Quick start — full system
 
 ```ts
-import { createAiriCog } from '@proj-airi/cognitive-airicog';
+import { createAiriCog } from '@proj-airi/cognitive-airicog'
 
-const cog = createAiriCog({ name: 'my-cog' });
+const cog = createAiriCog({ name: 'my-cog' })
 
 // Add knowledge
-const dog = cog.atomSpace.addNode('ConceptNode', 'Dog');
-const mammal = cog.atomSpace.addNode('ConceptNode', 'Mammal');
+const dog = cog.atomSpace.addNode('ConceptNode', 'Dog')
+const mammal = cog.atomSpace.addNode('ConceptNode', 'Mammal')
 cog.atomSpace.addLink('InheritanceLink', [dog.id, mammal.id], {
   strength: 0.95,
   confidence: 0.9,
-});
+})
 
 // Clean up
-cog.dispose();
+cog.dispose()
 ```
 
 ### AtomSpace
 
 ```ts
-import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace';
+import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace'
 
-const as = createAtomSpace({ name: 'example' });
+const as = createAtomSpace({ name: 'example' })
 
-const cat = as.addNode('ConceptNode', 'Cat');
-const animal = as.addNode('ConceptNode', 'Animal');
-as.addLink('InheritanceLink', [cat.id, animal.id]);
+const cat = as.addNode('ConceptNode', 'Cat')
+const animal = as.addNode('ConceptNode', 'Animal')
+as.addLink('InheritanceLink', [cat.id, animal.id])
 
-const nodes = as.query({ kind: 'node', nodeType: 'ConceptNode' });
-console.log(nodes.length); // 2
+const nodes = as.query({ kind: 'node', nodeType: 'ConceptNode' })
+console.info(nodes.length) // 2
 
-as.dispose();
+as.dispose()
 ```
+
+#### Pattern matching with variables
+
+`patternMatch` works like `query`, except entries in `outgoing` written as `$name` are
+variables: each one binds to whatever atom sits at that position, and the result carries
+those bindings.
+
+```ts
+const results = as.patternMatch({
+  kind: 'link',
+  linkType: 'InheritanceLink',
+  outgoing: [cat.id, '$parent'],
+})
+
+for (const { bindings } of results)
+  console.info(bindings.get('parent')) // animal.id
+```
+
+Repeating a variable constrains the match: `outgoing: ['$x', '$x']` only matches links
+whose two positions hold the same atom.
 
 ### ECAN (attention allocation)
 
 ```ts
-import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace';
-import { createECAN } from '@proj-airi/cognitive-airicog/attention';
+import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace'
+import { createECAN } from '@proj-airi/cognitive-airicog/attention'
 
-const as = createAtomSpace();
-const ecan = createECAN(as);
+const as = createAtomSpace()
+const ecan = createECAN(as)
 
-const node = as.addNode('ConceptNode', 'Important');
-ecan.stimulate(node.id, 0.5);
+const node = as.addNode('ConceptNode', 'Important')
+ecan.stimulate(node.id, 0.5)
 
-console.log(node.attentionValue.sti); // increased
-ecan.dispose();
-as.dispose();
+console.info(node.attentionValue.sti) // increased
+ecan.dispose()
+as.dispose()
 ```
 
 ### PLN (uncertain reasoning)
 
 ```ts
-import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace';
-import { createPLN } from '@proj-airi/cognitive-airicog/reasoning';
+import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace'
+import { createPLN } from '@proj-airi/cognitive-airicog/reasoning'
 
-const as = createAtomSpace();
-const pln = createPLN(as);
+const as = createAtomSpace()
+const pln = createPLN(as)
 
-const dog = as.addNode('ConceptNode', 'Dog');
-const mammal = as.addNode('ConceptNode', 'Mammal');
-const animal = as.addNode('ConceptNode', 'Animal');
+const dog = as.addNode('ConceptNode', 'Dog')
+const mammal = as.addNode('ConceptNode', 'Mammal')
+const animal = as.addNode('ConceptNode', 'Animal')
 
-const l1 = as.addLink('InheritanceLink', [dog.id, mammal.id], { strength: 0.95, confidence: 0.9 });
-const l2 = as.addLink('InheritanceLink', [mammal.id, animal.id], { strength: 0.98, confidence: 0.95 });
+const l1 = as.addLink('InheritanceLink', [dog.id, mammal.id], { strength: 0.95, confidence: 0.9 })
+const l2 = as.addLink('InheritanceLink', [mammal.id, animal.id], { strength: 0.98, confidence: 0.95 })
 
-const result = pln.deduction(l1.id, l2.id);
+const result = pln.deduction(l1.id, l2.id)
 // result.conclusion is a new InheritanceLink(Dog, Animal)
 ```
 
 ### Multi-agent orchestration
 
 ```ts
-import { createOrchestrator } from '@proj-airi/cognitive-airicog/orchestration';
+import { createOrchestrator } from '@proj-airi/cognitive-airicog/orchestration'
 
-const orch = createOrchestrator({ maxAgents: 10 });
+const orch = createOrchestrator({ maxAgents: 10 })
 
-const agent1 = orch.createAgent('melody');
-const agent2 = orch.createAgent('assistant');
+const agent1 = orch.createAgent('melody')
+const agent2 = orch.createAgent('assistant')
 
 // Each agent has its own AtomSpace, ECAN and PLN
-agent1.atomSpace.addNode('ConceptNode', 'Song');
-orch.cognitiveStep('melody');
+agent1.atomSpace.addNode('ConceptNode', 'Song')
+orch.cognitiveStep('melody')
 
-orch.dispose();
+orch.dispose()
 ```
 
 ### Ontogenesis (self-evolving kernels)
@@ -138,19 +158,19 @@ orch.dispose();
 ```ts
 import {
   initializeKernel,
+  runOntogenesis,
   selfGenerate,
   selfOptimize,
-  runOntogenesis,
-} from '@proj-airi/cognitive-airicog';
+} from '@proj-airi/cognitive-airicog/ontogenesis'
 
-const kernel = initializeKernel();
-const offspring = selfGenerate(kernel);
-const optimized = selfOptimize(offspring, 10);
+const kernel = initializeKernel()
+const offspring = selfGenerate(kernel)
+const optimized = selfOptimize(offspring, 10)
 
 // Evolve a population
 const generations = runOntogenesis({
   evolution: { populationSize: 20, maxGenerations: 50 },
-});
+})
 ```
 
 ## Development

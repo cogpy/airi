@@ -59,6 +59,30 @@ export interface AiriExtension {
       autonomousThreshold?: number
       autonomousTarget?: 'user' | 'assistant'
     }
+
+    /**
+     * Whether the character speaks during a lull instead of only answering.
+     *
+     * Off unless a card turns it on, like `artistry.autonomousEnabled`: this
+     * changes what the character does on its own, and naming the subjects it
+     * would raise costs a model call per turn.
+     */
+    initiative?: {
+      enabled?: boolean
+      /**
+       * Urge at or above which the character speaks, `0` to `1`. Higher is more
+       * reticent. Defaults to the initiative module's own threshold.
+       */
+      threshold?: number
+      /** Shortest gap between two unprompted turns, in seconds. */
+      refractorySeconds?: number
+      /**
+       * Whether to spend a model call naming the subject of each message.
+       * Without it the character can tell a lull from a conversation but has
+       * nothing of its own to raise.
+       */
+      nameTopics?: boolean
+    }
   }
 
   agents: Record<string, {

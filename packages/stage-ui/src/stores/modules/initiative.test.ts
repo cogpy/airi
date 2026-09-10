@@ -153,6 +153,7 @@ describe('initiative store', () => {
     const initiative = useInitiativeStore()
     const heard = vi.fn()
 
+    initiative.configure({ enabled: true })
     initiative.onInitiative(heard)
     initiative.remember({ topic: 'atom_minecraft', salience: 0.9 })
     initiative.start(1000)
@@ -168,6 +169,7 @@ describe('initiative store', () => {
     const initiative = useInitiativeStore()
     const heard = vi.fn()
 
+    initiative.configure({ enabled: true })
     initiative.onInitiative(heard)
     initiative.remember({ topic: 'atom_minecraft', salience: 0.9 })
     initiative.start(1000)
@@ -177,6 +179,52 @@ describe('initiative store', () => {
 
     expect(heard).not.toHaveBeenCalled()
     expect(initiative.running).toBe(false)
+  })
+
+  describe('the card switch', () => {
+    it('stays off unless a card turns it on', () => {
+      const initiative = useInitiativeStore()
+
+      expect(initiative.isEnabled()).toBe(false)
+    })
+
+    it('does not start on a card that leaves it off', () => {
+      // A host may call start() unconditionally; a silent card must still mean
+      // a character that only answers.
+      const initiative = useInitiativeStore()
+      const heard = vi.fn()
+
+      initiative.onInitiative(heard)
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 })
+      initiative.start(1000)
+
+      vi.advanceTimersByTime(10 * MINUTE)
+
+      expect(initiative.running).toBe(false)
+      expect(heard).not.toHaveBeenCalled()
+    })
+
+    it('honours a threshold the card raised', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, threshold: 0.99 })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.5 }, now)
+
+      expect(initiative.poll(now + 10 * MINUTE).act).toBe(false)
+    })
+
+    it('honours a refractory gap the card lengthened', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, refractorySeconds: 3600 })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+      expect(initiative.poll(now + 10 * MINUTE).act).toBe(true)
+
+      // Novelty has long recovered; only the card's hour-long gap holds it.
+      expect(initiative.poll(now + 50 * MINUTE)).toMatchObject({ reason: 'refractory' })
+    })
   })
 
   it('lets go of what has faded past holding', () => {

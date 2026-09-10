@@ -1,5 +1,7 @@
 import type { Episode, InitiativeDecision, RaisedTopic } from '@proj-airi/cognitive-airicog/initiative'
 
+import type { AiriExtension } from '../../types/airiCard'
+
 import {
   asInitiativeCandidates,
   decideInitiative,
@@ -7,6 +9,9 @@ import {
 } from '@proj-airi/cognitive-airicog'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+
+/** How a character card configures speaking up. */
+export type AiriInitiativeSettings = NonNullable<AiriExtension['modules']['initiative']>
 
 /**
  * The two moments the character needs to know about, named in its own terms
@@ -69,6 +74,31 @@ export const useInitiativeStore = defineStore('initiative', () => {
   let timer: ReturnType<typeof setInterval> | undefined
 
   /**
+   * How the active character card configures speaking up, with the module's own
+   * defaults where the card is silent.
+   *
+   * Read through a getter the host supplies rather than by reaching for the card
+   * store, so this store stays testable and the card remains the single place a
+   * character's behaviour is declared.
+   */
+  const cardSettings = ref<AiriInitiativeSettings>({})
+
+  function configure(settings: AiriInitiativeSettings): void {
+    cardSettings.value = settings
+  }
+
+  /**
+   * Whether the character is allowed to speak during a lull at all.
+   *
+   * Off unless a card turns it on, matching how artistry gates its autonomy:
+   * this changes what the character does unprompted, so it is a decision the
+   * card makes, never a default.
+   */
+  function isEnabled(): boolean {
+    return cardSettings.value.enabled ?? false
+  }
+
+  /**
    * Records that the conversation is live. Resets the silence the character is
    * measuring, so it never speaks over someone.
    */
@@ -113,12 +143,17 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * lands, the reply is remembered as a new episode.
    */
   function poll(now: number = Date.now()): InitiativeDecision {
+    const { threshold, refractorySeconds } = cardSettings.value
+
     const decision = decideInitiative({
       now,
       lastInteractionAt: lastInteractionAt.value,
       lastInitiativeAt: lastInitiativeAt.value,
       candidates: asInitiativeCandidates(episodes.value, now),
       recentlyRaised: recentlyRaised.value,
+    }, {
+      ...(threshold !== undefined ? { threshold } : {}),
+      ...(refractorySeconds !== undefined ? { refractoryMs: refractorySeconds * 1000 } : {}),
     })
 
     if (!decision.act)
@@ -158,9 +193,12 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * Starts checking for a lull. The interval is only how often the question is
    * asked; the refractory gap in the decision is what limits how often the
    * character actually speaks.
+   *
+   * Does nothing while the card leaves initiative off, so a host may call this
+   * unconditionally on startup and let the character decide whether it applies.
    */
   function start(intervalMs: number = 5000): void {
-    if (running.value)
+    if (running.value || !isEnabled())
       return
 
     running.value = true
@@ -227,6 +265,8 @@ export const useInitiativeStore = defineStore('initiative', () => {
     lastInitiativeAt,
     running,
 
+    configure,
+    isEnabled,
     noteInteraction,
     remember,
     poll,

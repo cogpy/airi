@@ -225,6 +225,14 @@ vi.mock('./modules/artistry-autonomous', () => ({
   }),
 }))
 
+const initiativeMocks = vi.hoisted(() => ({
+  noteInteraction: vi.fn(),
+}))
+
+vi.mock('./modules/initiative', () => ({
+  useInitiativeStore: () => initiativeMocks,
+}))
+
 // The chat orchestrator instantiates the web-search store for its side effect
 // (registering the web-search toolset prompt); stub it so the contract test does
 // not pull in the real store's toolset-prompt watcher.
@@ -359,6 +367,23 @@ describe('chat store contract', () => {
     store.dispose()
     expect(stopLeadershipListener).toHaveBeenCalledOnce()
     expect(disposeSessionMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('tells initiative the conversation is live on both turns', async () => {
+    // Without this the character never learns a lull has begun, so it either
+    // stays silent forever or talks over someone who has just spoken.
+    initiativeMocks.noteInteraction.mockClear()
+
+    llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: ChatProvider, _messages: Message[], options: StreamOptions) => {
+      await options.onStreamEvent?.({ type: 'text-delta', text: 'hi back' })
+      await options.onStreamEvent?.({ type: 'finish', finishReason: 'stop' })
+    })
+
+    const store = useChatStore()
+    await store.send({ sessionId: 'session-1', text: 'hello' })
+
+    // Once for the user's turn, once for the character's own reply.
+    expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
   })
 
   it('passes the current consciousness reasoning option to the chat provider', async () => {

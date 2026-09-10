@@ -36,6 +36,7 @@ import { useContextObservabilityStore } from './devtools/context-observability'
 import { useAiriCardStore } from './modules/airi-card'
 import { useAutonomousArtistryStore } from './modules/artistry-autonomous'
 import { useConsciousnessStore } from './modules/consciousness'
+import { useInitiativeStore } from './modules/initiative'
 import { useWebSearchStore } from './modules/web-search'
 import { executeToolCallRerun } from './tool-call-rerun'
 
@@ -148,6 +149,7 @@ export const useChatStore = defineStore('chat', () => {
   useWebSearchStore()
   const consciousnessStore = useConsciousnessStore()
   const artistryAutonomousStore = useAutonomousArtistryStore()
+  const initiativeStore = useInitiativeStore()
   const { activeModel, activeProvider } = storeToRefs(consciousnessStore)
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()
@@ -338,11 +340,20 @@ export const useChatStore = defineStore('chat', () => {
       }
     },
     onUserTurnReady: ({ messageText, sessionMessages }) => {
+      // Both turns count as the conversation being live, so the character's
+      // sense of a lull starts from whoever spoke last rather than from its own
+      // replies alone. Only the timing is recorded here: remembering a turn as
+      // being *about* something needs a subject, and nothing in this runtime
+      // names one yet — `initiative.remember()` is where that arrives.
+      initiativeStore.noteInteraction()
+
       const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')
         void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))
     },
     onAssistantTurnReady: ({ messageText, sessionMessages }) => {
+      initiativeStore.noteInteraction()
+
       const artistry = cardStore.activeCard?.extensions?.airi?.modules?.artistry
       if (artistry?.autonomousEnabled && artistry?.autonomousTarget === 'assistant')
         void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))

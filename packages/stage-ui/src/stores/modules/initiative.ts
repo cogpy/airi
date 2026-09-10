@@ -39,8 +39,12 @@ export interface BindToChatOptions {
    * the model or the AtomSpace, and keyword matching would quietly fill memory
    * with junk topics. Without it the store still tracks when things happened —
    * enough to know a lull has begun, not enough to have something to raise.
+   *
+   * May be asynchronous, since naming a subject usually means asking a model.
+   * The episode is dated when the message arrived rather than when the answer
+   * came back, so a slow extractor does not make an old remark look recent.
    */
-  deriveTopic?: (message: string) => string | undefined
+  deriveTopic?: (message: string) => string | undefined | Promise<string | undefined>
   /** Attention to record for remembered messages. @default 0.6 */
   salience?: number
 }
@@ -75,19 +79,25 @@ export const useInitiativeStore = defineStore('initiative', () => {
   /**
    * Remembers something as being about a subject, and counts it as interaction.
    */
+  function recordEpisode(
+    entry: { topic: string, salience?: number, valence?: number },
+    at: number,
+  ): void {
+    episodes.value.push({
+      id: `ep_${at}_${episodes.value.length}`,
+      atomId: entry.topic,
+      at,
+      salience: entry.salience ?? 0.6,
+      valence: entry.valence,
+    })
+  }
+
   function remember(
     entry: { topic: string, salience?: number, valence?: number },
     now: number = Date.now(),
   ): void {
     noteInteraction(now)
-
-    episodes.value.push({
-      id: `ep_${now}_${episodes.value.length}`,
-      atomId: entry.topic,
-      at: now,
-      salience: entry.salience ?? 0.6,
-      valence: entry.valence,
-    })
+    recordEpisode(entry, now)
   }
 
   /**
@@ -174,14 +184,29 @@ export const useInitiativeStore = defineStore('initiative', () => {
    */
   function bindToChat(bindings: InitiativeChatBindings, options: BindToChatOptions = {}): () => void {
     const observe = (message: string) => {
-      const topic = options.deriveTopic?.(message)
+      // The conversation is live whatever the subject turns out to be, and
+      // whether naming it takes a round trip or never resolves at all.
+      const at = Date.now()
+      noteInteraction(at)
 
-      if (topic === undefined) {
-        noteInteraction()
+      const derived = options.deriveTopic?.(message)
+
+      if (derived === undefined)
+        return
+
+      if (typeof derived === 'string') {
+        recordEpisode({ topic: derived, salience: options.salience }, at)
         return
       }
 
-      remember({ topic, salience: options.salience })
+      // A subject that cannot be named is not an error worth surfacing to the
+      // conversation; the character simply has one less thing to bring up.
+      void derived
+        .then((topic) => {
+          if (topic !== undefined)
+            recordEpisode({ topic, salience: options.salience }, at)
+        })
+        .catch(() => {})
     }
 
     const unsubscribes = [

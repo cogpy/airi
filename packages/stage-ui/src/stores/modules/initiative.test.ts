@@ -236,6 +236,65 @@ describe('initiative store', () => {
       expect(initiative.episodes).toHaveLength(1)
     })
 
+    it('remembers a subject that took a round trip to name', async () => {
+      const initiative = useInitiativeStore()
+      const chat = fakeChat()
+
+      initiative.bindToChat(chat.bindings, {
+        deriveTopic: async () => 'atom_speedrun',
+      })
+
+      chat.userSays('did you see that')
+      expect(initiative.episodes).toHaveLength(0)
+
+      await vi.waitFor(() => expect(initiative.episodes).toHaveLength(1))
+      expect(initiative.episodes[0].atomId).toBe('atom_speedrun')
+    })
+
+    it('dates a slowly named subject to when it was said, not when it was named', async () => {
+      const initiative = useInitiativeStore()
+      const chat = fakeChat()
+      const said = Date.now()
+
+      initiative.bindToChat(chat.bindings, {
+        deriveTopic: () => new Promise<string>(resolve => setTimeout(resolve, 5000, 'atom_speedrun')),
+      })
+
+      chat.userSays('did you see that')
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(initiative.episodes).toHaveLength(1)
+      expect(initiative.episodes[0].at).toBe(said)
+    })
+
+    it('keeps the conversation live even when no subject can be named', async () => {
+      const initiative = useInitiativeStore()
+      const chat = fakeChat()
+      const before = initiative.lastInteractionAt
+
+      initiative.bindToChat(chat.bindings, { deriveTopic: async () => undefined })
+      vi.advanceTimersByTime(1000)
+      chat.userSays('mm')
+
+      expect(initiative.lastInteractionAt).toBeGreaterThan(before)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(initiative.episodes).toHaveLength(0)
+    })
+
+    it('says nothing about a naming failure', async () => {
+      const initiative = useInitiativeStore()
+      const chat = fakeChat()
+
+      initiative.bindToChat(chat.bindings, {
+        deriveTopic: async () => { throw new Error('rate limited') },
+      })
+
+      chat.userSays('did you see that')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(initiative.episodes).toHaveLength(0)
+    })
+
     it('detaches cleanly', () => {
       const initiative = useInitiativeStore()
       const chat = fakeChat()

@@ -67,7 +67,11 @@ export interface InitiativeConfig {
   /**
    * Age at which a raised subject recovers ~63% of its novelty.
    *
-   * @default 300000
+   * Defaults to half an hour: a subject is heavily damped for the first ten
+   * minutes or so and freely available again after an hour, which is about how
+   * soon returning to something reads as natural rather than as a loop.
+   *
+   * @default 1800000
    */
   noveltyRecoveryMs: number
   /**
@@ -108,7 +112,7 @@ export function createDefaultInitiativeConfig(): InitiativeConfig {
   return {
     silenceScaleMs: 45_000,
     refractoryMs: 20_000,
-    noveltyRecoveryMs: 300_000,
+    noveltyRecoveryMs: 1_800_000,
     threshold: 0.25,
   }
 }

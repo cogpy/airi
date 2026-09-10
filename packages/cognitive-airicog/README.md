@@ -11,7 +11,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
-| **Initiative** | Deciding to speak during a lull, and choosing what to raise |
+| **Initiative** | Turn-taking: when to take the floor during a lull, and when to give it back |
 | **Memory** | What an experience was worth, how firmly it is still held, what resurfaces |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
@@ -217,6 +217,41 @@ before any of that, so a lull cannot become a monologue.
 The decision is pure: it reads the clock and the attention economy through its
 arguments, never directly, so the same state always yields the same decision.
 `candidatesFromFocus` is the only part that touches a live `ECAN`.
+
+### Yielding (giving the floor back)
+
+Turn-taking has two halves. `decideInitiative` takes the floor; `decideYield`
+gives it up when the other party starts talking over the character.
+
+```ts
+import { decideYield } from '@proj-airi/cognitive-airicog/initiative'
+
+// Sampled by the audio layer: is the character speaking, how far into its
+// utterance, and how long has the other party been speaking over it?
+const decision = decideYield({ speaking: true, utteranceElapsedMs: 2000, overlapMs: 600 })
+
+if (decision.yieldFloor)
+  stopSpeaking() // decision.reason is 'interrupted' or 'insisted'
+```
+
+Stopping the moment any sound arrives is what makes voice assistants feel
+twitchy — a laugh or an "mhm" cuts the character off mid-word. So an
+interruption has to be sustained to count, and overlap in the first moments of
+an utterance is treated as the other party finishing their own turn rather than
+contesting this one. The exception is insistence: someone who keeps talking is
+interrupting whatever else is true, and that overrides every reason to hold on.
+
+| Situation | Overlap | Outcome |
+|---|---|---|
+| Nobody talking over it | 0ms | holds — `no-overlap` |
+| "mhm", a laugh | 150ms | holds — `backchannel` |
+| Overlap as it just began | 500ms at 100ms in | holds — `opening-grace` |
+| They start a sentence | 600ms | yields — `interrupted` |
+| They keep going | 1500ms | yields — `insisted` |
+
+Continuity of `overlapMs` is the audio layer's to track: a pause that ends the
+overlap resets it, so a run of short backchannels never accumulates into an
+interruption.
 
 ### Memory (episodic)
 

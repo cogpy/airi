@@ -80,6 +80,16 @@ export {
   type RaisedTopic,
 } from './initiative/initiative'
 
+export {
+  createDefaultYieldConfig,
+  decideYield,
+  type YieldConfig,
+  type YieldDecision,
+  type YieldHold,
+  type YieldRelease,
+  type YieldState,
+} from './initiative/yielding'
+
 // Memory - What is still held, and what resurfaces
 export {
   asInitiativeCandidates,

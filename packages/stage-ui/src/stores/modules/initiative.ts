@@ -1,4 +1,5 @@
-import type { Episode, InitiativeDecision, RaisedTopic } from '@proj-airi/cognitive-airicog/initiative'
+import type { InitiativeDecision, RaisedTopic } from '@proj-airi/cognitive-airicog/initiative'
+import type { Episode } from '@proj-airi/cognitive-airicog/memory'
 
 import type { AiriExtension } from '../../types/airiCard'
 

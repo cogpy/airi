@@ -9,6 +9,7 @@ export default defineConfig({
     './src/atomspace/index.ts',
     './src/attention/index.ts',
     './src/initiative/index.ts',
+    './src/memory/index.ts',
     './src/reasoning/index.ts',
     './src/orchestration/index.ts',
     './src/ontogenesis/index.ts',

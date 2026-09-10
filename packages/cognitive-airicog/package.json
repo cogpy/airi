@@ -32,6 +32,10 @@
       "types": "./dist/initiative/index.d.mts",
       "default": "./dist/initiative/index.mjs"
     },
+    "./memory": {
+      "types": "./dist/memory/index.d.mts",
+      "default": "./dist/memory/index.mjs"
+    },
     "./reasoning": {
       "types": "./dist/reasoning/index.d.mts",
       "default": "./dist/reasoning/index.mjs"

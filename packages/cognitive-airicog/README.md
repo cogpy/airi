@@ -12,6 +12,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
 | **Initiative** | Deciding to speak during a lull, and choosing what to raise |
+| **Memory** | What an experience was worth, how firmly it is still held, what resurfaces |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
 
@@ -216,6 +217,57 @@ before any of that, so a lull cannot become a monologue.
 The decision is pure: it reads the clock and the attention economy through its
 arguments, never directly, so the same state always yields the same decision.
 `candidatesFromFocus` is the only part that touches a live `ECAN`.
+
+### Memory (episodic)
+
+The policy layer for remembering: not storage, and not similarity search —
+`memory-pgvector` owns the store and the embedding lookup, `memory-timecrystal`
+owns the token-level working cache. What neither answers is which experiences
+are worth keeping and how they fade, which is what decides whether a character
+seems to have a past.
+
+```ts
+import {
+  asInitiativeCandidates,
+  memoryStrength,
+  recall,
+  rehearse,
+  shouldRetain,
+} from '@proj-airi/cognitive-airicog/memory'
+
+const episode = {
+  id: 'ep_1',
+  atomId: topic.id, // ties the memory to its subject in the AtomSpace
+  at: Date.now(),
+  salience: 0.8, // attention on it at the time
+  valence: 0.6, // how it felt; only the magnitude is read
+}
+
+memoryStrength(episode, Date.now()) // ~1.0 — just happened
+shouldRetain(episode, Date.now() + 30 * 86_400_000) // false — a month untouched
+
+// Recall both restores a memory and lengthens its next fade
+const revisited = rehearse(episode, Date.now() + 86_400_000)
+
+recall([revisited], Date.now()) // held memories, strongest first
+```
+
+An experience encodes at a strength set by the attention and feeling it carried,
+decays from the last time it was touched, and every recall resets that clock and
+lengthens the interval before the next fade. So a memory returned to a few times
+outlives a vivid one never thought of again, and anything never revisited is
+eventually let go.
+
+Feeding memory into initiative is what closes the loop — the character brings up
+what it still remembers, not only what is in front of it:
+
+```ts
+const decision = decideInitiative({
+  now,
+  lastInteractionAt,
+  candidates: asInitiativeCandidates(episodes, now),
+})
+```
 
 ### Multi-agent orchestration
 

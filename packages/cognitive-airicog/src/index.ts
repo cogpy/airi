@@ -80,6 +80,20 @@ export {
   type RaisedTopic,
 } from './initiative/initiative'
 
+// Memory - What is still held, and what resurfaces
+export {
+  asInitiativeCandidates,
+  createDefaultMemoryConfig,
+  encodingStrength,
+  type Episode,
+  type MemoryConfig,
+  memoryStrength,
+  recall,
+  type RecalledEpisode,
+  rehearse,
+  shouldRetain,
+} from './memory/episodic'
+
 // Ontogenesis - Self-Generating Kernels
 export {
   // Types

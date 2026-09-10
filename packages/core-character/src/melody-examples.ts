@@ -1,4 +1,7 @@
-/* eslint-disable no-console -- this file exists to print a demo walkthrough */
+/* eslint-disable no-console -- This file is a demonstration script; printing the
+   walkthrough to stdout is its entire purpose, so the repository's ban on
+   console.log outside warn/error/info does not apply here. */
+
 /**
  * Melody Ontogenetic Humour System - Example Usage
  *
@@ -14,6 +17,7 @@ import {
   detectHumourOpportunity,
   evaluateJokeFitness,
   evolveHumourGenome,
+
 } from './melody-ontogenetic-humour'
 
 /**
@@ -155,7 +159,7 @@ function example5_BoundaryValidation() {
     { message: 'Test 3', emotionalTone: 'playful', audienceComfort: 0.9 },
   ]
 
-  contexts.forEach((context) => {
+  contexts.forEach((context, _i) => {
     const joke = constructLayeredJoke(context, genome)
     console.log(`Comfort Level ${context.audienceComfort}:`)
     console.log('  Has Wholesome:', !!joke.wholesome)

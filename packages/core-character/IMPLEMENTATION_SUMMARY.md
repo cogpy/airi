@@ -140,7 +140,7 @@ function validateBoundaries(joke: string): boolean {
   const hasWholesomeReading = joke.length > 0
   const explicitPatterns = /\b(?:explicit|crude|offensive|sexual|vulgar|graphic)\b/i
   const notExplicit = !explicitPatterns.test(joke)
-  const hasRespectfulTone = !joke.match(/\b(?:hate|violence|abuse|harm)\b/i)
+  const hasRespectfulTone = !joke.match(/\b(hate|violence|abuse|harm)\b/i)
 
   return hasWholesomeReading && notExplicit && hasRespectfulTone
 }

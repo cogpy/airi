@@ -116,6 +116,47 @@ ecan.dispose()
 as.dispose()
 ```
 
+#### The attention ledger
+
+ECAN is a **closed economy**. Importance is never created or destroyed by an
+ECAN operation, only moved between the bank and the atoms:
+
+```
+ecan.getAttentionBank() + sum(atom.attentionValue.sti) === ecan.getAttentionFunds()
+```
+
+Every transfer is capped by what is actually available at both ends — the bank
+balance on one side, the atom's remaining headroom below `sti = 1` on the other
+— so a request that cannot be filled leaves the remainder banked instead of
+discarding it. `stimulate` and `inhibit` return the amount that actually moved.
+
+```ts
+const granted = ecan.stimulate(node.id, 0.5) // may be less than 0.5
+```
+
+Importance can still enter or leave through the AtomSpace, which knows nothing
+about the bank: new atoms are born with a default STI, `spreadActivation` boosts
+atoms directly, and decay shrinks them. `reconcile()` re-derives the bank from
+the atoms and returns the drift it absorbed; `step()` and `spreadImportance()`
+call it for you.
+
+```ts
+as.addNode('ConceptNode', 'Unbanked', {}, { sti: 0.25 })
+ecan.reconcile() // => -0.25, the importance the AtomSpace minted
+```
+
+A negative bank balance is meaningful rather than an error: it says the
+AtomSpace holds more importance than the economy issued, and further issuance
+stays blocked until rent or inhibition brings the balance back above zero.
+
+The invariant holds **exactly**, not approximately. All importance in the
+economy sits on a lattice of dyadic rationals — integer multiples of
+`1 / QUANTA_PER_UNIT`, where `QUANTA_PER_UNIT` is `2 ** 20`. Such values are
+exactly representable in float64 and sum without drift, so the conserved total
+is bit-exact no matter how many transfers have been made. The continuous
+`[0, 1]` importance scale is the appearance; the integer partition of quanta is
+what is conserved.
+
 ### PLN (uncertain reasoning)
 
 ```ts

@@ -60,6 +60,13 @@ export {
   RelevanceRealization,
 } from './attention/ecan'
 
+export {
+  fromQuanta,
+  QUANTA_PER_UNIT,
+  quantizeAttention,
+  toQuanta,
+} from './attention/quanta'
+
 // Ontogenesis - Self-Generating Kernels
 export {
   // Types

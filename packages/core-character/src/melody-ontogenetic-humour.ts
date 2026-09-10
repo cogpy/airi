@@ -197,7 +197,7 @@ function validateBoundaries(joke: string): boolean {
   const notExplicit = !explicitPatterns.test(joke)
 
   // Check for respectful language
-  const hasRespectfulTone = !joke.match(/\b(?:hate|violence|abuse|harm)\b/i)
+  const hasRespectfulTone = !joke.match(/\b(hate|violence|abuse|harm)\b/i)
 
   return hasWholesomeReading && notExplicit && hasRespectfulTone
 }
@@ -356,7 +356,9 @@ export function evolveHumourGenome(
   return newGenome
 }
 
-/* eslint-disable no-console -- this walkthrough exists to print one humour session; the rest of the module is library code */
+/* eslint-disable no-console -- The example session below prints its walkthrough;
+   the rest of this module is library code and stays under the console ban. */
+
 /**
  * Example usage demonstrating ontogenetic humour system
  */
@@ -401,4 +403,3 @@ export function exampleMelodyHumourSession() {
     console.log('\nEvolved Genome:', genome)
   }
 }
-/* eslint-enable no-console */

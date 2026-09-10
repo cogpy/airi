@@ -250,13 +250,8 @@ export class AtomSpace {
   }
 
   /**
-   * Pattern match with variable binding.
-   *
-   * Behaves like {@link AtomSpace.query} except that `pattern.outgoing` may
-   * contain `$name` variables: such an entry matches whatever atom sits at that
-   * position, and a name repeated within one pattern must bind the same atom
-   * everywhere it appears. Each result carries the bindings its own match
-   * produced.
+   * Pattern match with variable binding
+   * Returns all atoms matching the pattern with variable bindings
    */
   patternMatch(pattern: AtomPattern): PatternMatchResult[] {
     const results: PatternMatchResult[] = []
@@ -335,9 +330,36 @@ export class AtomSpace {
    * Get atoms with highest attention (STI)
    */
   getAttentionalFocus(limit: number = 10): Atom[] {
-    const atoms = Array.from(this.atoms.values())
+    const atoms = this.getAllAtoms()
     atoms.sort((a, b) => b.attentionValue.sti - a.attentionValue.sti)
     return atoms.slice(0, limit)
+  }
+
+  /**
+   * Get every atom in the AtomSpace without recording an access.
+   *
+   * For auditing or summarising the whole space rather than reasoning over it.
+   * `lastAccessedAt` is left untouched, so bookkeeping passes do not
+   * masquerade as cognitive activity. The array is a fresh shallow copy in
+   * insertion order, but the atoms themselves are live references.
+   */
+  getAllAtoms(): Atom[] {
+    return Array.from(this.atoms.values())
+  }
+
+  /**
+   * Get the total Short-Term Importance currently allocated across the space.
+   *
+   * This is the allocated half of the ECAN ledger invariant. Exact when the
+   * atoms sit on the attention quantum lattice, and subject to ordinary float
+   * error otherwise. Does not record an access on any atom.
+   */
+  getTotalSti(): number {
+    let total = 0
+    for (const atom of this.atoms.values()) {
+      total += atom.attentionValue.sti
+    }
+    return total
   }
 
   /**
@@ -414,7 +436,7 @@ export class AtomSpace {
    */
   export(): { atoms: Atom[], config: AtomSpaceConfig } {
     return {
-      atoms: Array.from(this.atoms.values()),
+      atoms: this.getAllAtoms(),
       config: this.config,
     }
   }

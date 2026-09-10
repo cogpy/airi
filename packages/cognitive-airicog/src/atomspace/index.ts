@@ -4,5 +4,5 @@
  * Hypergraph-based knowledge representation inspired by OpenCog.
  */
 
-export * from './types';
-export * from './atomspace';
+export * from './atomspace'
+export * from './types'

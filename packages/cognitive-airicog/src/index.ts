@@ -67,6 +67,19 @@ export {
   toQuanta,
 } from './attention/quanta'
 
+// Initiative - Speaking during a lull
+export {
+  candidatesFromFocus,
+  createDefaultInitiativeConfig,
+  decideInitiative,
+  type InitiativeCandidate,
+  type InitiativeConfig,
+  type InitiativeDecision,
+  type InitiativeHold,
+  type InitiativeState,
+  type RaisedTopic,
+} from './initiative/initiative'
+
 // Ontogenesis - Self-Generating Kernels
 export {
   // Types

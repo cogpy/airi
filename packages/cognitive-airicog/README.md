@@ -11,6 +11,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
+| **Initiative** | Deciding to speak during a lull, and choosing what to raise |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
 
@@ -176,6 +177,45 @@ const l2 = as.addLink('InheritanceLink', [mammal.id, animal.id], { strength: 0.9
 const result = pln.deduction(l1.id, l2.id)
 // result.conclusion is a new InheritanceLink(Dog, Animal)
 ```
+
+### Initiative (speaking unprompted)
+
+Every other entry point answers "given this input, what follows?". Initiative
+answers the one nothing else does: with no input at all, is now the moment to
+speak, and about what?
+
+```ts
+import { createAtomSpace } from '@proj-airi/cognitive-airicog/atomspace'
+import { createECAN } from '@proj-airi/cognitive-airicog/attention'
+import { candidatesFromFocus, decideInitiative } from '@proj-airi/cognitive-airicog/initiative'
+
+const as = createAtomSpace()
+const ecan = createECAN(as)
+
+const topic = as.addNode('ConceptNode', 'Minecraft')
+ecan.stimulate(topic.id, 0.5)
+
+const decision = decideInitiative({
+  now: Date.now(),
+  lastInteractionAt: Date.now() - 600_000, // ten minutes of silence
+  candidates: candidatesFromFocus(ecan),
+  recentlyRaised: [], // subjects already brought up, to keep it off a loop
+})
+
+if (decision.act)
+  console.info('raise', decision.topicAtomId, 'urge', decision.urge)
+```
+
+The urge behind a subject is the product of three quantities on `[0, 1]`: how
+long the silence has run, how much attention the subject holds, and how fresh
+it is. A product rather than a sum because each is a veto — a subject just
+discussed, one nothing is attending to, or a silence that has barely started
+should each on its own keep the character quiet. A refractory gap is checked
+before any of that, so a lull cannot become a monologue.
+
+The decision is pure: it reads the clock and the attention economy through its
+arguments, never directly, so the same state always yields the same decision.
+`candidatesFromFocus` is the only part that touches a live `ECAN`.
 
 ### Multi-agent orchestration
 

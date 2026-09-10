@@ -6,6 +6,7 @@ import { defineConfig } from 'tsdown'
 export default defineConfig({
   entry: [
     './src/index.ts',
+    './src/affect/index.ts',
     './src/atomspace/index.ts',
     './src/attention/index.ts',
     './src/initiative/index.ts',

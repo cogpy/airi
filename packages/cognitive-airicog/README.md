@@ -8,6 +8,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 
 | Module | Description |
 |---|---|
+| **Affect** | Mood that carries between turns and settles back to temperament |
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
@@ -303,6 +304,38 @@ const decision = decideInitiative({
   candidates: asInitiativeCandidates(episodes, now),
 })
 ```
+
+### Affect (mood between turns)
+
+`Emotion` is a display label picked per message, and an episode's `valence` is
+affect attached to one memory. Neither persists, so nothing carries an
+affective state *between* turns — a rough exchange does not colour the next one.
+
+```ts
+import { applyEvent, createMood, decayMood, moodDescriptor } from '@proj-airi/cognitive-airicog/affect'
+
+let mood = createMood(Date.now()) // starts at temperament, not at zero
+mood = applyEvent(mood, { valence: -0.9 }, Date.now()) // someone was rude
+
+moodDescriptor(mood) // => 'distressed'
+moodDescriptor(decayMood(mood, Date.now() + 60_000)) // => 'bored'
+moodDescriptor(decayMood(mood, Date.now() + 3_600_000)) // => 'neutral'
+```
+
+Valence and arousal are separate axes rather than a list of named feelings,
+because mood has to be blended and decayed: "slightly less angry than a minute
+ago" is arithmetic on an axis, not a step between labels. Mood returns to a
+configured baseline rather than to zero — the baseline is temperament, which is
+what separates a cheerful character from a gloomy one given the same day.
+
+Arousal settles faster than valence on purpose: being startled wears off long
+before being upset does, which is why the example above passes through `bored`
+on its way back to `neutral`. `applyEvent` decays to the current instant before
+applying, so events arriving minutes apart do not compound as if simultaneous.
+
+`moodDescriptor` names the circumplex quadrant, with a dead zone around the
+centre — most of the time the honest answer is that nothing shows, and a display
+layer that switches expression on every small drift looks twitchy.
 
 ### Multi-agent orchestration
 

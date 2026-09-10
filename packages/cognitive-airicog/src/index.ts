@@ -19,6 +19,19 @@ import { createECAN, createRelevanceRealization } from './attention/ecan'
 import { createOrchestrator } from './orchestration/orchestrator'
 import { createPLN } from './reasoning/pln'
 
+// Affect - Mood that carries between turns
+export {
+  type AffectiveEvent,
+  applyEvent,
+  createDefaultMoodConfig,
+  createMood,
+  decayMood,
+  type Mood,
+  type MoodConfig,
+  type MoodDescriptor,
+  moodDescriptor,
+} from './affect/mood'
+
 export {
   AtomSpace,
   createAtomSpace,

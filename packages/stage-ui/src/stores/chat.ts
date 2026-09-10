@@ -17,6 +17,8 @@ import { shallowRef, toRaw } from 'vue'
 import { getConversationAnalyticsSurface } from '../composables'
 import { useAiriRuntimePrompt } from '../composables/use-airi-runtime-prompt'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
+import { parseActEmotion } from '../libs/affect/act-emotion'
+import { createMoodTracker } from '../libs/affect/mood-prompt'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
 import { createChatAnalyticsHooks, getProviderMode } from '../libs/product-signals/events/chat'
 import {
@@ -137,7 +139,11 @@ function retrySourceIndexFrom(messages: ChatHistoryItem[], index: number): numbe
 export type { QueuedSendSnapshot } from '@proj-airi/core-agent'
 
 export const useChatStore = defineStore('chat', () => {
-  const runtimePrompt = useAiriRuntimePrompt()
+  // A display emotion is chosen fresh each reply and carries nothing over, so
+  // the character's mood is tracked here and described to the model alongside
+  // the emotion list it may choose from.
+  const moodTracker = createMoodTracker()
+  const runtimePrompt = useAiriRuntimePrompt({ moodLine: () => moodTracker.promptLine() })
   const llmStore = useLLM()
   const llmToolsStore = useLlmToolsStore()
   const llmToolsetPromptsStore = useLlmToolsetPromptsStore()
@@ -353,6 +359,12 @@ export const useChatStore = defineStore('chat', () => {
     },
     onAssistantTurnReady: ({ messageText, sessionMessages }) => {
       initiativeStore.noteInteraction()
+
+      // The emotion the character just chose to display is the best evidence
+      // available of how it feels, and costs no extra model call to read.
+      const emotion = parseActEmotion(messageText)
+      if (emotion)
+        moodTracker.noteEmotion(emotion.name)
 
       const artistry = cardStore.activeCard?.extensions?.airi?.modules?.artistry
       if (artistry?.autonomousEnabled && artistry?.autonomousTarget === 'assistant')

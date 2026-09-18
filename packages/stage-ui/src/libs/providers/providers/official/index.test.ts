@@ -20,28 +20,36 @@ interface OfficialSpeechOptions {
 }
 
 describe('official chat provider', () => {
-  it('defaults new and existing empty configurations to Responses', async () => {
+  // ROOT CAUSE:
+  //
+  // Official chat reused OpenAI's Responses-first protocol list.
+  // Empty configs (`{}`) then called `/api/v1/openai/responses`.
+  // The hosted gateway treats an omitted `protocols` list as Chat Completions only
+  // and returns 503 LLM_PROTOCOL_UNAVAILABLE when no Responses route exists.
+  //
+  // Official chat now uses compatibleProtocols so the default stays Chat Completions.
+  it('defaults new and existing empty configurations to Chat Completions', async () => {
     const schema = await providerOfficialChat.createProviderConfig({ t: key => key })
-    expect(z.parse(schema, {})).toEqual({ api: 'responses' })
+    expect(z.parse(schema, {})).toEqual({ api: 'chat-completions' })
 
     const provider = await providerOfficialChat.createProvider({})
     if (!isGenerationProvider(provider))
       throw new Error('Expected generation')
 
     expect(provider.generation('auto')).toMatchObject({
-      protocol: 'responses',
-      webSearch: false,
+      protocol: 'chat-completions',
       config: { model: 'auto' },
     })
   })
 
-  it('uses Chat Completions when the user selects it', async () => {
-    const provider = await providerOfficialChat.createProvider({ api: 'chat-completions' })
+  it('uses Responses when the user selects it', async () => {
+    const provider = await providerOfficialChat.createProvider({ api: 'responses' })
     if (!isGenerationProvider(provider))
       throw new Error('Expected generation')
 
     expect(provider.generation('auto')).toMatchObject({
-      protocol: 'chat-completions',
+      protocol: 'responses',
+      webSearch: false,
       config: { model: 'auto' },
     })
   })
@@ -54,8 +62,8 @@ describe('official chat provider', () => {
     expect(schema.shape.api.meta()).toMatchObject({
       type: 'select',
       options: [
-        { label: 'Responses API', value: 'responses' },
         { label: 'Chat Completions', value: 'chat-completions' },
+        { label: 'Responses API', value: 'responses' },
       ],
     })
   })

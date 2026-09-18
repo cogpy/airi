@@ -2,7 +2,7 @@ import type { ChatRequestOptions, GenerationRequest } from '@proj-airi/provider-
 
 import type { ModelInfo, ProviderModelCatalog, VoiceInfo } from '../../types'
 
-import { generationProtocolOptions, openAIProtocols } from '@proj-airi/provider-inference'
+import { compatibleProtocols, generationProtocolOptions } from '@proj-airi/provider-inference'
 import { z } from 'zod'
 
 import { getAuthToken } from '../../../../libs/auth'
@@ -14,8 +14,10 @@ import { createOfficialAudioProvider, createOfficialOpenAIProvider, OFFICIAL_ICO
 export { OFFICIAL_CHAT_PROVIDER_ID, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, OFFICIAL_TRANSCRIPTION_PROVIDER_ID, OFFICIAL_VISION_PROVIDER_ID } from './constants'
 
 const officialConfigSchema = z.object({})
+// Hosted LLM_ROUTER_CONFIG still treats an omitted protocols list as Chat Completions
+// only. Keep official chat on that contract until operators opt in to Responses.
 const officialChatConfigSchema = z.object({
-  api: z.enum(openAIProtocols.supportedProtocols).default(openAIProtocols.defaultProtocol),
+  api: z.enum(compatibleProtocols.supportedProtocols).default(compatibleProtocols.defaultProtocol),
 })
 
 type OfficialChatConfig = z.input<typeof officialChatConfigSchema>
@@ -66,12 +68,12 @@ export const providerOfficialChat = defineProvider<OfficialChatConfig, typeof OF
   icon: OFFICIAL_ICON,
   requiresCredentials: false,
   configuredBy: 'authentication',
-  capabilities: { chat: { generation: openAIProtocols } },
+  capabilities: { chat: { generation: compatibleProtocols } },
 
   createProviderConfig: ({ t }) => officialChatConfigSchema.extend({
     api: officialChatConfigSchema.shape.api.meta({
       type: 'select',
-      options: generationProtocolOptions(openAIProtocols),
+      options: generationProtocolOptions(compatibleProtocols),
       labelLocalized: t('settings.pages.providers.catalog.edit.config.common.fields.field.api-protocol.label'),
       descriptionLocalized: t('settings.pages.providers.catalog.edit.config.common.fields.field.api-protocol.description'),
     }),
@@ -83,7 +85,7 @@ export const providerOfficialChat = defineProvider<OfficialChatConfig, typeof OF
       generation(model: string, _options?: ChatRequestOptions): GenerationRequest {
         const request = provider.chat(model)
         request.fetch = withCredentials()
-        switch (config.api ?? openAIProtocols.defaultProtocol) {
+        switch (config.api ?? compatibleProtocols.defaultProtocol) {
           case 'responses':
             return {
               protocol: 'responses',

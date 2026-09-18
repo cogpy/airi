@@ -11,6 +11,9 @@ const fileSystemState = vi.hoisted(() => ({
   afterRead: undefined as undefined | ((path: string) => Promise<void>),
   readPaths: [] as string[],
 }))
+const manifestParseState = vi.hoisted(() => ({
+  overrideInstallId: undefined as string | undefined,
+}))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fileSystem = await importOriginal<typeof import('node:fs/promises')>()
@@ -41,6 +44,26 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
+vi.mock('@proj-airi/plugin-sdk/plugin-host', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@proj-airi/plugin-sdk/plugin-host')>()
+  return {
+    ...original,
+    parseExtensionManifest: (value: unknown) => {
+      const result = original.parseExtensionManifest(value)
+      if (!result.success || manifestParseState.overrideInstallId === undefined) {
+        return result
+      }
+      return {
+        success: true,
+        manifest: {
+          ...result.manifest,
+          id: manifestParseState.overrideInstallId,
+        },
+      }
+    },
+  }
+})
+
 describe('extension directory importer', () => {
   let testRoot: string
   let extensionsRoot: string
@@ -51,6 +74,7 @@ describe('extension directory importer', () => {
     fileSystemState.beforeRead = undefined
     fileSystemState.afterRead = undefined
     fileSystemState.readPaths = []
+    manifestParseState.overrideInstallId = undefined
     testRoot = await mkdtemp(join(tmpdir(), 'airi-extension-import-'))
     extensionsRoot = join(testRoot, 'managed', 'extensions', 'v1')
     sourceRoot = join(testRoot, 'source')
@@ -239,6 +263,32 @@ describe('extension directory importer', () => {
     importer = new ExtensionDirectoryImporter(extensionsRoot, extensionId => extensionId === 'example-extension')
 
     await expect(importer.prepare(sourceRoot)).rejects.toThrow('already installed')
+  })
+
+  // https://github.com/cogpy/airi/pull/12
+  it('rejects an Extension id that would install outside the managed root (PR #12)', async () => {
+    // ROOT CAUSE:
+    //
+    // Folder import checked entrypoints with isContainedPath, then published
+    // with join(extensionsRoot, manifest.id). The destination was never
+    // required to stay inside the managed root, so a crafted id could rename
+    // the package outside extensions/v1.
+    manifestParseState.overrideInstallId = '../outside'
+
+    await expect(importer.prepare(sourceRoot)).rejects.toThrow('escapes the managed folder')
+    await expect(lstat(join(testRoot, 'managed', 'outside'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  // https://github.com/cogpy/airi/pull/12
+  it('rejects the reserved staging directory name as an install destination (PR #12)', async () => {
+    // ROOT CAUSE:
+    //
+    // initialize() deletes .imports on every startup. An id of .imports would
+    // publish over the staging directory and vanish on the next launch.
+    manifestParseState.overrideInstallId = '.imports'
+
+    await expect(importer.prepare(sourceRoot)).rejects.toThrow('reserved')
+    await expect(lstat(join(extensionsRoot, '.imports'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   // https://github.com/moeru-ai/airi/pull/2506#discussion_r4011635187

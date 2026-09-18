@@ -27,6 +27,9 @@ const extensionPackageLimits = Object.freeze({
   totalBytes: 512 * 1024 * 1024,
 })
 
+/** Staging directory under the managed Extension root. Import must never publish here. */
+const reservedExtensionDirectoryName = '.imports'
+
 interface InspectedExtensionDirectory {
   sourcePath: string
   manifest: ExtensionManifestV2
@@ -65,6 +68,41 @@ function isContainedPath(root: string, candidate: string): boolean {
   const relativePath = relative(root, candidate)
   return relativePath === ''
     || (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${sep}`))
+}
+
+function resolveManagedExtensionDestination(extensionsRoot: string, extensionId: string): string {
+  // The install id is untrusted package data. Reject reserved names and any
+  // value that is not one direct child of the managed root before rename.
+  if (
+    extensionId === reservedExtensionDirectoryName
+    || extensionId === '.'
+    || extensionId === '..'
+    || extensionId.includes('/')
+    || extensionId.includes('\\')
+    || extensionId.includes(sep)
+  ) {
+    throw new Error(
+      extensionId === reservedExtensionDirectoryName
+        ? `Extension id is reserved: ${extensionId}`
+        : `Extension install path escapes the managed folder: ${extensionId}`,
+    )
+  }
+
+  const root = resolve(extensionsRoot)
+  const destination = resolve(root, extensionId)
+  const relativeDestination = relative(root, destination)
+  if (
+    relativeDestination === ''
+    || isAbsolute(relativeDestination)
+    || relativeDestination === '..'
+    || relativeDestination.startsWith(`..${sep}`)
+    || relativeDestination.includes(sep)
+    || relativeDestination === reservedExtensionDirectoryName
+  ) {
+    throw new Error(`Extension install path escapes the managed folder: ${extensionId}`)
+  }
+
+  return destination
 }
 
 function formatManifestDiagnostics(diagnostics: Array<{ path: string, message: string }>): string {
@@ -383,7 +421,7 @@ export class ExtensionDirectoryImporter {
   /** Removes staging copies left by a previous process before this importer accepts work. */
   async initialize(): Promise<void> {
     this.assertActive()
-    this.initialization ??= rm(join(this.extensionsRoot, '.imports'), { recursive: true, force: true })
+    this.initialization ??= rm(join(this.extensionsRoot, reservedExtensionDirectoryName), { recursive: true, force: true })
     await this.initialization
     this.assertActive()
   }
@@ -468,7 +506,7 @@ export class ExtensionDirectoryImporter {
   }
 
   private async assertDestinationAvailable(extensionId: string): Promise<void> {
-    const destination = join(this.extensionsRoot, extensionId)
+    const destination = resolveManagedExtensionDestination(this.extensionsRoot, extensionId)
     if (await this.isExtensionInstalled(extensionId) || await pathExists(destination)) {
       throw new Error(`Extension is already installed: ${extensionId}`)
     }
@@ -487,10 +525,10 @@ export class ExtensionDirectoryImporter {
 
       await this.assertDestinationAvailable(inspected.manifest.id)
       await mkdir(this.extensionsRoot, { recursive: true })
-      const stagingRoot = join(this.extensionsRoot, '.imports')
+      const stagingRoot = join(this.extensionsRoot, reservedExtensionDirectoryName)
       await mkdir(stagingRoot, { recursive: true })
       const stagingPath = join(stagingRoot, planId)
-      const destination = join(this.extensionsRoot, inspected.manifest.id)
+      const destination = resolveManagedExtensionDestination(this.extensionsRoot, inspected.manifest.id)
 
       try {
         await copyExtensionDirectory(inspected.sourcePath, stagingPath)

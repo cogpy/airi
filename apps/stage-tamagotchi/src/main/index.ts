@@ -318,7 +318,13 @@ app.whenReady().then(async () => {
     dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
-      setupComputerUse(context)
+      setupComputerUse(context, {
+        getAuthorizedWebContentsId: () => {
+          if (!userFacingMainWindow || userFacingMainWindow.isDestroyed() || userFacingMainWindow.webContents.isDestroyed())
+            return undefined
+          return userFacingMainWindow.webContents.id
+        },
+      })
       await setupArtistryBridge({
         widgetsManager: deps.widgetsWindow,
         context,

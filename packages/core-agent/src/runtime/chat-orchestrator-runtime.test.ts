@@ -794,6 +794,90 @@ describe('createChatOrchestratorRuntime', () => {
     expect(harness.telemetry.chatActivationStarted).toHaveLength(2)
     expect(harness.telemetry.chatActivationFailed).toHaveLength(1)
     expect(harness.telemetry.chatActivationSucceeded).toHaveLength(1)
+
+    const followUpMessages = conversationToChatMessages(harness.stream.mock.calls[1]![2])
+    expect(followUpMessages.map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'user',
+    ])
+    expect(followUpMessages.some(message => message.role === 'assistant')).toBe(false)
+  })
+
+  // ROOT CAUSE:
+  //
+  // A failed stream now stores a local interrupted assistant so the user can
+  // read it. buildContext still projected that row as a finished assistant turn.
+  // The next send that was not a retry therefore sent truncated text, and any
+  // in-flight tool slices, to the provider as if the model completed.
+  //
+  // We skip interrupted assistant rows when composing the provider conversation.
+  it('does not send interrupted assistant output as a completed turn', async () => {
+    const harness = createHarness()
+    harness.stream.mockImplementationOnce(async (_model, _chatProvider, _messages, options) => {
+      await options?.onStreamEvent?.({ type: 'text-delta', text: 'partial reply' })
+      throw new Error('stream interrupted')
+    })
+
+    await expect(harness.runtime.ingest('first turn fails', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })).rejects.toThrow('stream interrupted')
+
+    harness.sessionMessages['session-1']?.push({
+      role: 'error',
+      content: 'stream interrupted',
+    })
+
+    await harness.runtime.ingest('second turn succeeds', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })
+
+    const followUpMessages = conversationToChatMessages(harness.stream.mock.calls[1]![2])
+    expect(followUpMessages.map(message => message.role)).toEqual([
+      'system',
+      'user',
+      'user',
+      'user',
+    ])
+    expect(followUpMessages.some(message => (
+      message.role === 'assistant'
+      && typeof message.content === 'string'
+      && message.content.includes('partial')
+    ))).toBe(false)
+  })
+
+  it('does not send interrupted tool slices as a completed assistant turn', async () => {
+    const harness = createHarness()
+    harness.stream.mockImplementationOnce(async (_model, _chatProvider, _messages, options) => {
+      await options?.onStreamEvent?.({
+        type: 'tool-call',
+        toolCallId: 'call-weather',
+        toolName: 'weather',
+        args: '{}',
+      } as StreamEvent)
+      throw new Error('tool stream interrupted')
+    })
+
+    await expect(harness.runtime.ingest('call a tool', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })).rejects.toThrow('tool stream interrupted')
+
+    expect(harness.sessionMessages['session-1']?.at(-1)).toMatchObject({
+      role: 'assistant',
+      interrupted: true,
+    })
+
+    await harness.runtime.ingest('try again', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })
+
+    const followUpMessages = conversationToChatMessages(harness.stream.mock.calls[1]![2])
+    expect(followUpMessages.some(message => message.role === 'assistant')).toBe(false)
+    expect(followUpMessages.some(message => message.role === 'tool')).toBe(false)
   })
 
   it('emits chat activation failure telemetry without raw provider messages', async () => {

@@ -501,6 +501,11 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     const nowTs = now()
     const messagesById = new Map(history.flatMap(message => message.id ? [[message.id, message] as const] : []))
     const turns = history.flatMap((message, historyIndex): Turn[] => {
+      // Interrupted assistants stay in local history for retry/readback.
+      // They never completed, so the next provider request must not replay
+      // truncated text or in-flight tool slices as a finished model turn.
+      if (message.role === 'assistant' && message.interrupted)
+        return []
       if (message.role === 'assistant' && message.generationTranscript)
         return [structuredClone(unwrapMessage(message.generationTranscript))]
       const source = message.role === 'user'

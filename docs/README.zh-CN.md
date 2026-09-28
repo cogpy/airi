@@ -363,7 +363,7 @@ npx bumpp --no-commit --no-tag
 - [x] [OpenAI](https://platform.openai.com/docs/guides/gpt/chat-completions-api)
   - [x] [Azure OpenAI API](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference)
 - [x] [Anthropic Claude](https://anthropic.com)
-  - [ ] [AWS Claude](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock)（欢迎 PR）
+  - [x] [AWS Claude](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock)
 - [x] [深度求索 DeepSeek](https://www.deepseek.com/)
 - [x] [通义千问 Qwen](https://help.aliyun.com/document_detail/2400395.html)
 - [x] [Google Gemini](https://developers.generativeai.google)

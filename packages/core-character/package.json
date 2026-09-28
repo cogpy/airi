@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.12.0-beta.5",
   "private": true,
-  "description": "Core character pipeline orchestration for AIRI (segmentation, emotion, delay, optional TTS)",
+  "description": "Core character implementations for AIRI - featuring Melody's ontogenetic humour system with multi-layered comedy",
   "author": {
     "name": "Moeru AI Project AIRI Team",
     "email": "airi@moeru.ai",
@@ -30,12 +30,18 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "examples": "tsx src/run-examples.ts"
   },
   "dependencies": {
     "@moeru/std": "catalog:",
+    "@proj-airi/cognitive-airicog": "workspace:^",
     "@proj-airi/stream-kit": "workspace:^",
-    "clustr": "catalog:"
+    "clustr": "catalog:",
+    "es-toolkit": "catalog:"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "vitest": "catalog:vitest"
+  }
 }

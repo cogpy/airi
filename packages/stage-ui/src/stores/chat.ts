@@ -17,6 +17,8 @@ import { shallowRef, toRaw } from 'vue'
 import { getConversationAnalyticsSurface } from '../composables'
 import { useAiriRuntimePrompt } from '../composables/use-airi-runtime-prompt'
 import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
+import { parseActEmotion } from '../libs/affect/act-emotion'
+import { createMoodTracker } from '../libs/affect/mood-prompt'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
 import { createChatAnalyticsHooks, getProviderMode } from '../libs/product-signals/events/chat'
 import {
@@ -37,6 +39,7 @@ import { useContextObservabilityStore } from './devtools/context-observability'
 import { useAiriCardStore } from './modules/airi-card'
 import { useAutonomousArtistryStore } from './modules/artistry-autonomous'
 import { useConsciousnessStore } from './modules/consciousness'
+import { useInitiativeStore } from './modules/initiative'
 import { useWebSearchStore } from './modules/web-search'
 import { executeToolCallRerun } from './tool-call-rerun'
 
@@ -147,7 +150,12 @@ function retrySourceIndexFrom(messages: ChatHistoryItem[], index: number): numbe
 export type { QueuedSendSnapshot } from '@proj-airi/core-agent'
 
 export const useChatStore = defineStore('chat', () => {
-  const runtimePrompt = useAiriRuntimePrompt()
+  // A display emotion is chosen fresh each reply and carries nothing over, so
+  // the character's mood is tracked here and described to the model alongside
+  // the emotion list it may choose from.
+  const moodTracker = createMoodTracker()
+  const runtimePrompt = useAiriRuntimePrompt({ moodLine: () => moodTracker.promptLine() })
+//  const runtimePrompt = useAiriRuntimePrompt()
   const authStore = useAuthStore()
   const llmStore = useLLM()
   const llmToolsStore = useLlmToolsStore()
@@ -160,6 +168,7 @@ export const useChatStore = defineStore('chat', () => {
   useWebSearchStore()
   const consciousnessStore = useConsciousnessStore()
   const artistryAutonomousStore = useAutonomousArtistryStore()
+  const initiativeStore = useInitiativeStore()
   const { activeModel, activeProvider } = storeToRefs(consciousnessStore)
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()
@@ -361,11 +370,26 @@ export const useChatStore = defineStore('chat', () => {
       }
     },
     onUserTurnReady: ({ messageText, sessionMessages }) => {
+      // Both turns count as the conversation being live, so the character's
+      // sense of a lull starts from whoever spoke last rather than from its own
+      // replies alone. Only the timing is recorded here: remembering a turn as
+      // being *about* something needs a subject, and nothing in this runtime
+      // names one yet — `initiative.remember()` is where that arrives.
+      initiativeStore.noteInteraction()
+
       const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')
         void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))
     },
     onAssistantTurnReady: ({ messageText, sessionMessages }) => {
+      initiativeStore.noteInteraction()
+
+      // The emotion the character just chose to display is the best evidence
+      // available of how it feels, and costs no extra model call to read.
+      const emotion = parseActEmotion(messageText)
+      if (emotion)
+        moodTracker.noteEmotion(emotion.name)
+
       const artistry = cardStore.activeCard?.extensions?.airi?.modules?.artistry
       if (artistry?.autonomousEnabled && artistry?.autonomousTarget === 'assistant')
         void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))

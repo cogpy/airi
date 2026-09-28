@@ -12,10 +12,12 @@
 // Extra arguments pin an expected symbol to a subpath; a subpath with no pin only
 // has to load and expose something.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { extname, resolve } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
+
+const NODE_MODULE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts'])
 
 const [packageDir, ...pins] = process.argv.slice(2)
 
@@ -39,7 +41,10 @@ for (const pin of pins) {
 
 const root = resolve(packageDir)
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-const exportsMap = pkg.exports ?? {}
+// A string `exports` value is the package's single "." entry.
+const exportsMap = typeof pkg.exports === 'string'
+  ? { '.': pkg.exports }
+  : pkg.exports ?? {}
 
 if (Object.keys(exportsMap).length === 0) {
   console.error(`${pkg.name} declares no exports — nothing to check`)
@@ -57,10 +62,29 @@ for (const [subpath, entry] of Object.entries(exportsMap)) {
     continue
   }
 
+  const pinned = expected.get(subpath) ?? []
+
+  // Node can only evaluate JavaScript modules. Other public targets (JSON, CSS,
+  // fonts, worklets, wildcards) are sound when the file or parent directory exists.
+  if (!isNodeModuleTarget(target)) {
+    if (!targetExists(root, target)) {
+      failed = true
+      console.error(`FAIL ${subpath} -> ${target} — file not found`)
+    }
+    else if (pinned.length > 0) {
+      failed = true
+      console.error(`FAIL ${subpath} -> ${target} — missing ${pinned.join(', ')}`)
+    }
+    else {
+      console.log(`ok   ${subpath} -> ${target}`)
+    }
+    continue
+  }
+
   try {
     const module = await import(pathToFileURL(resolve(root, target)).href)
     const names = Object.keys(module)
-    const missing = (expected.get(subpath) ?? []).filter(name => !names.includes(name))
+    const missing = pinned.filter(name => !names.includes(name))
 
     if (missing.length > 0) {
       failed = true
@@ -80,6 +104,30 @@ for (const [subpath, entry] of Object.entries(exportsMap)) {
   }
 }
 
+// Pins name APIs the caller asked us to prove. A missing subpath is the
+// documented-but-never-declared failure this check exists to catch.
+for (const subpath of expected.keys()) {
+  if (!Object.hasOwn(exportsMap, subpath)) {
+    failed = true
+    console.error(`FAIL ${subpath} — not declared in exports`)
+  }
+}
+
 const total = Object.keys(exportsMap).length
 console.log(failed ? '\nexports are NOT sound' : `\nall ${total} ${total === 1 ? 'export resolves' : 'exports resolve'}`)
 process.exit(failed ? 1 : 0)
+
+function isNodeModuleTarget(target) {
+  if (target.includes('*') || target.includes('.worklet.'))
+    return false
+  return NODE_MODULE_EXTENSIONS.has(extname(target))
+}
+
+function targetExists(root, target) {
+  if (!target.includes('*'))
+    return existsSync(resolve(root, target))
+
+  const prefix = target.slice(0, target.indexOf('*'))
+  const slash = prefix.lastIndexOf('/')
+  return existsSync(resolve(root, slash === -1 ? '.' : prefix.slice(0, slash)))
+}

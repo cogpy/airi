@@ -401,9 +401,9 @@ describe('chat store contract', () => {
     // stays silent forever or talks over someone who has just spoken.
     initiativeMocks.noteInteraction.mockClear()
 
-    llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: ChatProvider, _messages: Message[], options: StreamOptions) => {
+    llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
       await options.onStreamEvent?.({ type: 'text-delta', text: 'hi back' })
-      await options.onStreamEvent?.({ type: 'finish', finishReason: 'stop' })
+      await options.onStreamEvent?.({ type: 'finish' })
     })
 
     const store = useChatStore()

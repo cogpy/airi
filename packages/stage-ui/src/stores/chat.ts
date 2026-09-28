@@ -155,7 +155,6 @@ export const useChatStore = defineStore('chat', () => {
   // the emotion list it may choose from.
   const moodTracker = createMoodTracker()
   const runtimePrompt = useAiriRuntimePrompt({ moodLine: () => moodTracker.promptLine() })
-//  const runtimePrompt = useAiriRuntimePrompt()
   const authStore = useAuthStore()
   const llmStore = useLLM()
   const llmToolsStore = useLlmToolsStore()

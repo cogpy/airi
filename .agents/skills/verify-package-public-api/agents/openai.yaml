@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Package Public API"
+  short_description: "Make a package's declared exports, docs and test script real"
+  default_prompt: "Use $verify-package-public-api to audit this package's exports, docs and test script, then prove the fix."

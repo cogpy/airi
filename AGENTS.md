@@ -106,6 +106,7 @@ Concise but detailed reference for contributors working across the `moeru-ai/air
 - For AIRI Live2D, VRM, or MMD import and rendering tests across stage-web, stage-tamagotchi, or stage-pocket, invoke [`$use-agent-browser-for-airi`](.agents/skills/use-agent-browser-for-airi/SKILL.md). It invokes `$use-agent-browser-with-input-file` for the upload mechanism and adds AIRI-specific routes, state preparation, format behavior, and renderer verification.
 - For editing, writing, refactoring, re-writing code, submitting issues, Pull Requests, and docs, comments, invoke [`$simple-english`](./agents/skills/simple-english/SKILL.md).
 - For changing a package's `exports` map or `tsdown` entries, adding a subpath export, a package whose `test` script fails before any test runs, or a package whose README imports or documented API do not work, use [`verify-package-public-api` skill](.agents/skills/verify-package-public-api/SKILL.md).
+- For adding or changing a cognitive or autonomy capability (initiative, turn-taking, mood, memory, attention) in `packages/cognitive-airicog` or wiring one into stage-ui, use [`add-airicog-capability` skill](.agents/skills/add-airicog-capability/SKILL.md).
 
 ## Development Practices
 

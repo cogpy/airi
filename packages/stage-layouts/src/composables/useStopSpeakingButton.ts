@@ -7,7 +7,8 @@ import { computed } from 'vue'
 /**
  * Connects chat speech controls to the active Stage output host.
  *
- * Manual stops affect current playback without cancelling text generation.
+ * Manual speech stops affect current playback. The chat interruption control
+ * combines them with generation cancellation when the user stops a response.
  * Mute is persisted by the shared store and also blocks future TTS sessions.
  */
 export function useStopSpeakingButton(options: {
@@ -30,12 +31,19 @@ export function useStopSpeakingButton(options: {
     speechOutputControlStore.requestStopSpeaking('manual-chat')
   }
 
+  function interruptSpeakingFromChat() {
+    speechOutputControlStore.requestStopSpeaking('manual-chat')
+  }
+
   function stopAllSpeaking() {
     trackTtsStopClicked({ reason: 'manual-all' })
     speechOutputControlStore.requestStopSpeaking('manual-all')
   }
 
   async function toggleSpeechMuted() {
+    const muted = !speechMuted.value
+    speechOutputControlStore.setSpeechMuted(muted)
+
     let wasSpeaking: boolean
     try {
       wasSpeaking = await (options.resolveSpeakingState?.() ?? nowSpeaking.value)
@@ -43,13 +51,9 @@ export function useStopSpeakingButton(options: {
     catch {
       // Muting is the user action; analytics must not make it fail when an
       // auxiliary renderer cannot reach the output host during a reload.
-      speechOutputControlStore.setSpeechMuted(!speechMuted.value)
       return
     }
 
-    const muted = !speechMuted.value
-
-    speechOutputControlStore.setSpeechMuted(muted)
     trackSpeechMuteToggled({
       muted,
       was_speaking: wasSpeaking,
@@ -59,6 +63,7 @@ export function useStopSpeakingButton(options: {
   return {
     showStopSpeakingButton,
     speechMuted,
+    interruptSpeakingFromChat,
     stopSpeakingFromChat,
     stopAllSpeaking,
     toggleSpeechMuted,

@@ -2,6 +2,34 @@
 
 Shared core for stage
 
+## Chat sampling
+
+In **Settings → Modules → Consciousness**, custom temperature and Top P are off
+by default. Enable each parameter only when the selected model supports it.
+Some models accept only one sampling parameter at a time.
+
+Disabling a parameter keeps its slider value but omits it from chat requests.
+Previously saved values remain disabled until the user enables them. Explicit
+per-request overrides still take precedence over these settings.
+
+## Chat images
+
+Web and Electron composers share image drafts and previews. They accept PNG,
+JPEG, WebP, and GIF files up to 20 MB each, through file selection or paste.
+Previews own their Object URLs. Session changes discard pending image reads.
+Failed sends restore the draft through the shared composer.
+
+Choose a provider and model in **Settings → Modules → Vision** and enable
+**Use the vision model for chat images** for a text-only chat model.
+The vision model describes images before the selected chat model replies.
+Local history keeps the images. Provider prompts replace images with descriptions,
+including images from earlier turns and retries. Earlier images can require another
+vision request on later turns. Cloud history currently stores only message text.
+
+Disable this option to send images directly to a chat model that supports them.
+Without a configured vision model, images also go directly to the chat model.
+Use this flow for chat attachments, not periodic screen capture.
+
 ## Character-card module settings
 
 The card store owns three distinct states:
@@ -68,3 +96,39 @@ compare gesture presentation, not conversation storage behavior.
 
 1. If a story is bound to a specific component, it can be placed beside the component in the `src` folder. e.g., `MyComponent.story.vue`
 2. If a story is not bound to a specific component, then it should be placed in the `stories` folder. e.g., `MyStory.story.vue`
+
+## Local Hearing with Sherpaw
+
+Select **Sherpaw** in Hearing settings. Choose a language to see models that support it, then choose a model.
+For a new Sherpaw configuration, the interface language sets the filter and selects a compatible model.
+Chinese and English start with X-ASR on desktop and Paraformer on mobile Web or Stage Pocket.
+An existing model selection stays in place. Choosing a language switches to a compatible model when needed.
+The model detects one of its supported languages. Changing the model saves
+the Provider configuration and replaces its runtime.
+Each speech session currently owns a Worker, released when the session ends or is cancelled.
+
+Hosts must enable `@proj-airi/vite-plugin-sherpaw` to expose model assets.
+`provider-inference` owns recognition and Worker cleanup. `stage-ui` supplies model URLs, cached fetching, the Worker URL, and the Hearing view.
+The Provider is unavailable when the host does not include models.
+Use this Provider for local streaming recognition without API credentials.
+It requires Workers and WebAssembly. Web and Pocket load the selected model from its pinned remote URL.
+Desktop development uses cached local files. Desktop releases bundle all three models.
+Use a remote Provider when model download size or local memory makes that unsuitable.
+The existing VAD pipeline has separate model and runtime downloads.
+
+### Compact Stage status
+
+`HearingStatus` shows the shared, always-on microphone session. Place it above a
+mobile composer or at the bottom of a desktop Stage. It reads local request
+activity, microphone amplitude, the last transcript, and device or provider
+errors.
+
+`StatusCapsule` owns the capsule surface and expandable details. Its indicator
+slot receives business content: Hearing owns the audio bars, while sign-in owns
+its waiting and result icons. The shell has no request or microphone state. Its details
+stay inside its layout bounds so Electron can include them in mouse hit testing.
+`HearingStatus` uses the details slot to match chat error cards without adding
+microphone failures to chat history.
+The component supports reduced motion. Desktop users can enable Streamer mode in
+General settings to hide these overlays without stopping microphone input or sign-in.
+Streamer mode is off by default.

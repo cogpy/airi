@@ -36,11 +36,26 @@ const props = withDefaults(defineProps<{
   /** Space that a floating composer covers at the end of the scroll viewport. */
   tailInset?: number
   variant?: 'desktop' | 'mobile'
+  /**
+   * How the bubbles paint their backgrounds. `opaque` is for hosts with
+   * nothing behind the history, such as a transparent window over the
+   * desktop, where translucent bubbles take the contrast of whatever is under
+   * them.
+   */
+  surface?: 'translucent' | 'opaque'
+  /**
+   * When the scrollbar shows: while scrolling, or also while the pointer is
+   * over the history. A host that passes clicks through the empty history
+   * uses `hover`, so a scrollbar the wheel cannot reveal still appears.
+   */
+  scrollbar?: 'scroll' | 'hover'
   toolCallRenderers?: ChatToolCallRendererRegistry
 }>(), {
   sending: false,
   tailInset: 0,
   variant: 'desktop',
+  surface: 'translucent',
+  scrollbar: 'scroll',
   toolCallRenderers: () => ({}),
 })
 
@@ -125,7 +140,7 @@ const { itemProps } = useVirtualizerBottomAlignment({
   virtualizer: virtualizerRef,
 })
 
-const { onUserScroll } = useChatHistoryScroll({
+useChatHistoryScroll({
   container: chatHistoryRef,
   messages: renderMessages,
   getKey: getChatHistoryItemKey,
@@ -208,7 +223,7 @@ function emitToolCallRerun(
     ref="scroll-container"
     v-bind="$attrs"
     :variant="variant"
-    @scrollbar-pointerdown="onUserScroll"
+    :scrollbar="scrollbar"
   >
     <Virtualizer
       ref="virtualizer"
@@ -234,6 +249,7 @@ function emitToolCallRerun(
             :show-placeholder="sending && index === renderMessages.length - 1"
             :scroll-container="chatHistoryRef"
             :variant="variant"
+            :surface="surface"
             @copy="emitCopyMessage(message, index)"
             @retry="emitRetryMessage(message, index)"
             @delete="emitDeleteMessage(message, index)"
@@ -247,6 +263,7 @@ function emitToolCallRerun(
             :show-placeholder="shouldShowPlaceholder(message) && showStreamingPlaceholder"
             :scroll-container="chatHistoryRef"
             :variant="variant"
+            :surface="surface"
             :tool-call-renderers="toolCallRenderers"
             @copy="emitCopyMessage(message, index)"
             @delete="emitDeleteMessage(message, index)"
@@ -261,6 +278,7 @@ function emitToolCallRerun(
             :can-reply="canReplyToMessage(message)"
             :scroll-container="chatHistoryRef"
             :variant="variant"
+            :surface="surface"
             @copy="emitCopyMessage(message, index)"
             @delete="emitDeleteMessage(message, index)"
             @reply="emitReplyMessage(message)"

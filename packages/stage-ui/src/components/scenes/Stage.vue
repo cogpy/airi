@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Live2DLipSync, Live2DLipSyncOptions } from '@proj-airi/model-driver-lipsync'
 import type { Profile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
-import type { CaptionChannelEvent } from '@proj-airi/stage-shared'
+import type { CaptionChannelEvent, PresenceBubbleState } from '@proj-airi/stage-shared'
 import type { VrmInteractionTarget } from '@proj-airi/stage-ui-three'
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { UnElevenLabsOptions } from 'unspeech'
@@ -14,6 +14,7 @@ import { sleep } from '@moeru/std'
 import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
 import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
 import { createPlaybackManager, createSpeechPipeline, normalizeActPayload } from '@proj-airi/pipelines-audio'
+import { presenceBubbleIdle, presenceBubbleThinking } from '@proj-airi/stage-shared'
 import { defaultLive2DMotionControlDynamics, Live2DScene, useLive2DMotionControl, useLive2dParams, useSettingsLive2d } from '@proj-airi/stage-ui-live2d'
 import { MMDScene } from '@proj-airi/stage-ui-mmd'
 import { SpineScene } from '@proj-airi/stage-ui-spine'
@@ -47,6 +48,7 @@ import { useBackgroundStore } from '../../stores/background'
 import { useChatStore } from '../../stores/chat'
 import { useAiriCardStore } from '../../stores/modules'
 import { useSpeechStore } from '../../stores/modules/speech'
+import { useSettingsPresenceBubble } from '../../stores/presence-bubble'
 import { useProviderConfigStore } from '../../stores/providers/config'
 import { useProviderStore } from '../../stores/providers/provider'
 import { useSettings } from '../../stores/settings'
@@ -241,6 +243,16 @@ function resetAssistantSpeechSurface(source: string) {
   }
 }
 
+const { sending: chatSending } = storeToRefs(useChatStore())
+const { presenceOverride } = storeToRefs(useSettingsPresenceBubble())
+
+// `sending` is raised before the request leaves and cleared once the send
+// settles, which is the span the character has nothing to say yet.
+//
+// Unread stays at zero: nothing reports whether the chat window is showing, so
+// there is no read cursor to count against.
+const chatPresence = computed<PresenceBubbleState>(() => chatSending.value ? presenceBubbleThinking : presenceBubbleIdle)
+const presenceBubble = computed<PresenceBubbleState>(() => presenceOverride.value ?? chatPresence.value)
 const { activeCard } = storeToRefs(useAiriCardStore())
 const speechStore = useSpeechStore()
 const { ssmlEnabled, activeSpeechProvider, activeSpeechModel, activeSpeechVoice, pitch } = storeToRefs(speechStore)
@@ -1038,7 +1050,8 @@ defineExpose({
         v-if="stageModelRenderer === 'live2d' && showStage"
         ref="live2dSceneRef"
         v-model:state="componentState"
-        min-w="50% <lg:full" min-h="100 sm:100"
+        :presence="presenceBubble"
+        min-w="50% <lg:full"
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
@@ -1058,8 +1071,9 @@ defineExpose({
         v-if="stageModelRenderer === 'vrm' && showStage"
         ref="vrmViewerRef"
         v-model:state="componentState"
+        :presence="presenceBubble"
         :background-url="activeBackgroundUrl"
-        min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
+        min-w="50% <lg:full" h-full w-full flex-1
         :model-id="stageModelSelected"
         :model-src="stageModelSelectedUrl"
         :cursor-position="cursorPosition"
@@ -1077,7 +1091,7 @@ defineExpose({
         ref="spineSceneRef"
         v-model:state="componentState"
         :background-url="activeBackgroundUrl"
-        min-w="50% <lg:full" min-h="100 sm:100"
+        min-w="50% <lg:full"
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
@@ -1093,7 +1107,7 @@ defineExpose({
         ref="tachieSceneRef"
         v-model:state="componentState"
         :background-url="activeBackgroundUrl"
-        min-w="50% <lg:full" min-h="100 sm:100"
+        min-w="50% <lg:full"
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"
@@ -1107,7 +1121,7 @@ defineExpose({
         ref="mmdSceneRef"
         v-model:state="componentState"
         :background-url="activeBackgroundUrl"
-        min-w="50% <lg:full" min-h="100 sm:100"
+        min-w="50% <lg:full"
         h-full w-full flex-1
         :model-src="stageModelSelectedUrl"
         :model-id="stageModelSelected"

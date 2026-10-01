@@ -62,6 +62,18 @@ describe('useStopSpeakingButton', () => {
     })
   })
 
+  it('interrupts speech for a replacement message without tracking a stop-button click', () => {
+    requestStopSpeakingMock.mockClear()
+    trackTtsStopClickedMock.mockClear()
+
+    const { interruptSpeakingFromChat } = useStopSpeakingButton()
+
+    interruptSpeakingFromChat()
+
+    expect(requestStopSpeakingMock).toHaveBeenCalledWith('manual-chat')
+    expect(trackTtsStopClickedMock).not.toHaveBeenCalled()
+  })
+
   it('requests a manual-all stop without touching chat input state', () => {
     requestStopSpeakingMock.mockClear()
     trackTtsStopClickedMock.mockClear()
@@ -128,6 +140,34 @@ describe('useStopSpeakingButton', () => {
       muted: true,
       was_speaking: true,
     })
+  })
+
+  it('mutes immediately while the remote playback state is pending', async () => {
+    speechMuted.value = false
+    setSpeechMutedMock.mockClear().mockImplementation((muted: boolean) => {
+      speechMuted.value = muted
+    })
+    trackSpeechMuteToggledMock.mockClear()
+
+    let resolveSpeaking!: (speaking: boolean) => void
+    const speaking = new Promise<boolean>((resolve) => {
+      resolveSpeaking = resolve
+    })
+    const controls = useStopSpeakingButton({
+      resolveSpeakingState: () => speaking,
+    })
+
+    const firstToggle = controls.toggleSpeechMuted()
+    expect(setSpeechMutedMock).toHaveBeenLastCalledWith(true)
+
+    const secondToggle = controls.toggleSpeechMuted()
+    expect(setSpeechMutedMock).toHaveBeenLastCalledWith(false)
+
+    resolveSpeaking(true)
+    await Promise.all([firstToggle, secondToggle])
+    expect(trackSpeechMuteToggledMock).toHaveBeenCalledWith({ muted: true, was_speaking: true })
+    expect(trackSpeechMuteToggledMock).toHaveBeenCalledWith({ muted: false, was_speaking: true })
+    setSpeechMutedMock.mockReset()
   })
 
   it('still toggles mute without capturing a false metric when the output host is unavailable', async () => {

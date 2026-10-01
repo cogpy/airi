@@ -79,9 +79,8 @@ export interface AiriExtension {
       /**
        * Whether to spend a model call naming the subject of each message.
        * Without it the character quotes the user's earlier remark back to the
-       * model as the thing to pick up.
-       *
-       * TODO: not read yet; every card currently gets the quoted remark.
+       * model as the thing to pick up; with it, repeated mentions of one
+       * subject build a single, stronger memory.
        */
       nameTopics?: boolean
     }

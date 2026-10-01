@@ -52,7 +52,7 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
       kind: 'ping',
       urgency: 'immediate',
       headline: 'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
-      note: `Earlier they said: ${remark}`,
+      note: `From earlier in the conversation: ${remark}`,
       destinations: ['character'],
       payload: {
         topic: remark,

@@ -108,7 +108,9 @@ export const useInitiativeStore = defineStore('initiative', () => {
   }
 
   /**
-   * Remembers something as being about a subject, and counts it as interaction.
+   * Remembers something as being about a subject without counting it as
+   * interaction. For subjects named after the fact: `at` is when the remark
+   * was made, and replaying it as interaction would move the lull's start back.
    */
   function recordEpisode(
     entry: { topic: string, salience?: number, valence?: number },
@@ -269,6 +271,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
     configure,
     isEnabled,
     noteInteraction,
+    recordEpisode,
     remember,
     poll,
     forget,

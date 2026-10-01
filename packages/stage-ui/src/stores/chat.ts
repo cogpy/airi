@@ -8,7 +8,7 @@ import type { ChatHistoryItem, ChatToolReference, StreamingAssistantMessage } fr
 import type { ToolCallRerunPayload } from './tool-call-rerun'
 
 import { errorMessageFrom } from '@moeru/std'
-import { createChatOrchestratorRuntime, renderConversationPreview } from '@proj-airi/core-agent'
+import { createChatOrchestratorRuntime, renderConversationPreview, streamFrom } from '@proj-airi/core-agent'
 import { IOAttributes, IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { nanoid } from 'nanoid'
 import { defineStore, storeToRefs } from 'pinia'
@@ -20,6 +20,7 @@ import { activeTurnSpan, startSpan } from '../composables/use-io-tracer'
 import { parseActEmotion } from '../libs/affect/act-emotion'
 import { createMoodTracker } from '../libs/affect/mood-prompt'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
+import { parseTopicName, topicNamingConversation } from '../libs/initiative/topic-naming'
 import { createChatAnalyticsHooks, getProviderMode } from '../libs/product-signals/events/chat'
 import {
   AIRI_CHAT_APP_SURFACE_HEADER,
@@ -369,11 +370,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     },
     onUserTurnReady: ({ messageText, sessionMessages }) => {
-      // The user's remark resets the lull and is remembered as something the
-      // character could pick back up. The remark stands in for its subject:
-      // naming one would cost a model call, and the model voicing the initiative
-      // can judge what a quoted remark was about.
-      initiativeStore.remember({ topic: messageText })
+      rememberRemark(messageText)
 
       const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')
@@ -393,6 +390,61 @@ export const useChatStore = defineStore('chat', () => {
         void artistryAutonomousStore.runArtistTask(messageText, toProviderHistory(sessionMessages))
     },
   })
+
+  /**
+   * Asks the active model what a remark is about. Only reached for cards that
+   * opt into `initiative.nameTopics`, since it is an extra model call per turn.
+   */
+  async function nameTopic(remark: string): Promise<string | undefined> {
+    const providerId = activeProvider.value
+    const modelId = activeModel.value
+    if (!providerId || !modelId)
+      return undefined
+
+    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+    let reply = ''
+    await streamFrom({
+      model: modelId,
+      chatProvider,
+      conversation: topicNamingConversation(remark),
+      options: {
+        onStreamEvent: (event) => {
+          if (event.type === 'text-delta')
+            reply += event.text
+        },
+      },
+    })
+
+    return parseTopicName(reply)
+  }
+
+  /**
+   * Resets the lull and keeps the user's remark as something the character
+   * could pick back up.
+   *
+   * By default the remark itself stands in for its subject, and the model that
+   * voices the initiative judges what it was about. A card with `nameTopics`
+   * pays a model call to name the subject instead, so repeated mentions of one
+   * subject reinforce a single memory. The remark is dated when it arrived,
+   * not when its name came back. A remark that can't be named is skipped,
+   * because a missing subject only means one less thing to bring up.
+   */
+  function rememberRemark(remark: string) {
+    const initiative = cardStore.activeCard?.extensions?.airi?.modules?.initiative
+    if (!initiative?.enabled || !initiative.nameTopics) {
+      initiativeStore.remember({ topic: remark })
+      return
+    }
+
+    const at = Date.now()
+    initiativeStore.noteInteraction(at)
+    void nameTopic(remark)
+      .then((topic) => {
+        if (topic !== undefined)
+          initiativeStore.recordEpisode({ topic }, at)
+      })
+      .catch(() => {})
+  }
 
   async function ingest(
     sendingMessage: string,

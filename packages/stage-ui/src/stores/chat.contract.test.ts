@@ -212,10 +212,19 @@ vi.mock('./modules/consciousness', () => ({
   }),
 }))
 
+const cardMock = vi.hoisted(() => ({
+  activeCard: undefined as unknown,
+}))
+
 vi.mock('./modules/airi-card', () => ({
-  useAiriCardStore: () => ({
-    activeCard: undefined,
-  }),
+  useAiriCardStore: () => cardMock,
+}))
+
+const topicNamingStreamMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@proj-airi/core-agent', async importOriginal => ({
+  ...await importOriginal<typeof import('@proj-airi/core-agent')>(),
+  streamFrom: topicNamingStreamMock,
 }))
 
 vi.mock('./modules/artistry-autonomous', () => ({
@@ -226,6 +235,7 @@ vi.mock('./modules/artistry-autonomous', () => ({
 
 const initiativeMocks = vi.hoisted(() => ({
   noteInteraction: vi.fn(),
+  recordEpisode: vi.fn(),
   remember: vi.fn(),
 }))
 
@@ -415,6 +425,37 @@ describe('chat store contract', () => {
     // counts as interaction; the character's own reply only counts as timing.
     expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello' })
     expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
+  })
+
+  it('names the subject of a remark for a card that opts into nameTopics', async () => {
+    // A card that pays for naming should remember "the job interview", so
+    // later mentions reinforce one memory instead of each remark standing alone.
+    initiativeMocks.noteInteraction.mockClear()
+    initiativeMocks.recordEpisode.mockClear()
+    initiativeMocks.remember.mockClear()
+    cardMock.activeCard = { extensions: { airi: { modules: { initiative: { enabled: true, nameTopics: true } } } } }
+    topicNamingStreamMock.mockImplementationOnce(async ({ options }) => {
+      await options.onStreamEvent({ type: 'text-delta', text: '"The job interview."' })
+    })
+
+    llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
+      await options.onStreamEvent?.({ type: 'text-delta', text: 'good luck!' })
+      await options.onStreamEvent?.({ type: 'finish' })
+    })
+
+    try {
+      const store = useChatStore()
+      await store.send({ sessionId: 'session-1', text: 'I have a job interview tomorrow' })
+      await vi.waitFor(() => expect(initiativeMocks.recordEpisode).toHaveBeenCalledOnce())
+
+      expect(initiativeMocks.recordEpisode).toHaveBeenCalledWith({ topic: 'the job interview' }, expect.any(Number))
+      expect(initiativeMocks.remember).not.toHaveBeenCalled()
+      // Once when the remark arrived, once for her reply.
+      expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
+    }
+    finally {
+      cardMock.activeCard = undefined
+    }
   })
 
   it('passes the current consciousness reasoning option to the chat provider', async () => {

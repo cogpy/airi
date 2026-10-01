@@ -19,15 +19,15 @@ vi.mock('electron', () => ({
 /** A reusable window whose setup finishes only when the test says so. */
 function createDeferredReusableWindow() {
   const created: BrowserWindow[] = []
-  let finishSetup: (() => void) | undefined
+  const pending: Array<() => void> = []
   const reusable = createReusableWindow(() => new Promise<BrowserWindow>((resolve) => {
-    finishSetup = () => {
+    pending.push(() => {
       const window = new BrowserWindow()
       created.push(window)
       resolve(window)
-    }
+    })
   }))
-  return { reusable, created, finishSetup: () => finishSetup?.() }
+  return { reusable, created, finishSetup: () => pending.shift()?.() }
 }
 
 describe('createReusableWindow', () => {
@@ -64,5 +64,57 @@ describe('createReusableWindow', () => {
     const reopening = reusable.getWindow()
     finishSetup()
     await expect(reopening).resolves.toBe(created[1])
+  })
+
+  it('creates a new window when open follows close before the old window is destroyed', async () => {
+    // ROOT CAUSE:
+    //
+    // If close() runs before the window is destroyed, getWindow() returns it.
+    // close() left the cached window set, and ensureWindow returns it while
+    // the renderer is still available.
+    //
+    // We fixed this by forgetting the cached window in close().
+    const { reusable, created, finishSetup } = createDeferredReusableWindow()
+    const opening = reusable.getWindow()
+    finishSetup()
+    await opening
+
+    reusable.close()
+    expect(created[0].isDestroyed()).toBe(false)
+    expect(reusable.getOpenWindow()).toBeUndefined()
+
+    const reopening = reusable.getWindow()
+    finishSetup()
+    await expect(reopening).resolves.toBe(created[1])
+    expect(created[0].close).toHaveBeenCalled()
+  })
+
+  it('creates a new window when open follows close while creation is still in flight', async () => {
+    // ROOT CAUSE:
+    //
+    // If close() runs while creation is in flight, the next getWindow()
+    // receives that promise, and the promise rejects.
+    // close() left the setup promise set, so ensureWindow returned it.
+    //
+    // We fixed this by forgetting that promise in close(). A later open
+    // creates a new window.
+    const { reusable, created, finishSetup } = createDeferredReusableWindow()
+
+    const opening = reusable.getWindow()
+    reusable.close()
+    const reopening = reusable.getWindow()
+    const joining = reusable.getWindow()
+
+    finishSetup()
+    await expect(opening).rejects.toThrow('Window closed during creation')
+    expect(created[0].close).toHaveBeenCalled()
+
+    const afterDiscard = reusable.getWindow()
+    finishSetup()
+    const reopened = await reopening
+    expect(reopened).toBe(created[1])
+    await expect(joining).resolves.toBe(reopened)
+    await expect(afterDiscard).resolves.toBe(reopened)
+    expect(created).toHaveLength(2)
   })
 })

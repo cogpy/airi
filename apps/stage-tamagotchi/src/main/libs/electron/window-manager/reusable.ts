@@ -11,7 +11,8 @@ export interface ReusableWindow {
   /**
    * Closes the open window. A window that is still being created closes as
    * soon as its setup finishes, and callers waiting for it get the error
-   * `Window closed during creation`.
+   * `Window closed during creation`. An open that starts after this creates
+   * a new window.
    */
   close: () => void
 }
@@ -31,8 +32,12 @@ export function createReusableWindow(setupFn: () => BrowserWindow | Promise<Brow
       return windowSetupFnPromise
 
     const setupGeneration = generation
-    windowSetupFnPromise = Promise.resolve(setupFn()).then((created) => {
-      windowSetupFnPromise = undefined
+    const setup = Promise.resolve(setupFn()).then((created) => {
+      // A close() can start a newer creation before this one finishes. Only
+      // the creation that still owns the slot may clear it.
+      if (windowSetupFnPromise === setup)
+        windowSetupFnPromise = undefined
+
       if (setupGeneration !== generation) {
         created.close()
         throw new Error('Window closed during creation')
@@ -46,11 +51,13 @@ export function createReusableWindow(setupFn: () => BrowserWindow | Promise<Brow
 
       return created
     }).catch((error) => {
-      windowSetupFnPromise = undefined
+      if (windowSetupFnPromise === setup)
+        windowSetupFnPromise = undefined
       throw error
     })
 
-    return windowSetupFnPromise
+    windowSetupFnPromise = setup
+    return setup
   }
 
   return {
@@ -58,8 +65,14 @@ export function createReusableWindow(setupFn: () => BrowserWindow | Promise<Brow
     getOpenWindow: () => window && !window.isDestroyed() ? window : undefined,
     close: () => {
       generation++
-      if (window && !window.isDestroyed())
-        window.close()
+      // BrowserWindow.close() stays unfinished while the page handles close.
+      // The creation promise rejects only after setup finishes. Forget both
+      // now, or the next open receives a window that is already going away.
+      const closing = window
+      window = undefined
+      windowSetupFnPromise = undefined
+      if (closing && !closing.isDestroyed())
+        closing.close()
     },
   }
 }

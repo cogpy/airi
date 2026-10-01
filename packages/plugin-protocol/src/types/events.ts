@@ -1136,6 +1136,57 @@ export interface OutputSpeechUtteranceEvent {
   at: number
 }
 
+/**
+ * A co-play game started or ended between participants on different stages.
+ *
+ * The stage that starts a game publishes `start` once, naming every seat. A
+ * stage whose own participant id holds a seat joins: it seats the same
+ * players under the same `sessionId` and plays its own seat. Either stage
+ * publishes `end` when it stops the game early. A game that ends by its own
+ * rules needs no `end`: every stage reaches the same result from the same
+ * moves.
+ *
+ * Consumers ignore events that carry their own `participantId`, because
+ * other windows of the same stage receive them too.
+ */
+export interface OutputGameSessionEvent {
+  /** Id of this game, shared by every stage that plays it. */
+  sessionId: string
+  /** Rules the game is played by, such as `tic-tac-toe`. */
+  gameId: string
+  /** Participant id of the stage that published the event. */
+  participantId: string
+  /** Display name of the publishing character, when known. */
+  name?: string
+  phase: 'start' | 'end'
+  /** Every seat in turn order: the first seat moves first. */
+  seats: Array<{ seat: string, participantId: string }>
+  /** Why the game ended, on `end`, such as `stopped`. */
+  reason?: string
+  /** When the phase began, in Unix milliseconds of the producer's clock. */
+  at: number
+}
+
+/**
+ * One move a participant made in a co-play game.
+ *
+ * A stage publishes each of its own accepted moves. Receivers correlate it
+ * with their copy of the game by `sessionId`, ignore unknown sessions and
+ * their own `participantId`, and submit `move` for `participantId`. The game
+ * rules on the receiving side decide again whether the move is legal.
+ */
+export interface OutputGameActionEvent {
+  /** Same id as in {@link OutputGameSessionEvent}. */
+  sessionId: string
+  gameId: string
+  /** Participant id of the player who moved. */
+  participantId: string
+  /** The move in the game's canonical text form, such as `b2`. */
+  move: string
+  /** When the move was accepted, in Unix milliseconds of the producer's clock. */
+  at: number
+}
+
 interface SparkNotifyEvent {
   id: string
   eventId: string
@@ -1324,6 +1375,8 @@ export const outputGenAiChatMessage = defineProtocolEventa<OutputGenAiChatMessag
 export const outputGenAiChatComplete = defineProtocolEventa<OutputGenAiChatCompleteEvent>('output:gen-ai:chat:complete')
 export const outputSpeechActivity = defineProtocolEventa<OutputSpeechActivityEvent>('output:speech:activity')
 export const outputSpeechUtterance = defineProtocolEventa<OutputSpeechUtteranceEvent>('output:speech:utterance')
+export const outputGameSession = defineProtocolEventa<OutputGameSessionEvent>('output:game:session')
+export const outputGameAction = defineProtocolEventa<OutputGameActionEvent>('output:game:action')
 
 export const sparkNotify = defineProtocolEventa<SparkNotifyEvent>('spark:notify')
 export const sparkEmit = defineProtocolEventa<SparkEmitEvent>('spark:emit')
@@ -1522,6 +1575,16 @@ export interface ProtocolEvents<C = undefined> {
    * so other stages can answer her.
    */
   'output:speech:utterance': OutputSpeechUtteranceEvent
+  /**
+   * A co-play game started or ended. Broadcast to every other peer, so the
+   * stages seated in it can join or stop.
+   */
+  'output:game:session': OutputGameSessionEvent
+  /**
+   * A participant moved in a co-play game. Broadcast to every other peer, so
+   * every stage seated in the game can keep its copy in step.
+   */
+  'output:game:action': OutputGameActionEvent
 
   /**
    * Spark used for allowing agents in a network to raise an event toward the other destinations (e.g. character).

@@ -45,6 +45,23 @@ speakers, she does not yield until the gate has learned her echo level.
 The store is not synchronized across windows, because each window has its own
 audio. See `docs/ai/adr/2026-10-01-self-other-participants.md`.
 
+## Co-play
+
+`stores/coplay.ts` lets the character play a turn-based game with the local
+user or with another AIRI stage. The rules and turn order come from
+`@proj-airi/cognitive-airicog/coplay`; `libs/coplay` opens a game by id and
+turns it into text for the model, the user, and the server channel. Only
+tic-tac-toe ships today, as the reference game.
+
+The feature is off by default. A card turns it on with
+`modules.coplay.enabled`. A UI calls `startSession`, shows `view` and `log`,
+and passes the user's moves to `submitPartnerMove`. On her turn the store makes
+one model call with a `game_move` tool. When she gives no legal move, a fixed
+fallback policy moves for her and the log says so. With another stage, both
+stages play the same moves under one session id through `output:game:session`
+and `output:game:action`. One window of a stage owns a game; the store is not
+synchronized across windows.
+
 ## Button analytics
 
 Register the shared plugin once in each Vue application:

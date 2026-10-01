@@ -24,6 +24,7 @@ import { useChatStore } from '../../chat'
 import { useChatContextStore } from '../../chat/context-store'
 import { useChatSessionStore } from '../../chat/session-store'
 import { useChatStreamStore } from '../../chat/stream-store'
+import { useCoplayStore } from '../../coplay'
 import { useContextObservabilityStore } from '../../devtools/context-observability'
 import { useAiriCardStore } from '../../modules/airi-card'
 import { useConsciousnessStore } from '../../modules/consciousness'
@@ -64,6 +65,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
   const { activeProvider, activeModel, activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
   const streamingControl = useLlmStreamingControlStore()
   const participantsStore = useParticipantsStore()
+  const coplayStore = useCoplayStore()
   const { activeCard } = storeToRefs(useAiriCardStore())
 
   /**
@@ -847,6 +849,24 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
         agentTurnAssembler.reset()
         participantsStore.endAllAgentActivity(Date.now())
       })
+
+      // Co-play in. Peer game events go to the co-play store, which joins
+      // only games that seat this stage and plays only moves for its own
+      // session. Events with this stage's participant id come from another
+      // window of this stage and are dropped, like speech events.
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:game:session', (event) => {
+        if (event.data.participantId === participantsStore.stageParticipantId)
+          return
+        if (event.data.phase === 'start')
+          void coplayStore.joinSession(event.data)
+        else
+          coplayStore.receiveSessionEnd(event.data)
+      }))
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:game:action', (event) => {
+        if (event.data.participantId === participantsStore.stageParticipantId)
+          return
+        coplayStore.receivePartnerAction(event.data)
+      }))
 
       disposeHookFns.value.push(
         chatOrchestrator.onBeforeMessageComposed(async (message, context) => {

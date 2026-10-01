@@ -115,6 +115,20 @@ export interface AiriExtension {
        */
       agentTurnBudget?: number
     }
+
+    /**
+     * Whether the character plays turn-based games with a partner. Off by
+     * default.
+     *
+     * When on, a game can be started with the local user or with another AI
+     * agent on the server channel, and the stage joins games that another
+     * agent starts with her. On her turn she gets one model call to choose a
+     * move; when she gives no legal move, a simple built-in policy moves for
+     * her so the game never stalls. Each of her moves costs a model call.
+     */
+    coplay?: {
+      enabled?: boolean
+    }
   }
 
   agents: Record<string, {

@@ -32,6 +32,10 @@
       "types": "./dist/attention/index.d.mts",
       "default": "./dist/attention/index.mjs"
     },
+    "./coplay": {
+      "types": "./dist/coplay/index.d.mts",
+      "default": "./dist/coplay/index.mjs"
+    },
     "./initiative": {
       "types": "./dist/initiative/index.d.mts",
       "default": "./dist/initiative/index.mjs"

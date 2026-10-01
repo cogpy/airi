@@ -10,6 +10,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 |---|---|
 | **Affect** | Mood that carries between turns and settles back to temperament |
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
+| **Co-play** | Turn-based games with a partner: rules contract, turn-enforcing session, fallback move, tic-tac-toe |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
 | **Initiative** | Turn-taking: when to take the floor during a lull, when to give it back, and when to stop answering another agent |
@@ -285,6 +286,47 @@ both sides. Once the oldest replies leave the window she answers again.
 | `windowMs` | 120000 | makes the pause after a spent budget longer |
 | `cooldownMs` | 2000 | slows the exchange; a burst gets one reply |
 
+### Co-play (playing a game with someone)
+
+A game is a shared environment, not a participant. `GameRules` is the whole
+contract a game implements: its seats, the starting state, whose turn it is,
+the legal moves, what a move does, the result, a text description a model can
+read, and how a move is written and read as text. Everything else is written
+against it, so chess or another game plugs in without changing the session.
+
+```ts
+import { chooseFallbackMove, createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
+
+const session = createGameSession(ticTacToe, [
+  { seat: 'X', participantId: 'stage:airi', kind: 'self' },
+  { seat: 'O', participantId: 'device:microphone', kind: 'other' },
+])
+
+session.submitText('device:microphone', 'b2')
+// => { status: 'rejected', reason: 'not-your-turn', currentSeat: 'X' }
+
+const result = session.submitText('stage:airi', 'I take b2')
+if (result.status === 'accepted')
+  console.info(result.record.text, result.outcome) // 'b2', { status: 'in-progress' }
+
+console.info(ticTacToe.describe(session.state(), 'O')) // board, sides, legal moves
+
+// When the model names no legal move, keep the game going
+const move = chooseFallbackMove(ticTacToe, session.state())
+```
+
+The session owns the state and the history and changes only through an
+accepted move. It refuses a move, and changes nothing, for the first reason
+that applies: `unknown-player`, `game-over`, `not-your-turn`,
+`unreadable-move`, `illegal-move`. It has no clock and does no IO: the caller
+asks the character, reads the user's input, or receives a peer's event, then
+submits the move.
+
+`chooseFallbackMove` wins at once if it can, otherwise avoids any move that
+lets the opponent win at once, otherwise plays the first legal move. It knows
+nothing about the game beyond `GameRules`, and the same state always gives the
+same move.
+
 ### Memory (episodic)
 
 The policy layer for remembering: not storage, and not similarity search —
@@ -427,6 +469,7 @@ pnpm -F @proj-airi/cognitive-airicog examples
 src/
   atomspace/    AtomSpace + type definitions
   attention/    ECAN + RelevanceRealization
+  coplay/       GameRules, game session, fallback move, tic-tac-toe
   reasoning/    PLN + TVFormulas
   orchestration/  CognitiveOrchestrator
   ontogenesis/  OntogeneticKernel + evolution

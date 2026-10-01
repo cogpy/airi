@@ -38,4 +38,10 @@ export interface ParticipantActivity {
    * has no text here: transcription happens later, in the hearing pipeline.
    */
   text?: string
+  /**
+   * Turn the speech belongs to, when it is known. The self channel sets it on
+   * `start` from the played item, so other stages can tell where one of her
+   * replies ends and the next begins.
+   */
+  turnId?: string
 }

@@ -152,4 +152,61 @@ describe('participants store', () => {
 
     expect(activity).toEqual([])
   })
+
+  it('carries the turn of a self playback when the stage knows it', () => {
+    const store = useParticipantsStore()
+    const activity = recordActivity(store)
+
+    store.publishSelfPlaybackStart({ id: 'item-1', audio: steadyAudio(100), text: 'Hi.', at: START, turnId: 'turn-1' })
+
+    expect(activity).toEqual([
+      { participant: SELF_PARTICIPANT, phase: 'start', at: START, text: 'Hi.', turnId: 'turn-1' },
+    ])
+  })
+
+  it('reports another agent as an other participant with origin agent', () => {
+    const store = useParticipantsStore()
+    const activity = recordActivity(store)
+    const agent = { id: 'stage:b', kind: 'other', origin: 'agent' }
+
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'start', at: START })
+    expect(store.agentSpeaking).toBe(true)
+
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'end', at: START + 500 })
+    expect(store.agentSpeaking).toBe(false)
+
+    expect(activity).toEqual([
+      { participant: agent, phase: 'start', at: START },
+      { participant: agent, phase: 'end', at: START + 500 },
+    ])
+  })
+
+  it('keeps one agent\'s activity alternating', () => {
+    const store = useParticipantsStore()
+    const activity = recordActivity(store)
+
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'end', at: START })
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'start', at: START + 10 })
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'start', at: START + 20 })
+
+    expect(activity.map(event => event.phase)).toEqual(['start'])
+  })
+
+  it('ends every speaking agent at once', () => {
+    const store = useParticipantsStore()
+    const activity = recordActivity(store)
+
+    store.reportAgentActivity({ participantId: 'stage:b', phase: 'start', at: START })
+    store.reportAgentActivity({ participantId: 'stage:c', phase: 'start', at: START })
+    store.endAllAgentActivity(START + 100)
+
+    expect(store.agentSpeaking).toBe(false)
+    expect(activity.filter(event => event.phase === 'end').map(event => event.participant.id)).toEqual(['stage:b', 'stage:c'])
+  })
+
+  it('names this stage with a stable participant id', () => {
+    const store = useParticipantsStore()
+
+    expect(store.stageParticipantId).toMatch(/^stage:/)
+  })
 })

@@ -232,6 +232,27 @@ A spoken turn is one IO trace, from the wake word to playback:
 
 A typed turn starts its trace at `Interaction turn`.
 
+
+## Participants and barge-in
+
+`libs/participants` and `stores/participants.ts` tell the character's own voice
+apart from other speakers. Her own speech output is the `self` participant: the
+store keeps a loudness envelope of each played clip. The echo gate compares the
+microphone with that delayed envelope and decides whether someone else is
+talking over her.
+
+The voice pipeline interrupts her when it accepts speech during her turn. It
+needs platform echo cancellation or an external echo classifier for that. The
+echo gate is that classifier: it is the pipeline's `acceptSpeech` check.
+
+The feature is off by default. A card turns it on with
+`modules.initiative.yieldWhenInterrupted`. Use it when a person must be able to
+stop her by talking over speakers without echo cancellation. With speakers, she
+does not yield until the gate has learned her echo level.
+
+The store is not synchronized across windows, because each window has its own
+audio. See `docs/ai/adr/2026-10-01-self-other-participants.md`.
+
 ## Button analytics
 
 Register the shared plugin once in each Vue application:

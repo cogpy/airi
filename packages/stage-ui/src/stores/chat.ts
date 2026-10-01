@@ -1038,12 +1038,12 @@ export const useChatStore = defineStore('chat', () => {
       if (!isOwnerTurn(sessionId, sessionMessages))
         return
 
-      // Both turns count as the conversation being live, so the lull starts
-      // from whoever spoke last, not from the character's own replies. The
-      // guard above excludes background tasks and notice-driven turns: neither
-      // is the user being present. Only timing is recorded — naming what a turn
-      // was *about* awaits `initiative.remember()`.
-      initiativeStore.noteInteraction()
+      // The user's remark resets the lull and is remembered as something the
+      // character could pick back up. The guard above excludes background tasks
+      // and notice-driven turns: neither is the user being present. The remark
+      // stands in for its subject: naming one would cost a model call, and the
+      // model voicing the initiative can judge what a quoted remark was about.
+      initiativeStore.remember({ topic: messageText })
 
       const autonomousTarget = sessionCard(sessionId)?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')

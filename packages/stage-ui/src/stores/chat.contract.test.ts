@@ -279,6 +279,7 @@ vi.mock('./modules/artistry-autonomous', () => ({
 
 const initiativeMocks = vi.hoisted(() => ({
   noteInteraction: vi.fn(),
+  remember: vi.fn(),
 }))
 
 vi.mock('./modules/initiative', () => ({
@@ -1255,6 +1256,7 @@ describe('chat store contract', () => {
     // Without this the character never learns a lull has begun, so it either
     // stays silent forever or talks over someone who has just spoken.
     initiativeMocks.noteInteraction.mockClear()
+    initiativeMocks.remember.mockClear()
 
     llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
       await options.onStreamEvent?.({ type: 'text-delta', text: 'hi back' })
@@ -1264,8 +1266,10 @@ describe('chat store contract', () => {
     const store = useChatStore()
     await store.send({ sessionId: 'session-1', text: 'hello' })
 
-    // Once for the user's turn, once for the character's own reply.
-    expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
+    // The user's turn is remembered as something to pick back up, which also
+    // counts as interaction; the character's own reply only counts as timing.
+    expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello' })
+    expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
   })
 
   it('passes the current consciousness reasoning option to the chat provider', async () => {

@@ -1,7 +1,9 @@
 import type { EchoGateConfig, EchoGateDecision, EnvelopeSource, Participant, ParticipantActivity } from '../libs/participants'
 
+import { useLocalStorage } from '@vueuse/core'
+import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { createDefaultEchoGateConfig, createEchoGate, energyEnvelope } from '../libs/participants'
 
@@ -60,6 +62,15 @@ function createDefaultDeviceActivityConfig(): DeviceActivityConfig {
  * - Echo gate (learned state). Lives as long as the store, so calibration
  *   carries over between utterances. {@link configure} replaces it and drops
  *   what it learned.
+ * - Agent speech (runtime state). Other AI agents on the server channel, by
+ *   participant id. `agentSpeaking` is true while any of them has started and
+ *   not ended. Fed by the context bridge from speech events.
+ * - Stage participant id (persisted configuration). `stageParticipantId`
+ *   names this stage to other stages. It lives in local storage, so it stays
+ *   the same across restarts and is shared by every window of one stage: a
+ *   window can then recognize, and ignore, speech events that another window
+ *   of the same stage published. It is not the card id, because two stages
+ *   running the same card must still tell each other apart.
  *
  * Activity handlers run synchronously, in subscription order, when the state
  * changes.
@@ -68,6 +79,11 @@ export const useParticipantsStore = defineStore('participants', () => {
   const selfSpeaking = ref(false)
   const deviceSpeaking = ref(false)
   const otherSpeaking = ref(false)
+  const agentSpeaking = ref(false)
+  const storedStageParticipantId = useLocalStorage('settings/participants/stage-participant-id', () => `stage:${nanoid()}`)
+  const stageParticipantId = computed(() => storedStageParticipantId.value)
+  const agents = new Map<string, Participant>()
+  const speakingAgents = new Set<string>()
 
   let gateConfig: EchoGateConfig = createDefaultEchoGateConfig()
   let activityConfig: DeviceActivityConfig = createDefaultDeviceActivityConfig()
@@ -123,7 +139,7 @@ export const useParticipantsStore = defineStore('participants', () => {
    * `id` correlates this call with {@link publishSelfPlaybackStop}. `at` is the
    * playback manager's `startedAt`.
    */
-  function publishSelfPlaybackStart(playback: { id: string, audio: EnvelopeSource, text: string, at: number }): void {
+  function publishSelfPlaybackStart(playback: { id: string, audio: EnvelopeSource, text: string, at: number, turnId?: string }): void {
     gate.startSelf({
       id: playback.id,
       at: playback.at,
@@ -131,7 +147,13 @@ export const useParticipantsStore = defineStore('participants', () => {
     })
     activeSelfPlaybacks.add(playback.id)
     selfSpeaking.value = true
-    emit({ participant: SELF_PARTICIPANT, phase: 'start', at: playback.at, text: playback.text })
+    emit({
+      participant: SELF_PARTICIPANT,
+      phase: 'start',
+      at: playback.at,
+      text: playback.text,
+      ...(playback.turnId ? { turnId: playback.turnId } : {}),
+    })
   }
 
   /**
@@ -205,6 +227,45 @@ export const useParticipantsStore = defineStore('participants', () => {
   }
 
   /**
+   * Another AI agent started or stopped speaking. The first report of an
+   * agent registers it as an `other` participant with origin `agent`.
+   *
+   * A repeated start or an end without a start is ignored, so one agent's
+   * activity always alternates. `at` must be on this renderer's clock, not
+   * the agent's, because barge-in compares it with local playback times.
+   */
+  function reportAgentActivity(activity: { participantId: string, phase: 'start' | 'end', at: number }): void {
+    let participant = agents.get(activity.participantId)
+    if (!participant) {
+      participant = Object.freeze({ id: activity.participantId, kind: 'other', origin: 'agent' })
+      agents.set(activity.participantId, participant)
+    }
+
+    if (activity.phase === 'start') {
+      if (speakingAgents.has(activity.participantId))
+        return
+      speakingAgents.add(activity.participantId)
+    }
+    else if (!speakingAgents.delete(activity.participantId)) {
+      return
+    }
+
+    agentSpeaking.value = speakingAgents.size > 0
+    emit({ participant, phase: activity.phase, at: activity.at })
+  }
+
+  /**
+   * Ends the speech of every agent still marked as speaking, for example when
+   * the card stops conversing with agents or the channel goes away. Without
+   * it, a lost end event would leave barge-in waiting on an agent forever.
+   */
+  function endAllAgentActivity(at: number): void {
+    // Deleting the visited entry while iterating a Set is well defined.
+    for (const participantId of speakingAgents)
+      reportAgentActivity({ participantId, phase: 'end', at })
+  }
+
+  /**
    * Subscribes to activity of every participant. Returns an unsubscribe.
    * Consumers that act only on others, such as barge-in, filter on
    * `activity.participant.kind`.
@@ -220,6 +281,8 @@ export const useParticipantsStore = defineStore('participants', () => {
     selfSpeaking,
     deviceSpeaking,
     otherSpeaking,
+    agentSpeaking,
+    stageParticipantId,
 
     configure,
     publishSelfPlaybackStart,
@@ -227,6 +290,8 @@ export const useParticipantsStore = defineStore('participants', () => {
     feedDeviceFrame,
     reportDeviceSpeechStart,
     reportDeviceSpeechEnd,
+    reportAgentActivity,
+    endAllAgentActivity,
     onActivity,
   }
 })

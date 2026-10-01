@@ -265,6 +265,9 @@ export class DiscordAdapter {
             text: content,
             textRaw: rawContent,
             overrides: {
+              // TODO: Move the Discord speaker to the structured speaker field
+              // (`speaker` with kind `remote-user`) instead of this text prefix.
+              // See docs/ai/adr/2026-10-01-self-other-participants.md, phase 2.
               messagePrefix: displayName
                 ? `(From Discord user ${displayName} ${contextPrefix}): `
                 : `(From Discord user ${contextPrefix}): `,

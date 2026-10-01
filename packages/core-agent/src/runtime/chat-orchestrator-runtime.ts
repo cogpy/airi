@@ -5,7 +5,7 @@ import type { AgentContextPort } from '../contracts/context-port'
 import type { AgentLLMPort } from '../contracts/llm-port'
 import type { AgentForegroundStreamPort } from '../contracts/stream-port'
 import type { AssistantTurn, Conversation, Turn } from '../messages/types'
-import type { ChatHistoryItem, ChatSlices, ChatStreamEventContext, ChatToolReference, ContextMessage, StreamingAssistantMessage } from '../types/chat'
+import type { ChatHistoryItem, ChatSlices, ChatSpeaker, ChatStreamEventContext, ChatToolReference, ContextMessage, StreamingAssistantMessage } from '../types/chat'
 import type { LlmUsage, StreamEvent, StreamOptions } from '../types/llm'
 
 import { createQueue } from '@proj-airi/stream-kit'
@@ -83,6 +83,39 @@ function formatReplyPromptPrefix(replyToMessageId: string | undefined, messagesB
     : `[Replying to message: ${replyToMessageId}]\n`
 }
 
+/**
+ * Formats the model-only line that names who said a user turn. This is the
+ * one place a speaker reaches the prompt: callers set `speaker` on the turn
+ * and never write a name into the text themselves.
+ *
+ * Turns from the local user carry no speaker and get no line, so their prompt
+ * stays as before.
+ *
+ * @example
+ * formatSpeakerPromptPrefix({ id: 'stage-1', name: 'Rin', kind: 'agent' })
+ * // => '[Speaker: Rin (another AI agent)]\n'
+ */
+/** Longest speaker name rendered into the prompt; a name is a label, not content. */
+const MAX_SPEAKER_NAME_LENGTH = 64
+
+function formatSpeakerPromptPrefix(speaker: ChatSpeaker | undefined): string {
+  if (!speaker)
+    return ''
+
+  // The name comes from another peer. Collapsing whitespace and dropping
+  // brackets keeps it on one line inside the marker, so it cannot close the
+  // marker early or start a line that reads as a new instruction. The length
+  // cap stops a peer from filling the prompt through its name.
+  const clean = (value: string) => value.replace(/[[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_SPEAKER_NAME_LENGTH)
+  const name = clean(speaker.name) || clean(speaker.id)
+  const kindLabel = {
+    'agent': 'another AI agent',
+    'remote-user': 'a remote user',
+    'device': 'a local device',
+  }[speaker.kind]
+  return `[Speaker: ${name} (${kindLabel})]\n`
+}
+
 function resolveReplyTargetId(replyToMessageId: string | undefined, messages: ChatHistoryItem[]): string | undefined {
   if (!replyToMessageId)
     return undefined
@@ -128,6 +161,11 @@ export interface ChatOrchestratorSendOptions {
   input?: ChatStreamEventContext['input']
   /** Message that the new user turn replies to in the target session. */
   replyToMessageId?: string
+  /**
+   * Who said the new user turn, when it was not the local user. Stored on the
+   * user message and named to the model in the prompt. Omit for the local user.
+   */
+  speaker?: ChatSpeaker
   /** Temperature for the LLM request. */
   temperature?: number
   /** Top_p for the LLM request. */
@@ -509,7 +547,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       if (message.role === 'assistant' && message.generationTranscript)
         return [structuredClone(unwrapMessage(message.generationTranscript))]
       const source = message.role === 'user'
-        ? prependTextToContent(unwrapMessage(message), `${formatTimePrefix(getStablePromptTimestamp(message, nowTs))}${formatReplyPromptPrefix(message.replyToMessageId, messagesById)}`)
+        ? prependTextToContent(unwrapMessage(message), `${formatTimePrefix(getStablePromptTimestamp(message, nowTs))}${formatSpeakerPromptPrefix(message.speaker)}${formatReplyPromptPrefix(message.replyToMessageId, messagesById)}`)
         : unwrapMessage(message)
       return chatMessagesToTurns(source.role === 'assistant' && source.providerTranscript?.length ? source.providerTranscript : [source], message.id ?? `history-${historyIndex}`)
     })
@@ -560,6 +598,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
         createdAt: sendingCreatedAt,
         id: streamContextMessageId,
         ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(options.speaker ? { speaker: options.speaker } : {}),
       },
       contexts: deps.context.snapshot(),
       composedMessage: [],
@@ -663,6 +702,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
         createdAt: sendingCreatedAt,
         id: roundId,
         ...(replyToMessageId ? { replyToMessageId } : {}),
+        ...(options.speaker ? { speaker: options.speaker } : {}),
         ...(options.toolReferences?.length ? { tools: options.toolReferences } : {}),
       }
       deps.session.appendSessionMessage(sessionId, userMessage)

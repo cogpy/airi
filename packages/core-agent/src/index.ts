@@ -53,6 +53,7 @@ export type {
   ChatSlicesText,
   ChatSlicesToolCall,
   ChatSlicesToolCallResult,
+  ChatSpeaker,
   ChatStreamEvent,
   ChatStreamEventContext,
   ChatToolReference,

@@ -12,7 +12,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
-| **Initiative** | Turn-taking: when to take the floor during a lull, and when to give it back |
+| **Initiative** | Turn-taking: when to take the floor during a lull, when to give it back, and when to stop answering another agent |
 | **Memory** | What an experience was worth, how firmly it is still held, what resurfaces |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
@@ -253,6 +253,37 @@ interrupting whatever else is true, and that overrides every reason to hold on.
 Continuity of `overlapMs` is the audio layer's to track: a pause that ends the
 overlap resets it, so a run of short backchannels never accumulates into an
 interruption.
+
+### Conversation guard (talking with another agent)
+
+Two characters that each answer the other never stop on their own. The guard
+is the brake: she replies to at most `turnBudget` agent turns in any
+`windowMs`, and never to two agent turns closer than `cooldownMs`.
+
+```ts
+import { decideAgentReply } from '@proj-airi/cognitive-airicog/initiative'
+
+const repliedAt: number[] = []
+
+function onAgentTurn(now: number) {
+  const decision = decideAgentReply({ now, repliedAt }, { turnBudget: 6 })
+  if (!decision.reply)
+    return // decision.reason is 'over-budget' or 'cooldown'
+
+  repliedAt.push(now)
+  reply()
+}
+```
+
+Only turns she replied to spend budget. When the budget is spent she falls
+quiet, the other agent has nothing to answer, and the conversation stops on
+both sides. Once the oldest replies leave the window she answers again.
+
+| Setting | Default | Raising it |
+|---|---|---|
+| `turnBudget` | 6 | lets the conversation run longer |
+| `windowMs` | 120000 | makes the pause after a spent budget longer |
+| `cooldownMs` | 2000 | slows the exchange; a burst gets one reply |
 
 ### Memory (episodic)
 

@@ -1084,6 +1084,58 @@ type OutputGenAiChatCompleteEvent = {
   usage: OutputGenAiChatUsage
 } & Partial<WithInputSource<'stage-web' | 'stage-tamagotchi' | 'discord'>> & Partial<WithOutputSource<'gen-ai:chat'>>
 
+/**
+ * A participant started or stopped speaking aloud.
+ *
+ * A stage publishes this for its own character when the active card opts in to
+ * conversation with other agents. Another stage turns it into an `other`
+ * participant with origin `agent`, so turn-taking can treat the speaking agent
+ * like a person talking.
+ *
+ * Producers publish one `start` and one `end` per played speech item, in that
+ * order. Consumers correlate them by `participantId` only.
+ */
+export interface OutputSpeechActivityEvent {
+  /**
+   * Stable id of the speaking participant, unique per stage and the same in
+   * every window of that stage. A consumer ignores events that carry its own
+   * id, because other windows of the same stage receive them too.
+   */
+  participantId: string
+  /** Display name of the speaking character, when known. */
+  name?: string
+  phase: 'start' | 'end'
+  /** When the phase began, in Unix milliseconds of the producer's clock. */
+  at: number
+}
+
+/**
+ * Text of one item a participant spoke aloud.
+ *
+ * Published together with the `start` of {@link OutputSpeechActivityEvent} for
+ * the same item. A reply is usually several items, so consumers that answer
+ * the speaker should join the items of one turn before replying.
+ */
+export interface OutputSpeechUtteranceEvent {
+  /**
+   * Unique id of this item. Consumers use it to make sure only one of their
+   * windows acts on an utterance that every window received.
+   */
+  id: string
+  /** Same id as in {@link OutputSpeechActivityEvent}. */
+  participantId: string
+  /** Display name of the speaking character, when known. */
+  name?: string
+  /**
+   * Turn the item belongs to, when the producer knows it. Items of one turn
+   * share it.
+   */
+  turnId?: string
+  text: string
+  /** When the item became audible, in Unix milliseconds of the producer's clock. */
+  at: number
+}
+
 interface SparkNotifyEvent {
   id: string
   eventId: string
@@ -1270,6 +1322,8 @@ export const inputVoice = defineProtocolEventa<WebSocketEventInputVoice>('input:
 export const outputGenAiChatToolCall = defineProtocolEventa<OutputGenAiChatToolCallEvent>('output:gen-ai:chat:tool-call')
 export const outputGenAiChatMessage = defineProtocolEventa<OutputGenAiChatMessageEvent>('output:gen-ai:chat:message')
 export const outputGenAiChatComplete = defineProtocolEventa<OutputGenAiChatCompleteEvent>('output:gen-ai:chat:complete')
+export const outputSpeechActivity = defineProtocolEventa<OutputSpeechActivityEvent>('output:speech:activity')
+export const outputSpeechUtterance = defineProtocolEventa<OutputSpeechUtteranceEvent>('output:speech:utterance')
 
 export const sparkNotify = defineProtocolEventa<SparkNotifyEvent>('spark:notify')
 export const sparkEmit = defineProtocolEventa<SparkEmitEvent>('spark:emit')
@@ -1457,6 +1511,17 @@ export interface ProtocolEvents<C = undefined> {
   'output:gen-ai:chat:tool-call': OutputGenAiChatToolCallEvent
   'output:gen-ai:chat:message': OutputGenAiChatMessageEvent
   'output:gen-ai:chat:complete': OutputGenAiChatCompleteEvent
+
+  /**
+   * A character started or stopped speaking aloud. Broadcast to every other
+   * peer, so other stages can take turns with her.
+   */
+  'output:speech:activity': OutputSpeechActivityEvent
+  /**
+   * Text of one item a character spoke aloud. Broadcast to every other peer,
+   * so other stages can answer her.
+   */
+  'output:speech:utterance': OutputSpeechUtteranceEvent
 
   /**
    * Spark used for allowing agents in a network to raise an event toward the other destinations (e.g. character).

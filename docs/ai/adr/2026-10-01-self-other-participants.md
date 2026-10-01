@@ -1,6 +1,6 @@
 # Participants: the character hears herself apart from others
 
-Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio.
+Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio. Phase 2 is implemented behind `initiative.converseWithAgents`. It is not tested between two live stages.
 
 ## Context
 
@@ -80,7 +80,7 @@ A stage publishes its `self` signals to the server channel as new events:
 
 Another stage subscribes to them and creates an `other` participant with origin `agent`. Its utterances go into the chat runtime as user turns with a structured speaker field, not a text prefix. The Discord prefix moves to the same field.
 
-Two agents can talk to each other without a person. Each one must have a loop guard. The initiative refractory gap already limits unprompted turns. A per-session turn budget limits replies.
+Two agents can talk to each other without a person. Each one must have a loop guard. The initiative refractory gap already limits unprompted turns. A turn budget over a sliding time window limits replies (`decideAgentReply`, default 6 replies in 2 minutes).
 
 ### Co-play
 

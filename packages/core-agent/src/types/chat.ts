@@ -69,7 +69,31 @@ export interface ContextMessage extends ContextUpdate<Record<string, unknown>, u
   createdAt: number
 }
 
+/**
+ * Who said a user turn, when it was not the person at this stage.
+ *
+ * The runtime renders it into the model prompt only, so the model can tell
+ * another agent or a remote person apart from the local user. The stored text
+ * stays what the speaker said.
+ *
+ * - `agent`: another AI character, such as a second AIRI stage.
+ * - `remote-user`: a person on Discord or another remote channel.
+ * - `device`: a local input device other than the usual one.
+ */
+export interface ChatSpeaker {
+  /** Stable id of the speaker, unique within its kind. */
+  id: string
+  /** Name the model should use for the speaker. */
+  name: string
+  kind: 'agent' | 'remote-user' | 'device'
+}
+
 export type ChatHistoryItem = (ChatMessage | ErrorMessage) & {
+  /**
+   * Who said this user turn, when it was not the local user. Absent for
+   * turns from the local user.
+   */
+  speaker?: ChatSpeaker
   context?: ContextMessage
   createdAt?: number
   id?: string

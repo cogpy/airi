@@ -82,6 +82,15 @@ export {
 
 // Initiative - Speaking during a lull
 export {
+  type AgentReplyDecision,
+  type AgentReplyHold,
+  type AgentReplyState,
+  type ConversationGuardConfig,
+  createDefaultConversationGuardConfig,
+  decideAgentReply,
+} from './initiative/conversation-guard'
+
+export {
   candidatesFromFocus,
   createDefaultInitiativeConfig,
   decideInitiative,

@@ -17,6 +17,14 @@ function getLastSparkEventId() {
   return handleSparkNotifyWithReaction.mock.calls.at(-1)?.[0]?.data?.id
 }
 
+// The context bridge reads the active card, and the card store translates its
+// defaults through vue-i18n, which needs a component setup outside of tests.
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string) => key,
+  }),
+}))
+
 vi.mock('../../character', () => ({
   useCharacterOrchestratorStore: () => ({
     handleSparkNotifyWithReaction,

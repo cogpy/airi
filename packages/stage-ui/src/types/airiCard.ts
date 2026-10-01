@@ -94,6 +94,26 @@ export interface AiriExtension {
        * at all.
        */
       yieldWhenInterrupted?: boolean
+      /**
+       * Whether the character talks with other AI agents on the server
+       * channel. Off by default.
+       *
+       * When on, the stage publishes when she starts and stops speaking and
+       * what she says, and answers what other agents on the channel say. Their
+       * speech also counts as someone talking over her, so with
+       * `yieldWhenInterrupted` she can yield to them too. Two characters that
+       * both turn this on hold a conversation until one of them spends her
+       * `agentTurnBudget`.
+       */
+      converseWithAgents?: boolean
+      /**
+       * Most agent turns she answers within two minutes, when
+       * `converseWithAgents` is on. When it is spent she falls quiet, so a
+       * conversation between two agents stops. `0` means she listens to
+       * agents but never answers. Defaults to the conversation guard's own
+       * budget of 6.
+       */
+      agentTurnBudget?: number
     }
   }
 

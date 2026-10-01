@@ -23,6 +23,7 @@ import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { createQueue } from '@proj-airi/stream-kit'
 import { Callout } from '@proj-airi/ui'
 import { useBroadcastChannel } from '@vueuse/core'
+import { nanoid } from 'nanoid'
 // import { createTransformers } from '@xsai-transformers/embed'
 // import embedWorkerURL from '@xsai-transformers/embed/worker?worker&url'
 // import { embed } from '@xsai/embed'
@@ -46,6 +47,7 @@ import { useLlmStreamingControlStore } from '../../stores/ai/chat-llm/streaming-
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
 import { useBackgroundStore } from '../../stores/background'
 import { useChatStore } from '../../stores/chat'
+import { useModsServerChannelStore } from '../../stores/mods/api/channel-server'
 import { useAiriCardStore } from '../../stores/modules'
 import { useSpeechStore } from '../../stores/modules/speech'
 import { useParticipantsStore } from '../../stores/participants'
@@ -636,20 +638,27 @@ bindSpeakingStateToPlaybackManager(playbackManager, {
  * Whether the active card lets a person stop her by talking over her.
  *
  * Read on every playback and speech event, so a card switch applies from the
- * next event. Off by default: without it, the self channel publishes nothing
- * and the barge-in controller never sees another participant.
+ * next event. Off by default: without it, the barge-in controller never sees
+ * another participant.
  */
 const yieldWhenInterrupted = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.yieldWhenInterrupted ?? false)
+/**
+ * Whether the active card lets her talk with other AI agents. When on, her
+ * self activity and utterances go out on the server channel. Read per event,
+ * like `yieldWhenInterrupted`. Off by default.
+ */
+const converseWithAgents = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.converseWithAgents ?? false)
 const participantsStore = useParticipantsStore()
+const serverChannelStore = useModsServerChannelStore()
 
-// Self channel: each played item is published as an efference copy, so the
-// echo gate knows what she said and when without listening to it. Stops are
-// always published: the store ignores unknown ids, and a card switch during
-// playback must not leave her marked as speaking.
+// Self channel: each played item is published as an efference copy, for the
+// echo gate and for other stages. With both options off it publishes nothing.
+// Stops are always published: the store ignores unknown ids, and a card switch
+// during playback must not leave her marked as speaking.
 playbackManager.onStart(({ item, startedAt }) => {
-  if (!yieldWhenInterrupted.value)
+  if (!yieldWhenInterrupted.value && !converseWithAgents.value)
     return
-  participantsStore.publishSelfPlaybackStart({ id: item.id, audio: item.audio, text: item.text, at: startedAt })
+  participantsStore.publishSelfPlaybackStart({ id: item.id, audio: item.audio, text: item.text, at: startedAt, turnId: item.turnId ?? item.intentId })
 })
 playbackManager.onEnd(({ item, endedAt }) => {
   participantsStore.publishSelfPlaybackStop({ id: item.id, at: endedAt })
@@ -669,6 +678,28 @@ const bargeInController = createBargeInController({
   stopSpeaking: () => speechOutputControlStore.requestStopSpeaking('barge-in'),
 })
 bindBargeInToPlaybackManager(playbackManager, bargeInController)
+// Agent channel out: her self activity goes to other stages as
+// `output:speech:activity`, and each played item's text as
+// `output:speech:utterance` right after its start. Only this window plays her
+// speech, so only it publishes. Receivers ignore their own `stageParticipantId`.
+const disposeSelfSpeechPublisher = participantsStore.onActivity((activity) => {
+  if (activity.participant.kind !== 'self' || !converseWithAgents.value)
+    return
+
+  const participantId = participantsStore.stageParticipantId
+  const name = activeCard.value?.name
+  serverChannelStore.send({
+    type: 'output:speech:activity',
+    data: { participantId, name, phase: activity.phase, at: activity.at },
+  })
+  if (activity.phase === 'start' && activity.text?.trim()) {
+    serverChannelStore.send({
+      type: 'output:speech:utterance',
+      data: { id: nanoid(), participantId, name, turnId: activity.turnId, text: activity.text, at: activity.at },
+    })
+  }
+})
+
 const disposeParticipantActivity = participantsStore.onActivity((activity) => {
   if (activity.participant.kind !== 'other')
     return
@@ -1060,6 +1091,7 @@ async function captureCharacterFrame() {
 
 onUnmounted(() => {
   disposePlaybackStateHandler()
+  disposeSelfSpeechPublisher()
   disposeParticipantActivity()
   bargeInController.dispose()
   resetLive2dLipSync()

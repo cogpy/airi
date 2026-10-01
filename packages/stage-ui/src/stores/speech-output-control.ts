@@ -2,7 +2,15 @@ import { useLocalStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type SpeechOutputStopReason = 'manual-chat' | 'manual-all' | 'muted'
+/**
+ * Why speech output stopped.
+ *
+ * - `manual-chat` / `manual-all`: a stop button.
+ * - `muted`: speech output was muted.
+ * - `barge-in`: another participant talked over the character, and the active
+ *   card lets her yield (`modules.initiative.yieldWhenInterrupted`).
+ */
+export type SpeechOutputStopReason = 'manual-chat' | 'manual-all' | 'muted' | 'barge-in'
 
 /**
  * Represents a user-requested stop-speaking command for the stage output host.

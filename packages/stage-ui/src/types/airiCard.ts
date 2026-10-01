@@ -83,6 +83,17 @@ export interface AiriExtension {
        * subject build a single, stronger memory.
        */
       nameTopics?: boolean
+      /**
+       * Whether a person can stop the character by talking over her. Off by
+       * default.
+       *
+       * When on, the microphone keeps listening while she speaks, so voice
+       * detection can hear an interruption. It does not transcribe during her
+       * speech. With speakers instead of headphones, she may misjudge her own
+       * echo at first. Until the echo gate has calibrated, she does not yield
+       * at all.
+       */
+      yieldWhenInterrupted?: boolean
     }
   }
 

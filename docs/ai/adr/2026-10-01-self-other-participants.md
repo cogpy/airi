@@ -1,6 +1,6 @@
 # Participants: the character hears herself apart from others
 
-Status: proposed
+Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio.
 
 ## Context
 

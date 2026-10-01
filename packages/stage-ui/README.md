@@ -27,6 +27,24 @@ Existing `speech-noop` selections are preserved because they may represent
 intentional silence. Users can explicitly choose **Inherit global settings**
 in the editor; importing or saving an unrelated card field does not change it.
 
+## Participants and barge-in
+
+`libs/participants` and `stores/participants.ts` tell the character's own voice
+apart from other speakers. The stage publishes each played item as the `self`
+participant, with a loudness envelope. The microphone is the `device`
+participant. The echo gate compares the microphone with the delayed envelope
+and decides whether someone else is talking over her. The barge-in controller
+in `Stage.vue` then asks `decideYield` whether she stops.
+
+The feature is off by default. A card turns it on with
+`modules.initiative.yieldWhenInterrupted`. Use it when a person should be able
+to stop her by talking. Do not use it to transcribe double-talk: the gate does
+not clean the audio, and transcription stays suppressed while she speaks. With
+speakers, she does not yield until the gate has learned her echo level.
+
+The store is not synchronized across windows, because each window has its own
+audio. See `docs/ai/adr/2026-10-01-self-other-participants.md`.
+
 ## Button analytics
 
 Register the shared plugin once in each Vue application:

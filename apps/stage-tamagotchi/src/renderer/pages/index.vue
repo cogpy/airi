@@ -25,6 +25,7 @@ import { useCanvasPixelIsTransparentAtPoint } from '@proj-airi/stage-ui/composab
 import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useChatStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
+import { useAiriCardStore } from '@proj-airi/stage-ui/stores/modules/airi-card'
 import { useHearingSpeechInputPipeline, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useOnboardingStore } from '@proj-airi/stage-ui/stores/onboarding'
 import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
@@ -365,6 +366,29 @@ const voiceTranscriptBuffer = createTranscriptBuffer({
 const assistantSpeechSuppressedUntil = shallowRef(0)
 const assistantSpeechResumeTimer = shallowRef<ReturnType<typeof setTimeout>>()
 let voiceInputGeneration = 0
+/**
+ * Whether the voice-input consumers are running. Set after a successful start
+ * and cleared when a stop begins.
+ */
+let voiceInputListening = false
+/**
+ * Whether the current assistant speech left listening running for barge-in.
+ * Set when she starts speaking. When she stops, a listener that kept running
+ * needs no resume; in every other case the page resumes as before.
+ */
+let voiceInputKeptDuringAssistantSpeech = false
+
+const { activeCard } = storeToRefs(useAiriCardStore())
+/**
+ * Whether the active card lets a person stop the character by talking over
+ * her. Off by default.
+ *
+ * When on, voice detection publishes the microphone as the device participant,
+ * and listening keeps running while she speaks, so the participants store can
+ * hear an interruption. The transcription gates below still drop everything
+ * heard during her speech and its cooldown.
+ */
+const yieldWhenInterrupted = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.yieldWhenInterrupted ?? false)
 
 /** Controls transcript cleanup while voice input stops. */
 interface StopAudioInteractionOptions {
@@ -619,6 +643,7 @@ function getVoiceInputGeneration(metadata?: Record<string, unknown>) {
 
 const voiceInputSession = useVoiceInputSession(stream, {
   shouldUseStreamInput,
+  publishDeviceParticipant: yieldWhenInterrupted,
   onLog(level, event, message, details) {
     const output = `[Voice Input] ${event}: ${message}`
     if (level === 'error') {
@@ -693,6 +718,8 @@ async function startAudioInteractionConsumers() {
 
   if (!shouldUseStreamInput.value)
     await voiceInputSession.startAutoSegmentation()
+
+  voiceInputListening = true
 }
 
 /**
@@ -701,6 +728,7 @@ async function startAudioInteractionConsumers() {
 async function stopAudioInteractionConsumers(options: StopAudioInteractionOptions = {}) {
   const flushTranscript = options.flushTranscript ?? true
 
+  voiceInputListening = false
   clearAssistantSpeechResumeTimer()
   clearHearingInput()
   voiceInputGeneration += 1
@@ -751,6 +779,13 @@ watch([activeTranscriptionProvider, activeTranscriptionModel, supportsStreamInpu
 watch(nowSpeaking, async (speaking) => {
   if (speaking) {
     clearAssistantSpeechResumeTimer()
+    // Barge-in needs voice detection while she speaks. Streaming transcription
+    // has no voice detection here, and keeping it open would stream her own
+    // voice to the provider, so streaming still pauses.
+    voiceInputKeptDuringAssistantSpeech = yieldWhenInterrupted.value && !shouldUseStreamInput.value
+    if (voiceInputKeptDuringAssistantSpeech)
+      return
+
     try {
       await voiceInputInteractionLifecycle.stop({ flushTranscript: false })
     }
@@ -761,6 +796,9 @@ watch(nowSpeaking, async (speaking) => {
   }
 
   assistantSpeechSuppressedUntil.value = assistantSpeechCooldownDeadline()
+  if (voiceInputKeptDuringAssistantSpeech && voiceInputListening)
+    return
+
   scheduleAssistantSpeechResume()
 })
 

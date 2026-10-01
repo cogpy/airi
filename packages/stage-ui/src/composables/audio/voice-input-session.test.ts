@@ -1,5 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ParticipantActivity } from '../../libs/participants'
+
+import { createPinia, setActivePinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref, shallowRef } from 'vue'
+
+import { DEVICE_PARTICIPANT, useParticipantsStore } from '../../stores/participants'
 
 const audioRecorderMock = vi.hoisted(() => ({
   isRecording: undefined as unknown as { value: boolean },
@@ -80,6 +85,10 @@ function createMediaStream() {
 }
 
 describe('useVoiceInputSession', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
   afterEach(() => {
     audioRecorderMock.isRecording.value = false
     audioRecorderMock.onStopRecordHook = undefined
@@ -421,5 +430,32 @@ describe('useVoiceInputSession', () => {
 
     expect(stopRecord).toHaveBeenCalledOnce()
     expect(session.activeRecordingTrigger.value).toBeUndefined()
+  })
+
+  it('reports voice detection to the device participant only when publishing is on', async () => {
+    const { useVoiceInputSession } = await import('./voice-input-session')
+    const participants = useParticipantsStore()
+    const activity: ParticipantActivity[] = []
+    participants.onActivity(event => activity.push(event))
+    const publish = ref(false)
+
+    useVoiceInputSession(shallowRef(createMediaStream()), {
+      volumeFallback: { enabled: false },
+      canStartSegment: () => false,
+      publishDeviceParticipant: publish,
+    })
+
+    vadMock.options?.onSpeechStart?.()
+    vadMock.options?.onSpeechEnd?.()
+    expect(activity).toEqual([])
+
+    publish.value = true
+    vadMock.options?.onSpeechStart?.()
+    expect(participants.deviceSpeaking).toBe(true)
+    expect(activity).toEqual([expect.objectContaining({ participant: DEVICE_PARTICIPANT, phase: 'start' })])
+
+    vadMock.options?.onSpeechCancel?.()
+    expect(participants.deviceSpeaking).toBe(false)
+    expect(activity.at(-1)).toEqual(expect.objectContaining({ participant: DEVICE_PARTICIPANT, phase: 'end' }))
   })
 })

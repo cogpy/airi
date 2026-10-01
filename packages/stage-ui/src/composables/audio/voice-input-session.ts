@@ -4,12 +4,13 @@ import type { VoiceInputRecordingSegment, VoiceInputSessionTrigger } from './voi
 import type { VoiceInputTranscriptionTicket } from './voice-input-transcription-chain'
 
 import { toWav } from '@proj-airi/audio/encoding'
-import { computed, ref, shallowRef, toRef } from 'vue'
+import { computed, ref, shallowRef, toRef, watch } from 'vue'
 
 import workletUrl from '../../workers/vad/process.worklet?worker&url'
 
 import { useVAD } from '../../stores/ai/models/vad'
 import { useHearingSpeechInputPipeline } from '../../stores/modules/hearing'
+import { useParticipantsStore } from '../../stores/participants'
 import { useAudioRecorder } from './audio-recorder'
 import {
   createVoiceInputRecordingSegment,
@@ -71,6 +72,18 @@ export interface VoiceInputSessionOptions {
   onTranscriptionResult?: (event: VoiceInputSessionEvent & { text: string }) => void | Promise<void>
   onTranscriptionEmpty?: (event: VoiceInputSessionEvent & { text: string }) => void | Promise<void>
   onTranscriptionError?: (event: VoiceInputSessionEvent & { error: unknown }) => void | Promise<void>
+  /**
+   * Whether to publish the microphone as the device participant: voice
+   * detection start and end, and a loudness frame about every 10 ms. The
+   * participants store uses them to tell another person from the character's
+   * echo, which is what lets a person stop her by talking over her.
+   *
+   * Publishing starts with auto segmentation and adds a second microphone
+   * reader. It does not change what is recorded or transcribed.
+   *
+   * @default false
+   */
+  publishDeviceParticipant?: MaybeRefOrGetter<boolean>
 }
 
 const DEFAULT_VOLUME_FALLBACK_START_THRESHOLD = 10
@@ -79,6 +92,18 @@ const DEFAULT_VOLUME_FALLBACK_START_FRAMES = 4
 const DEFAULT_VOLUME_FALLBACK_STOP_DELAY_MS = 900
 const DEFAULT_VOLUME_FALLBACK_LOG_INTERVAL_MS = 2000
 const VAD_SAMPLE_RATE = 16000
+/**
+ * Loudness frame length for the device participant. It matches the self
+ * channel's envelope frames, so the echo gate compares like with like.
+ */
+const DEVICE_LEVEL_FRAME_MS = 10
+
+function calculateRms(samples: Float32Array): number {
+  let sum = 0
+  for (let i = 0; i < samples.length; i++)
+    sum += samples[i] * samples[i]
+  return samples.length > 0 ? Math.sqrt(sum / samples.length) : 0
+}
 
 function calculateTimeDomainVolumeLevel(dataArray: Uint8Array<ArrayBuffer>) {
   let sum = 0
@@ -108,6 +133,8 @@ export function useVoiceInputSession(
   const mediaRef = toRef(media)
   const shouldUseStreamInput = toRef(options.shouldUseStreamInput ?? false)
   const volumeFallbackEnabled = toRef(options.volumeFallback?.enabled ?? true)
+  const publishDeviceParticipant = toRef(options.publishDeviceParticipant ?? false)
+  const participantsStore = useParticipantsStore()
   const hearingPipeline = useHearingSpeechInputPipeline()
   const { transcribeForRecording } = hearingPipeline
   const recorder = useAudioRecorder(mediaRef)
@@ -141,12 +168,18 @@ export function useVoiceInputSession(
     speechPadMs: options.vad?.speechPadMs,
     minSpeechDurationMs: options.vad?.minSpeechDurationMs,
     onSpeechStart: () => {
+      // Reported before the segment gate: who is talking is decided even
+      // while transcription is suppressed during the character's speech.
+      if (publishDeviceParticipant.value)
+        participantsStore.reportDeviceSpeechStart(Date.now())
       void startSegment('vad')
     },
     onSpeechEnd: () => {
+      endDeviceSpeech()
       void stopSegment('vad')
     },
     onSpeechCancel: () => {
+      endDeviceSpeech()
       const segment = activeRecordingSegment.value
       if (!segment || segment.trigger !== 'vad')
         return
@@ -173,6 +206,17 @@ export function useVoiceInputSession(
   let volumeFallbackSpeechFrames = 0
   let volumeFallbackLastSpeechAt = 0
   let volumeFallbackLastLogAt = 0
+
+  // Device participant loudness meter. Runtime state: it runs while auto
+  // segmentation is active and `publishDeviceParticipant` is on. Started by
+  // `startAutoSegmentation` or by the option turning on; stopped by `stop` or
+  // by the option turning off. A restart replaces the previous meter.
+  let deviceLevelStream: MediaStream | undefined
+  let deviceLevelAudioContext: AudioContext | undefined
+  let deviceLevelSourceNode: MediaStreamAudioSourceNode | undefined
+  let deviceLevelAnalyserNode: AnalyserNode | undefined
+  let deviceLevelSilentGainNode: GainNode | undefined
+  let deviceLevelTimer: ReturnType<typeof setInterval> | undefined
 
   const isRecording = computed(() => recorder.isRecording.value)
 
@@ -426,6 +470,99 @@ export function useVoiceInputSession(
       })
   })
 
+  /**
+   * Ends device speech in the participants store. Safe to call when nothing
+   * was reported: the store emits an end only for speech it started.
+   */
+  function endDeviceSpeech() {
+    if (participantsStore.deviceSpeaking)
+      participantsStore.reportDeviceSpeechEnd(Date.now())
+  }
+
+  function stopDeviceLevelMeter() {
+    if (deviceLevelTimer !== undefined) {
+      clearInterval(deviceLevelTimer)
+      deviceLevelTimer = undefined
+    }
+
+    deviceLevelSourceNode?.disconnect()
+    deviceLevelAnalyserNode?.disconnect()
+    deviceLevelSilentGainNode?.disconnect()
+    deviceLevelSourceNode = undefined
+    deviceLevelAnalyserNode = undefined
+    deviceLevelSilentGainNode = undefined
+
+    if (deviceLevelAudioContext && deviceLevelAudioContext.state !== 'closed')
+      void deviceLevelAudioContext.close()
+    deviceLevelAudioContext = undefined
+  }
+
+  /**
+   * Samples microphone loudness about every 10 ms into the participants store.
+   *
+   * It reads its own analyser rather than the volume fallback's, because the
+   * fallback runs on animation frames (about 16 ms, and paused in hidden
+   * windows) and only when the fallback is enabled.
+   */
+  async function startDeviceLevelMeter(stream: MediaStream) {
+    stopDeviceLevelMeter()
+
+    try {
+      const audioContext = new AudioContext({ latencyHint: 'interactive' })
+      deviceLevelAudioContext = audioContext
+      if (audioContext.state === 'suspended')
+        await audioContext.resume()
+      if (deviceLevelAudioContext !== audioContext)
+        return
+
+      const sourceNode = audioContext.createMediaStreamSource(stream)
+      const analyserNode = audioContext.createAnalyser()
+      // The smallest power of two that covers one frame: 512 samples at 48 kHz.
+      analyserNode.fftSize = Math.min(32768, Math.max(32, 2 ** Math.ceil(Math.log2(audioContext.sampleRate * DEVICE_LEVEL_FRAME_MS / 1000))))
+      const silentGainNode = audioContext.createGain()
+      silentGainNode.gain.value = 0
+      // Connected to the destination through a muted gain, like the volume
+      // fallback, so the browser keeps pulling audio through the analyser.
+      sourceNode.connect(analyserNode)
+      analyserNode.connect(silentGainNode)
+      silentGainNode.connect(audioContext.destination)
+
+      deviceLevelSourceNode = sourceNode
+      deviceLevelAnalyserNode = analyserNode
+      deviceLevelSilentGainNode = silentGainNode
+
+      const samples = new Float32Array(analyserNode.fftSize)
+      deviceLevelTimer = setInterval(() => {
+        analyserNode.getFloatTimeDomainData(samples)
+        participantsStore.feedDeviceFrame(Date.now(), calculateRms(samples))
+      }, DEVICE_LEVEL_FRAME_MS)
+
+      log('info', 'device-level-started', 'Microphone loudness is published for the device participant.', {
+        sampleRate: audioContext.sampleRate,
+        fftSize: analyserNode.fftSize,
+      })
+    }
+    catch (error) {
+      stopDeviceLevelMeter()
+      // Without loudness frames the echo gate never calibrates, so the
+      // character never yields: the safe failure. Voice input keeps working.
+      log('warn', 'device-level-start-failed', 'Failed to start the device participant loudness meter.', { error })
+    }
+  }
+
+  watch(publishDeviceParticipant, (publish) => {
+    if (!deviceLevelStream)
+      return
+
+    if (publish) {
+      void startDeviceLevelMeter(deviceLevelStream)
+      return
+    }
+
+    stopDeviceLevelMeter()
+    endDeviceSpeech()
+  })
+
   function stopVolumeFallback() {
     if (volumeFallbackAnimationFrame !== undefined) {
       cancelAnimationFrame(volumeFallbackAnimationFrame)
@@ -573,10 +710,17 @@ export function useVoiceInputSession(
       log,
     })
     await startVolumeFallback(stream)
+
+    deviceLevelStream = stream
+    if (publishDeviceParticipant.value)
+      await startDeviceLevelMeter(stream)
   }
 
   async function stop(options: { flushActiveRecording?: boolean } = {}) {
     stopVolumeFallback()
+    deviceLevelStream = undefined
+    stopDeviceLevelMeter()
+    endDeviceSpeech()
     disposeVAD()
     transcriptionChain.reset()
     stoppedRecordingSegments.length = 0

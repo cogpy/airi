@@ -38,6 +38,7 @@ import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_val
 import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
 import { getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
+import { bindBargeInToPlaybackManager, createBargeInController } from '../../libs/speech/barge-in'
 import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
 import { createStageTtsSession } from '../../libs/speech/tts-session'
 import { getSpeechBusContext, speechOutputGetPlaybackState } from '../../services/speech/bus'
@@ -47,6 +48,7 @@ import { useBackgroundStore } from '../../stores/background'
 import { useChatStore } from '../../stores/chat'
 import { useAiriCardStore } from '../../stores/modules'
 import { useSpeechStore } from '../../stores/modules/speech'
+import { useParticipantsStore } from '../../stores/participants'
 import { useProviderConfigStore } from '../../stores/providers/config'
 import { useProviderStore } from '../../stores/providers/provider'
 import { useSettings } from '../../stores/settings'
@@ -630,6 +632,62 @@ bindSpeakingStateToPlaybackManager(playbackManager, {
   },
 })
 
+/**
+ * Whether the active card lets a person stop her by talking over her.
+ *
+ * Read on every playback and speech event, so a card switch applies from the
+ * next event. Off by default: without it, the self channel publishes nothing
+ * and the barge-in controller never sees another participant.
+ */
+const yieldWhenInterrupted = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.yieldWhenInterrupted ?? false)
+const participantsStore = useParticipantsStore()
+
+// Self channel: each played item is published as an efference copy, so the
+// echo gate knows what she said and when without listening to it. Stops are
+// always published: the store ignores unknown ids, and a card switch during
+// playback must not leave her marked as speaking.
+playbackManager.onStart(({ item, startedAt }) => {
+  if (!yieldWhenInterrupted.value)
+    return
+  participantsStore.publishSelfPlaybackStart({ id: item.id, audio: item.audio, text: item.text, at: startedAt })
+})
+playbackManager.onEnd(({ item, endedAt }) => {
+  participantsStore.publishSelfPlaybackStop({ id: item.id, at: endedAt })
+})
+playbackManager.onInterrupt(({ item, interruptedAt }) => {
+  participantsStore.publishSelfPlaybackStop({ id: item.id, at: interruptedAt })
+})
+playbackManager.onReject(({ item, rejectedAt }) => {
+  participantsStore.publishSelfPlaybackStop({ id: item.id, at: rejectedAt ?? Date.now() })
+})
+
+// Barge-in: the playback manager says when she is audible, the participants
+// store says when someone else talks over her, and `decideYield` decides
+// whether she stops. Stopping goes through the same request as the stop
+// button, so the whole TTS session is cancelled, not just the current item.
+const bargeInController = createBargeInController({
+  stopSpeaking: () => speechOutputControlStore.requestStopSpeaking('barge-in'),
+})
+bindBargeInToPlaybackManager(playbackManager, bargeInController)
+const disposeParticipantActivity = participantsStore.onActivity((activity) => {
+  if (activity.participant.kind !== 'other')
+    return
+
+  if (activity.phase === 'end') {
+    bargeInController.onSpeechEnd()
+    return
+  }
+
+  if (yieldWhenInterrupted.value)
+    bargeInController.onSpeechStart(activity.at)
+})
+
+watch(yieldWhenInterrupted, (enabled) => {
+  // Turning the option off during an overlap must not leave a pending yield.
+  if (!enabled)
+    bargeInController.onSpeechEnd()
+})
+
 function startLipSyncLoop() {
   if (lipSyncLoopId.value)
     return
@@ -1002,6 +1060,8 @@ async function captureCharacterFrame() {
 
 onUnmounted(() => {
   disposePlaybackStateHandler()
+  disposeParticipantActivity()
+  bargeInController.dispose()
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
   viewUpdateCleanups.forEach(dispose => dispose?.())

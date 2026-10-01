@@ -9,6 +9,7 @@ export default defineConfig({
     './src/affect/index.ts',
     './src/atomspace/index.ts',
     './src/attention/index.ts',
+    './src/coplay/index.ts',
     './src/initiative/index.ts',
     './src/memory/index.ts',
     './src/reasoning/index.ts',

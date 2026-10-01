@@ -1,6 +1,6 @@
 # Participants: the character hears herself apart from others
 
-Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio. Phase 2 is implemented behind `initiative.converseWithAgents`. It is not tested between two live stages.
+Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio. Phase 2 is implemented behind `initiative.converseWithAgents`. It is not tested between two live stages. The phase 3 core is implemented behind `coplay.enabled`: a game-neutral session in `cognitive-airicog/coplay`, tic-tac-toe as the reference game, and the `output:game:session` and `output:game:action` events. Chess waits for the chess plugin source. No live game has been played.
 
 ## Context
 
@@ -147,9 +147,12 @@ graph TD
 packages/cognitive-airicog/src/initiative/
   yielding.ts
   conversation-guard.ts            (new)
+packages/cognitive-airicog/src/coplay/  (new)
 packages/stage-ui/src/
   libs/participants/               (new)
+  libs/coplay/                     (new)
   stores/participants.ts           (new)
+  stores/coplay.ts                 (new)
   libs/speech/barge-in.ts
   components/scenes/Stage.vue
   composables/audio/voice-input-session.ts

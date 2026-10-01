@@ -24,9 +24,32 @@ jobs:
       url: https://airi.moeru.ai/docs/
 
     steps:
+      # NOTICE:
+      # Why this workaround is needed.
+      # Forks without Cloudflare deploy secrets must not fail Deploy - stage-web.
+      # Root cause summary.
+      # An empty CLOUDFLARE_API_TOKEN makes wrangler exit in non-interactive CI.
+      # Source/context.
+      # Job 110235290845 on cogpy/airi; same pattern as CSC_CONTENT in release-tamagotchi.yml.
+      # Removal condition.
+      # Delete when every runner of this workflow always has CLOUDFLARE_API_TOKEN.
+      - name: Check Cloudflare credentials
+        id: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "CLOUDFLARE_API_TOKEN is not configured; skipping stage-web deploy."
+          fi
+
       - uses: actions/checkout@v6
+        if: steps.cloudflare.outputs.available == 'true'
       # Turborepo
       - name: Cache turbo build setup
+        if: steps.cloudflare.outputs.available == 'true'
         uses: actions/cache@v5
         with:
           path: .turbo
@@ -34,6 +57,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-turbo-
       - uses: pnpm/setup@v2
+        if: steps.cloudflare.outputs.available == 'true'
         with:
           runtime: node@26.7.0
           cache: true
@@ -52,9 +76,13 @@ jobs:
       # As suggested by https://github.com/cloudflare/wrangler-action/issues/181#issuecomment-2127990708, we should pre-install
       # with our package manager and then use it in the action.
       - run: pnpm i -g wrangler@4
+        if: steps.cloudflare.outputs.available == 'true'
       - run: pnpm install --frozen-lockfile
+        if: steps.cloudflare.outputs.available == 'true'
       - run: pnpm run build:packages
+        if: steps.cloudflare.outputs.available == 'true'
       - name: Build stage-web
+        if: steps.cloudflare.outputs.available == 'true'
         run: |
           pnpm -F @proj-airi/stage-web run build
 
@@ -74,6 +102,7 @@ jobs:
           WARP_DRIVE_PUBLIC_BASE: ${{ secrets.WARP_DRIVE_PUBLIC_BASE }}
 
       - uses: cloudflare/wrangler-action@v4
+        if: steps.cloudflare.outputs.available == 'true'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

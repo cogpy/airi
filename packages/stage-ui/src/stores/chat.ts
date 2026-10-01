@@ -12,7 +12,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { decodeBase64 } from '@moeru/std/base64'
 import { SpanStatusCode } from '@opentelemetry/api'
 import { fileSource } from '@proj-airi/audio/encoding'
-import { createChatOrchestratorRuntime, isBackgroundRecipe, matchKeywordRecipes, renderConversationPreview } from '@proj-airi/core-agent'
+import { createChatOrchestratorRuntime, isBackgroundRecipe, matchKeywordRecipes, renderConversationPreview, streamFrom } from '@proj-airi/core-agent'
 import { IOAttributes, IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { nanoid } from 'nanoid'
 import { defineStore, storeToRefs } from 'pinia'
@@ -28,6 +28,7 @@ import { parseActEmotion } from '../libs/affect/act-emotion'
 import { createMoodTracker } from '../libs/affect/mood-prompt'
 import { chatAssetIdFrom, inlineConversationAssets, storeChatAttachments } from '../libs/chat-assets'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
+import { parseTopicName, topicNamingConversation } from '../libs/initiative/topic-naming'
 import { createChatAnalyticsHooks, getProviderMode } from '../libs/product-signals/events/chat'
 import {
   AIRI_CHAT_APP_SURFACE_HEADER,
@@ -1035,15 +1036,11 @@ export const useChatStore = defineStore('chat', () => {
       }
     },
     onUserTurnReady: ({ sessionId, messageText, sessionMessages }) => {
+      // Background tasks and notice-driven turns are not the user being present.
       if (!isOwnerTurn(sessionId, sessionMessages))
         return
 
-      // The user's remark resets the lull and is remembered as something the
-      // character could pick back up. The guard above excludes background tasks
-      // and notice-driven turns: neither is the user being present. The remark
-      // stands in for its subject: naming one would cost a model call, and the
-      // model voicing the initiative can judge what a quoted remark was about.
-      initiativeStore.remember({ topic: messageText })
+      rememberRemark(sessionId, messageText)
 
       const autonomousTarget = sessionCard(sessionId)?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')
@@ -1085,6 +1082,66 @@ export const useChatStore = defineStore('chat', () => {
       if (entry.sessionId === sessionId)
         entry.abort.abort(reason)
     }
+  }
+
+  /**
+   * Asks the session character's model what a remark is about. Only reached
+   * for cards that opt into `initiative.nameTopics`, since it is an extra
+   * model call per turn. Resolves to `undefined` when the character has no
+   * usable model.
+   */
+  async function nameTopic(sessionId: string, remark: string): Promise<string | undefined> {
+    const { provider: providerId, model: modelId } = cardStore.getModules(personaOf(sessionId)).consciousness
+    if (!providerId || !modelId)
+      return undefined
+
+    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+    if (!chatProvider)
+      return undefined
+
+    let reply = ''
+    await streamFrom({
+      model: modelId,
+      chatProvider,
+      conversation: topicNamingConversation(remark),
+      options: {
+        onStreamEvent: (event) => {
+          if (event.type === 'text-delta')
+            reply += event.text
+        },
+      },
+    })
+
+    return parseTopicName(reply)
+  }
+
+  /**
+   * Resets the lull and keeps the user's remark as something the character
+   * could pick back up. The session's own character decides, not the card
+   * another window has selected.
+   *
+   * By default the remark itself stands in for its subject, and the model that
+   * voices the initiative judges what it was about. A card with `nameTopics`
+   * pays a model call to name the subject instead, so repeated mentions of one
+   * subject reinforce a single memory. The remark is dated when it arrived,
+   * not when its name came back. A remark that can't be named is skipped,
+   * because a missing subject only means one less thing to bring up.
+   */
+  function rememberRemark(sessionId: string, remark: string) {
+    const initiative = cardStore.getCard(personaOf(sessionId))?.extensions?.airi?.modules?.initiative
+    if (!initiative?.enabled || !initiative.nameTopics) {
+      initiativeStore.remember({ topic: remark })
+      return
+    }
+
+    const at = Date.now()
+    initiativeStore.noteInteraction(at)
+    void nameTopic(sessionId, remark)
+      .then((topic) => {
+        if (topic !== undefined)
+          initiativeStore.recordEpisode({ topic }, at)
+      })
+      .catch(() => {})
   }
 
   async function ingest(

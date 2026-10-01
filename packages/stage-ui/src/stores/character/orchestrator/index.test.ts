@@ -15,13 +15,14 @@ import { tool } from '@xsai/tool'
 import { nanoid } from 'nanoid'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 import { sparkNotifyCommandSchema, useCharacterOrchestratorStore } from '.'
 import { useCharacterStore } from '..'
 import { useLLM } from '../../ai/chat-llm/llm'
 import { useModsServerChannelStore } from '../../mods/api/channel-server'
 import { useAiriCardStore, useConsciousnessStore } from '../../modules'
+import { useInitiativeStore } from '../../modules/initiative'
 import { useProviderStore } from '../../providers/provider'
 
 vi.mock('vue-i18n', () => ({
@@ -353,5 +354,72 @@ describe('store character-orchestrator', () => {
     expect(String(renderedMessages?.[1])).toContain('Rendered board snapshot')
     expect(String(renderedMessages?.[1])).toContain('base.prompt.emotion')
     expect(String(renderedMessages?.[1])).toContain('base.prompt.emoji')
+  })
+
+  describe('initiative', () => {
+    function useCardInitiative(initiative: NonNullable<AiriCard['extensions']['airi']['modules']['initiative']> | undefined) {
+      const airiCardStore = useAiriCardStore(pinia)
+      // A new map, so the computed active card sees the change.
+      airiCardStore.cards = new Map([['initiative-test', {
+        name: 'Hero',
+        version: '1.0',
+        extensions: { airi: { agents: {}, modules: { consciousness: { provider: 'mock-provider', model: 'mock-model' }, vision: { provider: 'mock-vision-provider', model: 'mock-vision-model' }, speech: { provider: 'mock-speech-provider', model: 'mock-speech-model', voice_id: 'alloy' }, initiative } } },
+      } satisfies AiriCard]])
+      airiCardStore.activeCardId = 'initiative-test'
+    }
+
+    beforeEach(() => {
+      mockedStore(useModsServerChannelStore, pinia).onEvent = vi.fn(() => () => {})
+    })
+
+    it('stays silent for a card that never turned initiative on', () => {
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize()
+
+      expect(useInitiativeStore(pinia).running).toBe(false)
+      store.dispose()
+    })
+
+    // ROOT CAUSE:
+    //
+    // The initiative store could decide to speak, but no host configured it from
+    // the card, started it, or listened to it, so the app never spoke unprompted.
+    //
+    // We fixed this by having the orchestrator apply the card and voice each
+    // decision as a spark:notify.
+    it('turns a lull into a notification that quotes what was said', () => {
+      useCardInitiative({ enabled: true, threshold: 0.01 })
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize()
+
+      const initiative = useInitiativeStore(pinia)
+      expect(initiative.running).toBe(true)
+
+      const saidAt = Date.now()
+      initiative.remember({ topic: 'my cat learned to open doors' }, saidAt)
+      const decision = initiative.poll(saidAt + 10 * 60_000)
+
+      expect(decision.act).toBe(true)
+      const notify = store.pendingNotifies.find(event => event.source === 'character:initiative')
+      expect(notify?.data.note).toContain('my cat learned to open doors')
+      expect(store.scheduledNotifies.find(item => item.event === notify)?.maxAttempts).toBe(1)
+      store.dispose()
+      expect(initiative.running).toBe(false)
+    })
+
+    it('follows the card when it is switched', async () => {
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize()
+      const initiative = useInitiativeStore(pinia)
+
+      useCardInitiative({ enabled: true })
+      await nextTick()
+      expect(initiative.running).toBe(true)
+
+      useCardInitiative(undefined)
+      await nextTick()
+      expect(initiative.running).toBe(false)
+      store.dispose()
+    })
   })
 })

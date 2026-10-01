@@ -369,12 +369,11 @@ export const useChatStore = defineStore('chat', () => {
       }
     },
     onUserTurnReady: ({ messageText, sessionMessages }) => {
-      // Both turns count as the conversation being live, so the character's
-      // sense of a lull starts from whoever spoke last rather than from its own
-      // replies alone. Only the timing is recorded here: remembering a turn as
-      // being *about* something needs a subject, and nothing in this runtime
-      // names one yet — `initiative.remember()` is where that arrives.
-      initiativeStore.noteInteraction()
+      // The user's remark resets the lull and is remembered as something the
+      // character could pick back up. The remark stands in for its subject:
+      // naming one would cost a model call, and the model voicing the initiative
+      // can judge what a quoted remark was about.
+      initiativeStore.remember({ topic: messageText })
 
       const autonomousTarget = cardStore.activeCard?.extensions?.airi?.modules?.artistry?.autonomousTarget || 'user'
       if (autonomousTarget === 'user')

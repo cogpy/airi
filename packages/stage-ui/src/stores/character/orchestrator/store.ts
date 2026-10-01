@@ -1,17 +1,67 @@
+import type { InitiativeDecision } from '@proj-airi/cognitive-airicog/initiative'
 import type { SparkNotifyResponseControl } from '@proj-airi/core-agent/agents/spark-notify'
 import type { WebSocketBaseEvent, WebSocketEventOf, WebSocketEvents } from '@proj-airi/server-sdk'
 
+import type { AiriInitiativeSettings } from '../../modules/initiative'
+
 import { createSparkNotifyAgent, createSparkNotifyReactionPlugin } from '@proj-airi/core-agent/agents/spark-notify'
 import { defineStore, storeToRefs } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 import { useCharacterNotebookStore, useCharacterStore } from '../'
 import { useAiriRuntimePrompt } from '../../../composables/use-airi-runtime-prompt'
 import { useLLM } from '../../ai/chat-llm/llm'
 import { useModsServerChannelStore } from '../../mods/api/channel-server'
+import { useAiriCardStore } from '../../modules/airi-card'
 import { useConsciousnessStore } from '../../modules/consciousness'
+import { useInitiativeStore } from '../../modules/initiative'
 
 export { sparkNotifyCommandSchema } from '@proj-airi/core-agent/agents/spark-notify'
+
+/**
+ * Longest remark quoted back to the model. A pasted page is still one remark,
+ * and the model only needs enough of it to recognise what was being discussed.
+ */
+const MAX_QUOTED_REMARK = 280
+
+/** What a card that never mentions initiative configures: nothing, so it stays off. */
+const NO_INITIATIVE: Readonly<AiriInitiativeSettings> = Object.freeze({})
+
+/**
+ * Turns the character's decision to break a silence into the same internal
+ * notification a due task produces, so the spark-notify agent composes the line
+ * and the speech runtime voices it. The character speaks as herself, in her own
+ * words; nothing is written into the transcript as if the user had said it.
+ *
+ * The subject is whatever the initiative store remembered — currently the
+ * user's own remark — so the headline quotes it and leaves the model to judge
+ * how, or whether, to pick it back up.
+ */
+function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number): WebSocketEventOf<'spark:notify'> {
+  const id = `initiative-${now}`
+  const remark = decision.topicAtomId.length > MAX_QUOTED_REMARK
+    ? `${decision.topicAtomId.slice(0, MAX_QUOTED_REMARK)}…`
+    : decision.topicAtomId
+
+  return {
+    type: 'spark:notify',
+    source: 'character:initiative',
+    data: {
+      id,
+      eventId: id,
+      kind: 'ping',
+      urgency: 'immediate',
+      headline: 'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
+      note: `Earlier they said: ${remark}`,
+      destinations: ['character'],
+      payload: {
+        topic: remark,
+        urge: decision.urge,
+        silencePressure: decision.silencePressure,
+      },
+    },
+  }
+}
 
 export const useCharacterOrchestratorStore = defineStore('character-orchestrator', () => {
   const { stream } = useLLM()
@@ -22,6 +72,8 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
   const { systemPrompt } = storeToRefs(characterStore)
   const runtimePrompt = useAiriRuntimePrompt()
   const modsServerChannelStore = useModsServerChannelStore()
+  const cardStore = useAiriCardStore()
+  const initiativeStore = useInitiativeStore()
 
   const processing = ref(false)
   const pendingNotifies = ref<Array<WebSocketEventOf<'spark:notify'>>>([])
@@ -292,11 +344,36 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
       }),
     )
 
+    // A lull is only worth breaking once; by the next tick the conversation may
+    // have resumed, so a failed attempt is dropped rather than retried.
+    eventUnsubscribes.push(
+      initiativeStore.onInitiative(decision => enqueueSparkNotify(initiativeNotify(decision, Date.now()), {
+        reason: 'initiative',
+        maxAttempts: 1,
+      })),
+    )
+
+    // The active card decides whether the character speaks unprompted. Switching
+    // cards restarts the lull timer under the new card's settings; a card
+    // without initiative leaves it stopped, since start() is a no-op while off.
+    eventUnsubscribes.push(
+      watch(
+        () => cardStore.activeCard?.extensions?.airi?.modules?.initiative,
+        (settings) => {
+          initiativeStore.stop()
+          initiativeStore.configure(settings ?? NO_INITIATIVE)
+          initiativeStore.start()
+        },
+        { immediate: true },
+      ),
+    )
+
     startTicker()
   }
 
   function dispose() {
     stopTicker()
+    initiativeStore.stop()
 
     for (const unsubscribe of eventUnsubscribes) {
       unsubscribe()

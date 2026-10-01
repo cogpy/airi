@@ -64,8 +64,8 @@ export interface AiriExtension {
      * Whether the character speaks during a lull instead of only answering.
      *
      * Off unless a card turns it on, like `artistry.autonomousEnabled`: this
-     * changes what the character does on its own, and naming the subjects it
-     * would raise costs a model call per turn.
+     * changes what the character does on its own, and each time it speaks up
+     * costs a model call.
      */
     initiative?: {
       enabled?: boolean
@@ -78,8 +78,10 @@ export interface AiriExtension {
       refractorySeconds?: number
       /**
        * Whether to spend a model call naming the subject of each message.
-       * Without it the character can tell a lull from a conversation but has
-       * nothing of its own to raise.
+       * Without it the character quotes the user's earlier remark back to the
+       * model as the thing to pick up.
+       *
+       * TODO: not read yet; every card currently gets the quoted remark.
        */
       nameTopics?: boolean
     }

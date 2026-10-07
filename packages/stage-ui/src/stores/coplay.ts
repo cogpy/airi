@@ -1,7 +1,7 @@
 import type { GameOutcome, GamePlayer } from '@proj-airi/cognitive-airicog/coplay'
 import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 
-import type { CoplayTable, TableMoveResult } from '../libs/coplay'
+import type { CoplayBoardView, CoplayTable, TableMoveResult } from '../libs/coplay'
 
 import { errorMessageFrom } from '@moeru/std'
 import { nanoid } from 'nanoid'
@@ -57,6 +57,9 @@ export interface CoplayLogEntry {
  *   UI to show the final position until the next game starts.
  */
 export type CoplayStatus = 'idle' | 'playing' | 'over'
+
+/** Legal moves while no game is in play; shared so a UI never sees a new empty array. */
+const NO_MOVES: readonly string[] = Object.freeze([])
 
 /** Log lines kept for a UI. Older lines are dropped first. */
 const LOG_LIMIT = 200
@@ -121,6 +124,20 @@ export const useCoplayStore = defineStore('coplay', () => {
   const outcome = ref<GameOutcome>()
   const characterThinking = ref(false)
   const log = ref<CoplayLogEntry[]>([])
+  /** Name of the game in play or last played, for a UI heading. */
+  const gameName = ref('')
+  /** The position as a grid, or `undefined` for a game with no board view. */
+  const board = shallowRef<CoplayBoardView>()
+  /** Legal moves for whoever moves next, as text; empty once the game is over. */
+  const legalMoves = shallowRef<readonly string[]>(NO_MOVES)
+  /** Her seat, so a UI can tell her marks from the partner's. */
+  const characterSeat = ref<string>()
+  /**
+   * Who moves next while a game is played: `character` while her move is
+   * being asked for, `partner` while a UI or a peer should move, `undefined`
+   * once the game is over.
+   */
+  const turn = ref<'character' | 'partner'>()
 
   let releaseOwnership: (() => void) | undefined
   /** Ply her model call was last made for; guards against a second call. */
@@ -144,7 +161,9 @@ export const useCoplayStore = defineStore('coplay', () => {
   }
 
   function record(kind: CoplayLogEntry['kind'], text: string) {
-    log.value = [...log.value, { at: Date.now(), kind, text }].slice(-LOG_LIMIT)
+    // Partner names such as "you" can open a line, which still reads as a sentence.
+    const sentence = text.charAt(0).toUpperCase() + text.slice(1)
+    log.value = [...log.value, { at: Date.now(), kind, text: sentence }].slice(-LOG_LIMIT)
   }
 
   /**
@@ -191,6 +210,12 @@ export const useCoplayStore = defineStore('coplay', () => {
   function refresh(current: CoplayTable) {
     view.value = current.describe(selfSeat(current))
     outcome.value = current.outcome()
+    gameName.value = current.gameName
+    board.value = current.board()
+    legalMoves.value = current.legalMoves()
+    characterSeat.value = selfSeat(current)
+    const next = current.currentPlayer()
+    turn.value = next === undefined ? undefined : next.kind === 'self' ? 'character' : 'partner'
     chatContext.ingestContextMessage(gameContextMessage(current, selfSeat(current), partnerName()))
   }
 
@@ -199,6 +224,9 @@ export const useCoplayStore = defineStore('coplay', () => {
     if (status.value !== 'playing')
       return
     status.value = 'over'
+    // A stopped game keeps its last position on the board, but nobody moves.
+    turn.value = undefined
+    legalMoves.value = NO_MOVES
     record('ended', text)
     releaseOwnership?.()
     releaseOwnership = undefined
@@ -486,6 +514,11 @@ export const useCoplayStore = defineStore('coplay', () => {
     outcome,
     characterThinking,
     log,
+    gameName,
+    board,
+    legalMoves,
+    characterSeat,
+    turn,
 
     startSession,
     joinSession,

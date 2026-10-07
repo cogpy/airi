@@ -382,6 +382,20 @@ describe('airi-card store', () => {
     expect(card?.extensions.airi.modules).not.toHaveProperty('displayModelId')
   })
 
+  it('turns co-play on and off on the active card, converging on repeated calls', async () => {
+    const cardStore = useAiriCardStore()
+    await cardStore.initialize()
+
+    // Every window may call the leader-routed action with the same value, so a
+    // repeat must leave the card exactly as one call did.
+    expect(await cardStore.updateActiveCardCoplay({ enabled: true })).toBe(true)
+    expect(await cardStore.updateActiveCardCoplay({ enabled: true })).toBe(true)
+    expect(cardStore.activeCard?.extensions.airi.modules.coplay).toEqual({ enabled: true })
+
+    expect(await cardStore.updateActiveCardCoplay({ enabled: false })).toBe(true)
+    expect(cardStore.activeCard?.extensions.airi.modules.coplay).toEqual({ enabled: false })
+  })
+
   // ROOT CAUSE:
   //
   // Selecting Apple Vision stored an empty model on the card before the catalog

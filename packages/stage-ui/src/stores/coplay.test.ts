@@ -98,6 +98,35 @@ describe('coplay store', () => {
     expect(message?.text).toContain('2  . X .')
   })
 
+  it('exposes the board, legal moves and whose turn it is for a UI', async () => {
+    modelMoves = ['b2']
+    const store = useCoplayStore()
+
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    expect(store.gameName).toBe('Tic-tac-toe')
+    expect(store.characterSeat).toBe(store.board?.cells[4]?.seat)
+    expect(store.board?.cells[4]).toMatchObject({ mark: 'X' })
+    expect(store.turn).toBe('partner')
+    expect(store.legalMoves).toHaveLength(8)
+    expect(store.legalMoves).not.toContain('b2')
+  })
+
+  it('leaves the last position on the board but offers no move after a stop', async () => {
+    modelMoves = ['b2']
+    const store = useCoplayStore()
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    store.stopSession()
+
+    expect(store.status).toBe('over')
+    expect(store.turn).toBeUndefined()
+    expect(store.legalMoves).toEqual([])
+    expect(store.board?.cells[4]).toMatchObject({ mark: 'X' })
+  })
+
   it('moves for her with the fallback policy when the model skips the tool, and says so', async () => {
     const store = useCoplayStore()
 

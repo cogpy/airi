@@ -285,6 +285,16 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     return updated
   }
 
+  /**
+   * Turns co-play on or off for the active card. Leader-owned like the other
+   * module updates, so every window sees one card. Idempotent: setting the
+   * current value again writes the same state.
+   */
+  async function updateActiveCardCoplay(coplay: NonNullable<AiriExtension['modules']['coplay']>) {
+    await pendingAuthenticationSetup
+    return updateActiveCardModules(({ modules }) => ({ coplay: { ...modules.coplay, ...coplay } }))
+  }
+
   async function updateActiveCardVision(vision: AiriExtension['modules']['vision']) {
     await pendingAuthenticationSetup
     const updated = updateActiveCardModules(() => ({ vision }))
@@ -599,6 +609,7 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     updateActiveCardDisplayModel,
     updateActiveCardSpeech,
     updateActiveCardVision,
+    updateActiveCardCoplay,
     getCard,
     resetState,
     initialize,
@@ -647,6 +658,7 @@ export const useAiriCardStore = defineStore('airi-card', () => {
       'updateActiveCardDisplayModel',
       'updateActiveCardSpeech',
       'updateActiveCardVision',
+      'updateActiveCardCoplay',
       'updateCard',
     ],
     state: true,

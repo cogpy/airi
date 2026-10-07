@@ -54,8 +54,12 @@ turns it into text for the model, the user, and the server channel. Only
 tic-tac-toe ships today, as the reference game.
 
 The feature is off by default. A card turns it on with
-`modules.coplay.enabled`. A UI calls `startSession`, shows `view` and `log`,
-and passes the user's moves to `submitPartnerMove`. On her turn the store makes
+`modules.coplay.enabled`, which the Co-play settings page
+(`/settings/modules/gaming-coplay`, component `GamingCoplay`) sets through
+`updateActiveCardCoplay`. A UI calls `startSession`, shows `board` (a grid
+from the game's board view, drawn by `CoplayBoard`) or `view` and
+`legalMoves` for a game without one, follows `turn` and `log`, and passes the
+user's moves to `submitPartnerMove`. On her turn the store makes
 one model call with a `game_move` tool. When she gives no legal move, a fixed
 fallback policy moves for her and the log says so. With another stage, both
 stages play the same moves under one session id through `output:game:session`

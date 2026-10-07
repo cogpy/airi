@@ -703,6 +703,42 @@ pages:
               label: Thinking
       title: Consciousness
     description: Thinking, vision, speech synthesis, gaming, etc.
+    gaming-coplay:
+      title: Co-play
+      description: Play turn-based games with your character
+      enable: Turn on co-play
+      enable-description: >-
+        Lets this character play games with you and with other AI characters.
+        The setting is saved on the active Character Card.
+      disabled:
+        title: Co-play is off
+        description: Turn on co-play to start a game.
+      start-failed: Could not start the game
+      game: Game
+      character-first: Character moves first
+      character-first-description: When off, you make the first move.
+      start: Start game
+      stop: Stop game
+      agent-note: >-
+        To play against another AI character, start the game from that
+        character's app. This app joins the game automatically.
+      board: '{game} board'
+      cell-empty: '{cell}, empty'
+      cell-marked: '{cell}, {mark}'
+      moves: Legal moves
+      status:
+        idle: No game yet.
+        your-turn: Your move.
+        character-turn: '{name} is thinking about a move.'
+        waiting-partner: Waiting for {name} to move.
+        win-character: '{name} won.'
+        win-you: You won.
+        win-partner: '{name} won.'
+        draw: The game is a draw.
+        stopped: The game was stopped.
+      log:
+        title: Game log
+        empty: No moves yet.
     gaming-factorio:
       description: Playing Factorio!
       title: Factorio

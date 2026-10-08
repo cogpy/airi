@@ -219,6 +219,8 @@ function sanitizeAiri(value: unknown, displayModelIdOverride?: string): AiriExte
   const modules = isRecord(source.modules) ? source.modules : {}
   const artistry = isRecord(modules.artistry) ? modules.artistry : {}
   const speech = isRecord(modules.speech) ? modules.speech : {}
+  const initiative = isRecord(modules.initiative) ? modules.initiative : undefined
+  const coplay = isRecord(modules.coplay) ? modules.coplay : undefined
   const displayModelId = displayModelIdOverride ?? stringValue(modules.displayModelId)
 
   return {
@@ -240,8 +242,34 @@ function sanitizeAiri(value: unknown, displayModelIdOverride?: string): AiriExte
         ...(typeof artistry.autonomousEnabled === 'boolean' ? { autonomousEnabled: artistry.autonomousEnabled } : {}),
         ...(typeof artistry.autonomousThreshold === 'number' ? { autonomousThreshold: artistry.autonomousThreshold } : {}),
       },
+      // How the character behaves on her own (speaking up, yielding, playing)
+      // is part of who she is, so a shared card keeps it. Each field is copied
+      // only with the right type; a card that sets none gets none, and the
+      // runtime then treats every behaviour as off.
+      ...(initiative ? { initiative: sanitizeInitiative(initiative) } : {}),
+      ...(coplay && typeof coplay.enabled === 'boolean' ? { coplay: { enabled: coplay.enabled } } : {}),
     },
     agents: {},
+  }
+}
+
+function sanitizeInitiative(source: Record<string, unknown>): NonNullable<AiriExtension['modules']['initiative']> {
+  const flag = (key: string) => {
+    const value = source[key]
+    return typeof value === 'boolean' ? { [key]: value } : {}
+  }
+  const finite = (key: string) => {
+    const value = source[key]
+    return typeof value === 'number' && Number.isFinite(value) ? { [key]: value } : {}
+  }
+  return {
+    ...flag('enabled'),
+    ...finite('threshold'),
+    ...finite('refractorySeconds'),
+    ...flag('nameTopics'),
+    ...flag('yieldWhenInterrupted'),
+    ...flag('converseWithAgents'),
+    ...finite('agentTurnBudget'),
   }
 }
 

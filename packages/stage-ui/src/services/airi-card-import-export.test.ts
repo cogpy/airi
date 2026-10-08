@@ -8,6 +8,9 @@ import { exportToJSON } from '@proj-airi/ccc'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import vexaCardText from '../../presets/character-cards/vexa/card.json?raw'
+import vexaManifestText from '../../presets/character-cards/vexa/manifest.json?raw'
+
 import { DisplayModelFormat, useDisplayModelsStore } from '../stores/display-models'
 import { exportAiriCardPackage, importAiriCardPackage } from './airi-card-import-export'
 
@@ -73,6 +76,47 @@ describe('airi card package import/export', () => {
     expect(airi.modules).not.toHaveProperty('activeBackgroundId')
     expect(airi.modules.artistry).not.toHaveProperty('workflowId')
     expect(airi.agents).toEqual({})
+  })
+
+  // ROOT CAUSE:
+  //
+  // The import whitelist copied only provider, speech and artistry settings,
+  // so a shared card lost whether its character speaks first or plays games.
+  //
+  // We fixed this by copying initiative and co-play settings, field by field,
+  // keeping only values of the right type.
+  it('keeps typed initiative and co-play settings and drops the rest', async () => {
+    const source = exportToJSON(createCard('preset-live2d-1'))
+    const modules = (source.data.extensions.airi as AiriExtension).modules as Record<string, unknown>
+    modules.initiative = { enabled: true, threshold: 0.2, refractorySeconds: Number.NaN, nameTopics: 'yes', converseWithAgents: false, unknownFlag: true }
+    modules.coplay = { enabled: true, extra: 1 }
+
+    const imported = await importAiriCardPackage({ file: await packageFile(source), displayModelsStore: useDisplayModelsStore() })
+
+    expect(airiFrom(imported).modules.initiative).toEqual({ enabled: true, threshold: 0.2, converseWithAgents: false })
+    expect(airiFrom(imported).modules.coplay).toEqual({ enabled: true })
+  })
+
+  it('imports nothing autonomous from a card that sets no behaviour', async () => {
+    const imported = await importAiriCardPackage({ file: await packageFile(exportToJSON(createCard('preset-live2d-1'))), displayModelsStore: useDisplayModelsStore() })
+
+    expect(airiFrom(imported).modules).not.toHaveProperty('initiative')
+    expect(airiFrom(imported).modules).not.toHaveProperty('coplay')
+  })
+
+  it('imports the bundled Vexa preset with her behaviour settings', async () => {
+    // The preset files go into the archive byte for byte, as a user zips them.
+    const zip = new JSZip()
+    zip.file('manifest.json', vexaManifestText)
+    zip.file('card.json', vexaCardText)
+    const file = new File([await zip.generateAsync({ type: 'arraybuffer' })], 'vexa.zip')
+
+    const imported = await importAiriCardPackage({ file, displayModelsStore: useDisplayModelsStore() })
+
+    expect(imported.data.name).toBe('Vexa')
+    expect(imported.data.system_prompt).toContain('game_move')
+    expect(airiFrom(imported).modules.initiative).toMatchObject({ enabled: true, yieldWhenInterrupted: false })
+    expect(airiFrom(imported).modules.coplay).toEqual({ enabled: true })
   })
 
   it('classifies invalid packages', async () => {

@@ -84,6 +84,13 @@ export interface AiriExtension {
        */
       nameTopics?: boolean
       /**
+       * Whether she reflects on recent remarks now and then, keeping a few
+       * insights she can use in later replies and bring up in a lull. Off by
+       * default: each reflection is an extra model call, at most one every
+       * five minutes.
+       */
+      reflect?: boolean
+      /**
        * Whether a person can stop the character by talking over her. Off by
        * default.
        *

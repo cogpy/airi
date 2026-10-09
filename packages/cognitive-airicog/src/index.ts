@@ -144,6 +144,16 @@ export {
   rehearse,
   shouldRetain,
 } from './memory/episodic'
+export {
+  createDefaultReflectionConfig,
+  decideReflection,
+  parseReflection,
+  type ReflectionConfig,
+  type ReflectionDecision,
+  reflectionEpisodes,
+  reflectionPrompt,
+  type ReflectionState,
+} from './memory/reflection'
 
 // Ontogenesis - Self-Generating Kernels
 export {

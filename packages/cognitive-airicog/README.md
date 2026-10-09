@@ -14,7 +14,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
 | **Initiative** | Turn-taking: when to take the floor during a lull, when to give it back, and when to stop answering another agent |
-| **Memory** | What an experience was worth, how firmly it is still held, what resurfaces |
+| **Memory** | What an experience was worth, how firmly it is still held, what resurfaces, and the insights drawn from it (reflection) |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
 
@@ -377,6 +377,39 @@ const decision = decideInitiative({
   candidates: asInitiativeCandidates(episodes, now),
 })
 ```
+
+#### Reflection
+
+Episodes say what happened, never what it meant. Reflection turns a run of
+experiences into a few insights the character keeps. Ported from the
+`character-echo` package in the cogpy/moeru-ai fork, where reflections were
+stored and never read: here each insight is an `Episode` of kind `reflection`,
+so it decays, is recalled, and can be raised in a lull like any other memory.
+
+```ts
+import {
+  decideReflection,
+  parseReflection,
+  reflectionEpisodes,
+  reflectionPrompt,
+} from '@proj-airi/cognitive-airicog/memory'
+
+const decision = decideReflection({ now, episodes, lastReflectionAt })
+if (decision.reflect) {
+  const prompt = reflectionPrompt(decision.sources, episode => episode.atomId, { characterName: 'Vexa' })
+  const reply = await askModel(prompt) // the caller owns the model call
+  episodes.push(...reflectionEpisodes(parseReflection(reply), decision.sources, now))
+  lastReflectionAt = now
+}
+```
+
+A reflection is due when the new experiences since the last one are strong
+enough in sum (`importanceThreshold`, about five ordinary remarks) or numerous
+enough (`maxPending`, Echo's interval of ten), and never sooner than
+`minIntervalMs` after the last, because each one is a model call. Only
+experiences count, so an insight never feeds the next reflection. Insights
+encode at `insightSalience`, above an ordinary remark, so they outlast what
+they were drawn from.
 
 ### Affect (mood between turns)
 

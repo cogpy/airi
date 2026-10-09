@@ -43,6 +43,17 @@ export interface Episode {
   valence?: number
   /** Epoch milliseconds of each time it has been recalled since. */
   recalledAt?: number[]
+  /**
+   * What kind of memory this is.
+   *
+   * - `experience` (also when absent): something that happened.
+   * - `reflection`: an insight the character drew from earlier experiences,
+   *   made by `reflection`. Both decay and are recalled the same way; only
+   *   experiences count toward the next reflection.
+   */
+  kind?: 'experience' | 'reflection'
+  /** For a reflection, the ids of the episodes it was drawn from. */
+  sources?: readonly string[]
 }
 
 export interface MemoryConfig {

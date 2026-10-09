@@ -298,6 +298,7 @@ function sanitizeInitiative(source: Record<string, unknown>): NonNullable<AiriEx
     ...finite('threshold'),
     ...finite('refractorySeconds'),
     ...flag('nameTopics'),
+    ...flag('reflect'),
     ...flag('yieldWhenInterrupted'),
     ...flag('converseWithAgents'),
     ...finite('agentTurnBudget'),

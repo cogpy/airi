@@ -12,6 +12,7 @@ import { errorMessageFrom } from '@moeru/std'
 import { decodeBase64 } from '@moeru/std/base64'
 import { SpanStatusCode } from '@opentelemetry/api'
 import { fileSource } from '@proj-airi/audio/encoding'
+import { decideReflection, parseReflection, reflectionEpisodes, reflectionPrompt } from '@proj-airi/cognitive-airicog/memory'
 import { createChatOrchestratorRuntime, isBackgroundRecipe, matchKeywordRecipes, renderConversationPreview, streamFrom } from '@proj-airi/core-agent'
 import { IOAttributes, IOEvents, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { nanoid } from 'nanoid'
@@ -28,6 +29,7 @@ import { parseActEmotion } from '../libs/affect/act-emotion'
 import { createMoodTracker } from '../libs/affect/mood-prompt'
 import { chatAssetIdFrom, inlineConversationAssets, storeChatAttachments } from '../libs/chat-assets'
 import { extractMessageText, isCloudSyncableMessage } from '../libs/chat-sync'
+import { heldInsights, insightsContextMessage, reflectionConversation } from '../libs/initiative/reflection'
 import { parseTopicName, topicNamingConversation } from '../libs/initiative/topic-naming'
 import { createChatAnalyticsHooks, getProviderMode } from '../libs/product-signals/events/chat'
 import {
@@ -1085,12 +1087,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * Asks the session character's model what a remark is about. Only reached
-   * for cards that opt into `initiative.nameTopics`, since it is an extra
-   * model call per turn. Resolves to `undefined` when the character has no
-   * usable model.
+   * Runs one side request on the session character's model and returns its
+   * text, or `undefined` when that character has no usable model. Side
+   * requests (naming a topic, reflecting) bypass the chat runtime, so they add
+   * nothing to the transcript and use no tools.
    */
-  async function nameTopic(sessionId: string, remark: string): Promise<string | undefined> {
+  async function completeText(sessionId: string, conversation: Conversation): Promise<string | undefined> {
     const { provider: providerId, model: modelId } = cardStore.getModules(personaOf(sessionId)).consciousness
     if (!providerId || !modelId)
       return undefined
@@ -1103,7 +1105,7 @@ export const useChatStore = defineStore('chat', () => {
     await streamFrom({
       model: modelId,
       chatProvider,
-      conversation: topicNamingConversation(remark),
+      conversation,
       options: {
         onStreamEvent: (event) => {
           if (event.type === 'text-delta')
@@ -1111,8 +1113,59 @@ export const useChatStore = defineStore('chat', () => {
         },
       },
     })
+    return reply
+  }
 
-    return parseTopicName(reply)
+  /**
+   * Asks the session character's model what a remark is about. Only reached
+   * for cards that opt into `initiative.nameTopics`, since it is an extra
+   * model call per turn.
+   */
+  async function nameTopic(sessionId: string, remark: string): Promise<string | undefined> {
+    const reply = await completeText(sessionId, topicNamingConversation(remark))
+    return reply === undefined ? undefined : parseTopicName(reply)
+  }
+
+  /** Whether a reflection request is in flight; one at a time per renderer. */
+  let reflecting = false
+
+  /**
+   * Turns recent remarks into insights she keeps, when one is due. Only for
+   * session characters whose card opts into `initiative.reflect`, since each
+   * reflection is a model call. `decideReflection` spaces them out.
+   *
+   * The insights become reflection episodes, which initiative can raise in a
+   * lull, and the ones she still holds go into the chat context lane `memory`
+   * so every reply can use them. A failed or empty reflection still counts as
+   * done, so its refractory gap applies.
+   */
+  async function reflectIfDue(sessionId: string) {
+    const card = cardStore.getCard(personaOf(sessionId))
+    if (!card?.extensions?.airi?.modules?.initiative?.reflect || reflecting)
+      return
+
+    const now = Date.now()
+    const decision = decideReflection({ now, episodes: initiativeStore.episodes, lastReflectionAt: initiativeStore.lastReflectionAt })
+    if (!decision.reflect)
+      return
+
+    reflecting = true
+    try {
+      const prompt = reflectionPrompt(decision.sources, episode => episode.atomId, { characterName: card.name })
+      const reply = await completeText(sessionId, reflectionConversation(prompt))
+      const insights = reply === undefined ? [] : parseReflection(reply)
+      initiativeStore.recordReflection(reflectionEpisodes(insights, decision.sources, now), now)
+
+      const held = heldInsights(initiativeStore.episodes, Date.now())
+      if (held.length > 0)
+        chatContext.ingestContextMessage(insightsContextMessage(held))
+    }
+    catch {
+      initiativeStore.recordReflection([], now)
+    }
+    finally {
+      reflecting = false
+    }
   }
 
   /**
@@ -1131,6 +1184,7 @@ export const useChatStore = defineStore('chat', () => {
     const initiative = cardStore.getCard(personaOf(sessionId))?.extensions?.airi?.modules?.initiative
     if (!initiative?.enabled || !initiative.nameTopics) {
       initiativeStore.remember({ topic: remark })
+      void reflectIfDue(sessionId)
       return
     }
 
@@ -1140,6 +1194,7 @@ export const useChatStore = defineStore('chat', () => {
       .then((topic) => {
         if (topic !== undefined)
           initiativeStore.recordEpisode({ topic }, at)
+        return reflectIfDue(sessionId)
       })
       .catch(() => {})
   }

@@ -15,7 +15,7 @@ export default defineConfig({
       'packages/ccc',
       'packages/cognitive-airicog',
       'packages/core-agent',
-      'packages/core-character',
+      'packages/core-character-personas',
       'packages/i18n',
       'packages/pipelines-audio',
       'packages/input-gamepad',

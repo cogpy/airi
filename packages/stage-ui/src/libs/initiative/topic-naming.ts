@@ -1,5 +1,7 @@
 import type { Conversation } from '@proj-airi/core-agent'
 
+import { trimEnd, trimStart } from 'es-toolkit'
+
 /**
  * Longest subject name accepted from the model. A real subject is a few words;
  * anything longer is the model answering the remark instead of naming it.
@@ -37,6 +39,11 @@ export function topicNamingConversation(remark: string): Conversation {
   }
 }
 
+/** Quotes a model puts before a name. */
+const LEADING_MARKS = ['"', '\'', '“', '‘', '`']
+/** Quotes and sentence punctuation a model puts after a name. */
+const TRAILING_MARKS = ['"', '\'', '”', '’', '`', '.', '!', '?']
+
 /**
  * Normalizes the model's reply into a subject name, or `undefined` when the
  * remark had nothing worth returning to or the reply is not a name.
@@ -51,8 +58,9 @@ export function topicNamingConversation(remark: string): Conversation {
  */
 export function parseTopicName(reply: string): string | undefined {
   const firstLine = reply.trim().split('\n')[0] ?? ''
-  const name = firstLine
-    .replace(/^["'“‘`]+|["'”’`.!?]+$/g, '')
+  // Character trims, not an anchored regular expression: the reply comes from
+  // a model, and `[…]+$` is retried from every position of a long run.
+  const name = trimEnd(trimStart(firstLine, LEADING_MARKS), TRAILING_MARKS)
     .trim()
     .toLowerCase()
 

@@ -168,6 +168,30 @@ export function reflectionPrompt(
   ].join('\n')
 }
 
+/** Quotes a model wraps an insight in. */
+const QUOTES = new Set(['"', '\'', '“', '”'])
+
+/**
+ * Removes `characters` from both ends of `text`.
+ *
+ * Index scans, not a regular expression: an anchored `[…]+$` is retried from
+ * every position, so a reply with a long run of quotes would take quadratic
+ * time.
+ *
+ * @example
+ * trimCharacters('"They like cats."', new Set(['"']))
+ * // => 'They like cats.'
+ */
+function trimCharacters(text: string, characters: ReadonlySet<string>): string {
+  let start = 0
+  let end = text.length
+  while (start < end && characters.has(text[start]!))
+    start += 1
+  while (end > start && characters.has(text[end - 1]!))
+    end -= 1
+  return text.slice(start, end)
+}
+
 /** Longest insight kept; a longer line is the model narrating, not concluding. */
 const MAX_INSIGHT_LENGTH = 200
 
@@ -183,12 +207,9 @@ export function parseReflection(reply: string, maxInsights: number = createDefau
   const insights: string[] = []
 
   for (const line of reply.split('\n')) {
-    const text = line
-      .trim()
-      // Numbering and bullets the model adds although it was asked not to.
-      .replace(/^(?:\d+[.)]|[-*•])\s*/, '')
-      .replace(/^["'“]+|["'”]+$/g, '')
-      .trim()
+    // Numbering and bullets the model adds although it was asked not to.
+    const unlisted = line.trim().replace(/^(?:\d+[.)]|[-*•])\s*/, '')
+    const text = trimCharacters(unlisted, QUOTES).trim()
     const key = text.toLowerCase()
 
     if (!text || key === 'none' || key === 'none.' || text.length > MAX_INSIGHT_LENGTH || seen.has(key))

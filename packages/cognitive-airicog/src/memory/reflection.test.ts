@@ -76,6 +76,20 @@ describe('parseReflection', () => {
       .toEqual(['They get nervous before interviews.', 'I joke too much when they are tired.'])
   })
 
+  // ROOT CAUSE:
+  //
+  // Quotes were stripped with /^["'“]+|["'”]+$/g. The `[…]+$` branch is retried
+  // from every position, so a model reply with a long run of quotes took
+  // quadratic time (CodeQL js/polynomial-redos).
+  //
+  // We fixed this by trimming quotes with index scans.
+  it('strips a long run of quotes in linear time', () => {
+    const quotes = '"'.repeat(50_000)
+
+    expect(parseReflection(`${quotes}They like cats.${quotes}`)).toEqual(['They like cats.'])
+    expect(parseReflection(`x${quotes}y`)).toEqual([])
+  })
+
   it('treats "none" and empty replies as nothing to remember', () => {
     expect(parseReflection('None.')).toEqual([])
     expect(parseReflection('\n  \n')).toEqual([])

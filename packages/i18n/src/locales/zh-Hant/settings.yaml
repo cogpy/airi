@@ -1400,11 +1400,9 @@ pages:
       buy: 儲值
       description: 可供選擇的 Flux 儲值組合。
   capacitor:
-    description: Capacitor 儲存 Flux，並會自行充能。
     statusError: 無法載入你的 Capacitor，請稍後再試。
     packagesError: 無法載入 Capacitor 清單，請稍後再試。
     preferenceError: 無法儲存偏好設定，請稍後再試。
-    noCapacitor: 沒有 Capacitor
     remaining: '剩餘 {percent}'
     rechargesAt: '{date} 充能'
     renewsAt: '{date} 續訂'

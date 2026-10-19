@@ -1397,11 +1397,9 @@ pages:
       buy: 購入
       description: 選択可能な Flux パッケージ。
   capacitor:
-    description: Capacitor は Flux を蓄え、自動で充電されます。
     statusError: Capacitor を読み込めませんでした。後でもう一度お試しください。
     packagesError: Capacitor の一覧を読み込めませんでした。後でもう一度お試しください。
     preferenceError: 設定を保存できませんでした。後でもう一度お試しください。
-    noCapacitor: Capacitor なし
     remaining: '残り {percent}'
     rechargesAt: '{date} に充電'
     renewsAt: '{date} に更新'

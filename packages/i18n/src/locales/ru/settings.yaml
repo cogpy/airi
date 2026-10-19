@@ -1396,11 +1396,9 @@ pages:
       buy: Пополнить
       description: Пакеты Flux на выбор.
   capacitor:
-    description: Capacitor хранит Flux и перезаряжается автоматически.
     statusError: Не удалось загрузить ваш Capacitor. Повторите попытку позже.
     packagesError: Не удалось загрузить список Capacitor. Повторите попытку позже.
     preferenceError: Не удалось сохранить настройку. Повторите попытку позже.
-    noCapacitor: Нет Capacitor
     remaining: 'Осталось {percent}'
     rechargesAt: Перезарядка {date}
     renewsAt: Продление {date}

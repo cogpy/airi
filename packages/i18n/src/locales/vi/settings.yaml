@@ -1396,11 +1396,9 @@ pages:
       buy: Mua
       description: Các gói Flux để lựa chọn.
   capacitor:
-    description: Capacitor chứa Flux và tự nạp lại.
     statusError: Không thể tải Capacitor của bạn. Thử lại sau.
     packagesError: Không thể tải danh sách Capacitor. Thử lại sau.
     preferenceError: Không thể lưu tùy chọn. Thử lại sau.
-    noCapacitor: Không có Capacitor
     remaining: 'Còn {percent}'
     rechargesAt: Nạp lại vào {date}
     renewsAt: Gia hạn vào {date}

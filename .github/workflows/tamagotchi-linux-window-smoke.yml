@@ -33,6 +33,12 @@ on:
     # the Wayland-only branch actually changes.
     - cron: '0 18 * * *'
 
+# Both jobs only read the checkout and upload an artifact, which the run's own
+# token covers. Without this the jobs inherit the repository default, which can
+# be write.
+permissions:
+  contents: read
+
 # A newer push to the same PR supersedes the running smoke; main and
 # scheduled runs are keyed by run id so they never cancel each other.
 concurrency:

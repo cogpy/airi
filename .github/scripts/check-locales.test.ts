@@ -333,6 +333,36 @@ describe('checkLocales', () => {
     expect(row.replace(/\\\|/g, '').split('|')).toHaveLength(7)
   })
 
+  it('escapes a backslash in a key, so the row still keeps five columns', async () => {
+    // ROOT CAUSE:
+    //
+    // Escaping the pipe alone let a backslash already in the cell act as the escape
+    // for the one the table added:
+    //
+    //   value.replace(/\|/g, '\\|')
+    //
+    // A key holding `\|` reached the cell as `\\|`, which Markdown reads as an
+    // escaped backslash and then a bare delimiter, so the row grew a column. The key
+    // is the route that reaches this, not the translation: the table prints the
+    // level, locale, file, key and message, and never the translated string.
+    //
+    // We fixed this by escaping the backslash and the pipe in one pass. Measured on
+    // the row below: the key cell broke the row into six columns before the fix and
+    // keeps five after.
+    const root = await locales({
+      'en/settings.yaml': '"a\\\\|b": Anthropic | Claude\n',
+    })
+    const summary = join(root, 'summary.md')
+
+    await promisify(execFile)(process.execPath, [script, '--root', root, '--summary', summary])
+
+    const table = await readFile(summary, 'utf8')
+    const row = table.split('\n').find(line => line.includes('a\\')) ?? ''
+    expect(row).toContain('choice separator')
+    // Dropping every escape pair leaves only the delimiters that build the row.
+    expect(row.replace(/\\[\s\S]/g, '').split('|')).toHaveLength(7)
+  })
+
   it('accepts a separator that a bare number selects', async () => {
     // t(key, plural) picks a form with the number itself, so the message needs no
     // placeholder. This is why the check reports a warning and not an error.

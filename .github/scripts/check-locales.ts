@@ -310,12 +310,18 @@ function findRemovedTranslations(
  * A pipe ends a cell, and the messages and the keys can hold one. The warning that
  * explains a choice separator holds one by design, because it shows `{'|'}`.
  *
+ * The backslash is escaped in the same pass: escaping only the pipe let a
+ * backslash already in the cell act as the escape for the one added here, so a
+ * key of `a\|b` reached the row as `a\\|b`, which renders as a backslash and
+ * then a cell break. The key is the cell that reaches this, since the table
+ * never prints a translated string.
+ *
  * @example
  * markdownCell('Anthropic | Claude')
  * // => 'Anthropic \| Claude'
  */
 function markdownCell(value: string) {
-  return value.replace(/\|/g, '\\|')
+  return value.replace(/[\\|]/g, '\\$&')
 }
 
 function formatSummary(issues: LocaleIssue[]) {

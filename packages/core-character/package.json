@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.12.0-beta.5",
   "private": true,
-  "description": "Core character implementations for AIRI - featuring Melody's ontogenetic humour system with multi-layered comedy",
+  "description": "Core character contracts and runtime orchestration for AIRI",
   "author": {
     "name": "Moeru AI Project AIRI Team",
     "email": "airi@moeru.ai",
@@ -30,18 +30,12 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "examples": "tsx src/run-examples.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@moeru/std": "catalog:",
-    "@proj-airi/cognitive-airicog": "workspace:^",
     "@proj-airi/stream-kit": "workspace:^",
-    "clustr": "catalog:",
-    "es-toolkit": "catalog:"
+    "clustr": "catalog:"
   },
-  "devDependencies": {
-    "vitest": "catalog:vitest"
-  }
+  "devDependencies": {}
 }

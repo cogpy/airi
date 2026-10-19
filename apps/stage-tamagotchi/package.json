@@ -32,6 +32,7 @@
     "regenerate-windows-latest": "tsx scripts/regenerate-windows-latest.ts",
     "artifacts-metadata": "tsx scripts/artifacts-metadata.ts",
     "smoke:desktop-overlay-live-window": "NODE_OPTIONS='--experimental-websocket' tsx scripts/desktop-overlay-live-window-smoke.ts",
+    "smoke:linux-window-render": "NODE_OPTIONS='--experimental-websocket' tsx scripts/linux-window-render-smoke.ts",
     "update-test:generate": "tsx scripts/update-test/generate-manifest.ts",
     "update-test:server": "tsx scripts/update-test/start-server.ts",
     "update-test:matrix": "bash scripts/update-test/run-matrix.sh"
@@ -61,6 +62,7 @@
     "@proj-airi/audio": "workspace:^",
     "@proj-airi/ccc": "workspace:^",
     "@proj-airi/drizzle-duckdb-wasm": "catalog:",
+    "@proj-airi/electron-native-backdrop": "workspace:^",
     "@proj-airi/font-chillroundm": "workspace:^",
     "@proj-airi/font-cjkfonts-allseto": "workspace:^",
     "@proj-airi/font-xiaolai": "workspace:^",
@@ -120,6 +122,7 @@
     "jszip": "catalog:",
     "localforage": "catalog:",
     "mediabunny": "catalog:",
+    "nanoid": "catalog:",
     "node-vibrant": "catalog:",
     "nprogress": "catalog:",
     "onnxruntime-web": "catalog:",

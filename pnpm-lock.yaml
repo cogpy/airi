@@ -3963,10 +3963,6 @@ importers:
         version: 1.4.2(typescript@6.0.3)
 
   packages/cognitive-airicog:
-    dependencies:
-      '@moeru/std':
-        specifier: 'catalog:'
-        version: 0.1.0-beta.17
     devDependencies:
       vitest:
         specifier: catalog:vitest

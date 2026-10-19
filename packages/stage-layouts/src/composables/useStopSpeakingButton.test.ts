@@ -41,21 +41,12 @@ vi.mock('pinia', () => ({
 describe('useStopSpeakingButton', () => {
   // ROOT CAUSE:
   //
-  // `toggleSpeechMuted` used to apply the mute only after awaiting
-  // `resolveSpeakingState()`, which crosses to the renderer that owns playback.
-  // While that promise was pending `speechMuted` still held the old value, so a
-  // second press read the same stale value and computed the same target state:
+  // The mute was committed only after awaiting `resolveSpeakingState()`. While
+  // that was pending, `speechMuted` still held the old value, so a second press
+  // computed the same target and both presses muted.
   //
-  //   wasSpeaking = await options.resolveSpeakingState()  // pending
-  //   const muted = !speechMuted.value                    // stale on press 2
-  //   speechOutputControlStore.setSpeechMuted(muted)
-  //
-  // Two presses therefore both muted, and the user could not unmute until the
-  // remote state resolved.
-  //
-  // We fixed this by computing the target state and committing it before the
-  // await, so each press toggles from the state the previous press committed
-  // and the analytics call is the only part that waits.
+  // Fixed by committing the target before the await, leaving only analytics to
+  // wait.
   it('mutes immediately while the remote playback state is pending', async () => {
     speechMuted.value = false
     setSpeechMutedMock.mockClear().mockImplementation((muted: boolean) => {

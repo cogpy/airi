@@ -111,6 +111,14 @@ describe('context bridge co-play events', () => {
   })
 
   afterEach(async () => {
+    // ROOT CAUSE:
+    //
+    // A joined game holds a Web Lock until it ends. Tests left games playing,
+    // so the next join of `coplay:g1` was refused where `navigator.locks`
+    // exists, as on CI.
+    //
+    // We fixed this by ending each test's game, which releases its lock.
+    useCoplayStore().stopSession('test teardown')
     await useContextBridgeStore().dispose()
   })
 

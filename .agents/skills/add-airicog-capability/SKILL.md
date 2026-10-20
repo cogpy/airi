@@ -19,19 +19,17 @@ commits while every test passed. Most of what follows exists to stop those.
 
 ## 1. Find the code, and confirm the gap is real
 
-**Check which branch has the package.** `cognitive-airicog` has at times existed
-only on a feature branch, not on `main` — a merged PR did not guarantee it. Check
-the tree, not the history:
+**Start from `main`.** `cognitive-airicog` is on `main` since PR #15
+(2026-09-28). If a commit you expect "is not in main", check the tree, not the
+history:
 
 ```bash
 git ls-tree --name-only origin/main packages/cognitive-airicog
 ```
 
-Empty output means it is not on `main`; as of 2026-09 it lived on
-`claude/implement-opencog-airicog-01HuyLCBqKmfErW6UU2B2W48`. Tree checks are
-reliable in a shallow clone; `git merge-base --is-ancestor` is not — it reports
-false negatives past the depth boundary. Deepen with a bounded
-`git fetch --depth=600 origin <branch>` before trusting ancestry.
+A tree check is reliable in a shallow clone. `git merge-base --is-ancestor` is
+not: it reports false negatives past the depth boundary. Deepen with a bounded
+`git fetch --depth=600 origin <branch>` before you trust ancestry.
 
 **Confirm nothing already does it.** Search before building:
 
@@ -121,6 +119,12 @@ it, `vitest run` inside the package inherits the root config and crashes with
   settings from the card — the initiative store types them as
   `NonNullable<AiriExtension['modules']['initiative']>` and treats a missing
   `enabled` as `false`. A card that never asked for the behaviour doesn't get it.
+- **A card setting the UI can change goes through a synced card action.** Add
+  an `updateActiveCard<Module>` action to `stores/modules/airi-card.ts`, list it
+  under `synced.actions`, and make it idempotent. Read
+  [`enforce-rules-for-pinia-synced`](../enforce-rules-for-pinia-synced/SKILL.md)
+  first. Also add the field to `sanitizeAiri` in
+  `services/airi-card-import-export.ts`, or an imported card loses it.
 - stage-ui depends on the package as `"@proj-airi/cognitive-airicog": "workspace:^"`.
   After adding or changing a dependency, `CI=true pnpm install --no-frozen-lockfile`.
 
@@ -139,7 +143,10 @@ pnpm -F @proj-airi/cognitive-airicog build
 node .agents/skills/verify-package-public-api/scripts/check-exports.mjs \
   packages/cognitive-airicog ./<module>=<yourMainExport>
 
-# the consumer — vue-tsc, several minutes, and the step that catches wrong-subpath imports
+# the consumer reads the package's built types, so build them first
+pnpm run build:packages
+
+# vue-tsc, several minutes, and the step that catches wrong-subpath imports
 pnpm -F @proj-airi/stage-ui typecheck
 pnpm -F @proj-airi/stage-ui exec vitest run src/stores/modules/<name>.test.ts
 
@@ -163,9 +170,33 @@ decision flips the way it should (quiet 500 ms after being spoken to; speaks
 after a long silence). It is a two-minute check that catches wiring the unit
 tests mock around.
 
+**Build before the consumer typecheck.** The package `exports` point at
+`dist/*.d.mts`, so stage-ui typechecks against built types, not source. The
+root `postinstall` runs `build:packages`, and CI's Type Check gets its build
+from that install. Locally, `dist/` is missing when the postinstall failed,
+and vue-tsc then reports hundreds of unrelated errors. After you change an
+export, `dist/` is out of date until you build again.
+
+**Tests that use Web Locks behave differently here.** Node 22 has no
+`navigator.locks`, so code that guards with it, such as the co-play session
+lock, takes the unlocked path locally and the locked path in CI. To reproduce
+a CI-only failure, add a minimal `navigator.locks` stand-in at the top of the
+test file, run it, and remove it before you commit. A test that holds a lock
+must release it in `afterEach`, or the next test cannot take it. If a test
+fails here, run it on unchanged `main` before you call it yours.
+
 Use generous timeouts: stage-ui typecheck and the repo-wide typecheck each take
-minutes. In a fresh container `node_modules` may be empty — install first with
+minutes. In a fresh container `node_modules` can be empty. Install first with
 `CI=true pnpm install`, which takes about four minutes.
+
+**If install fails in a postinstall script** (for example `EADDRINUSE` or a
+socket path that is too long, from `model-driver-mediapipe`), the dependencies
+are usually linked anyway. Each `pnpm run` then tries the install again and
+fails. Set the environment variable, not a flag, so turbo never receives it:
+
+```bash
+pnpm_config_verify_deps_before_run=false pnpm -F @proj-airi/stage-ui typecheck
+```
 
 ## 6. Commit
 
@@ -175,6 +206,12 @@ minutes. In a fresh container `node_modules` may be empty — install first with
 - Markdown code blocks are linted: use `console.info`, not `console.log`.
 - A regex used only with `.test()` wants non-capturing groups — `/\b(?:a|b)\b/` —
   or `regexp/no-unused-capturing-group` fires.
+- **Parse model replies without anchored repeats.** A pattern such as
+  `/^["']+|["']+$/g` is retried from every position, so a reply with a long run
+  of quotes takes quadratic time, and CodeQL reports it as high severity. Trim
+  with index scans: `trimStart` and `trimEnd` from es-toolkit in stage-ui, or a
+  small loop in `cognitive-airicog`, which has no es-toolkit dependency. Add a
+  test with a run of 50,000 quote characters.
 - Don't mass-fix pre-existing lint in files you didn't otherwise touch; other
   branches may be doing that cleanup and you'll collide.
 - Conventional Commits: `feat(cognitive-airicog): …`, `fix(stage-ui): …`. The body
@@ -212,4 +249,8 @@ what.
 | `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` | Non-interactive shell | `CI=true pnpm install` |
 | `ERR_PNPM_OUTDATED_LOCKFILE` after adding a dependency | Frozen lockfile in CI mode | `--no-frozen-lockfile` |
 | `pnpm run …` hangs with no output in a fresh container | Dependencies not installed; pnpm fetching before `run` | `CI=true pnpm install` first; if corepack itself hangs behind a proxy, set `NODE_USE_ENV_PROXY=1` |
+| stage-ui typecheck reports hundreds of errors in packages you did not touch | `dist/` is missing or old, and `exports` point at it | `pnpm run build:packages`, then typecheck again |
+| `pnpm run` fails again on install after a failed postinstall | pnpm checks dependencies before each run | `pnpm_config_verify_deps_before_run=false` in the environment |
+| A test passes here and fails in CI, near a session or lock | Node 22 has no `navigator.locks`, so the lock path never ran locally | Reproduce with a `navigator.locks` stand-in. Release locks in `afterEach` |
+| CodeQL "Polynomial regular expression used on uncontrolled data" | An anchored `[…]+$` on a model reply | Trim by index scan, and add a long-run test |
 | A commit you know was merged "isn't in main" | Shallow clone, or it genuinely isn't | `git ls-tree` the tip; deepen with `--depth` before trusting ancestry |

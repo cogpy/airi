@@ -12,6 +12,7 @@ import { defineStore, storeToRefs } from 'pinia'
 import { onScopeDispose, shallowRef, watch } from 'vue'
 
 import { useVoiceController } from '../composables/audio/voice-controller'
+import { observeSelfSpeech } from '../composables/speech-output-self-channel'
 import { traceSpeechOutput } from '../composables/speech-output-trace'
 import { useVoiceDrafts } from '../composables/voice-drafts'
 import { useVoiceEndJudge } from '../composables/voice-end-judge'
@@ -28,7 +29,9 @@ import { useLlmStreamingControlStore } from './ai/chat-llm/streaming-control'
 import { useAudioContext, useSpeakingStore } from './audio'
 import { useChatStore } from './chat'
 import { useChatSessionStore } from './chat/session-store'
+import { useAiriCardStore } from './modules/airi-card'
 import { startsInputOnSpeech, useHearingStore } from './modules/hearing'
+import { useParticipantsStore } from './participants'
 import { useSettingsAudioDevice } from './settings/audio-device'
 import { useSpeakerTrackerStore } from './speaker-tracker'
 import { useVoiceCaptureLeaseStore } from './voice-capture-lease'
@@ -61,6 +64,8 @@ export const useVoiceStore = defineStore('voice', () => {
   const wakeWordDetection = useWakeWordDetectionStore()
   const voiceprints = useVoiceprintStore()
   const speakerTracker = useSpeakerTrackerStore()
+  const cards = useAiriCardStore()
+  const participants = useParticipantsStore()
   const { stream: microphoneStream, enabled: microphoneEnabled, error: microphoneError } = storeToRefs(devices)
   /** The application tool selection for spoken turns. Without a connection, spoken turns send no tools. */
   let requestTools: (() => readonly ChatToolReference[]) | undefined
@@ -83,13 +88,31 @@ export const useVoiceStore = defineStore('voice', () => {
   let presentedInput: { requestId: string, attempt: SpeechInputAttempt } | undefined
 
   const inputTracer = createVoiceInputTracer()
+  /** Speech tracing reads the duration, and the self channel reads the samples, of the same decoded clip. */
+  const decodeSpeech = async (audio: Blob) => audioContext.audioContext.decodeAudioData(await audio.arrayBuffer())
+
+  /** The initiative settings of the character card that owns a session. Read per event, so a card edit applies at once. */
+  function initiativeOf(sessionId: string | undefined) {
+    return sessionId ? cards.getCard(chat.personaOf(sessionId))?.extensions?.airi?.modules?.initiative : undefined
+  }
+
+  /**
+   * Whether the self channel publishes a turn's speech clips: when the session's card uses them for barge-in
+   * (`yieldWhenInterrupted`) or sends them to other stages (`converseWithAgents`). Both are off by default.
+   */
+  function publishesSelfSpeech(sessionId: string) {
+    const initiative = initiativeOf(sessionId)
+    return !!initiative?.yieldWhenInterrupted || !!initiative?.converseWithAgents
+  }
+
   const { controller, state, snapshot: transcript, error } = useVoiceController({
     transcriber: () => hearing.createTranscriber(),
     speech: (turn) => {
       if (!output)
         throw new Error('Voice output host is not connected')
 
-      const trace = traceSpeechOutput(turn, chat.openTurnSpan(turn), output(turn), async audio => audioContext.audioContext.decodeAudioData(await audio.arrayBuffer()))
+      const selfSpeech = observeSelfSpeech(turn, output(turn), decodeSpeech, () => publishesSelfSpeech(turn.sessionId))
+      const trace = traceSpeechOutput(turn, chat.openTurnSpan(turn), selfSpeech, decodeSpeech)
       speechTraces.set(turnKey(turn), trace)
       return trace.output
     },
@@ -506,7 +529,7 @@ export const useVoiceStore = defineStore('voice', () => {
       enabled: () => !voiceMessages.isRecording && !captureLease.held,
       silenceMs: () => hearing.endJudgeEnabled ? VOICE_END_SILENCE.pauseMs + VOICE_END_SILENCE.graceMs : VOICE_END_SILENCE.pauseMs,
       // Automatic barge-in requires platform echo cancellation or an external echo classifier.
-      acceptSpeech: options.acceptSpeech ?? (async () => !speaking.nowSpeaking || devices.source.echoCancellation),
+      acceptSpeech: options.acceptSpeech ?? acceptSpeechOverEcho,
       // Wake word mode returns no target, so VAD alone cannot start an input. A wake supplies its own target.
       target: () => sessions.activeSessionId && hearing.configured && startsInputOnSpeech(hearing.inputMode)
         ? { sessionId: sessions.activeSessionId, interruptTurns: activeTurns.value.filter(turn => turn.sessionId === sessions.activeSessionId) }
@@ -538,6 +561,24 @@ export const useVoiceStore = defineStore('voice', () => {
         return undefined
       } }, { onError: event => report(event.error) }),
     ]
+  }
+
+  /**
+   * The default echo check of continuous listening.
+   *
+   * Without echo cancellation, the microphone hears her own speech, so speech is accepted only while she is silent.
+   * When the active session's card sets `yieldWhenInterrupted`, the echo classifier of the participants store also
+   * judges each window. It can only turn a rejection into an acceptance: it accepts when someone speaks louder than her
+   * published echo can explain. Without that card setting, the check is the plain rule.
+   */
+  async function acceptSpeechOverEcho(window: AudioWindow) {
+    const accepted = !speaking.nowSpeaking || devices.source.echoCancellation
+    if (!initiativeOf(sessions.activeSessionId)?.yieldWhenInterrupted)
+      return accepted
+
+    // The classifier sees every window it can, also accepted ones: each window improves its clock estimate.
+    const decision = participants.classifyDeviceWindow(window, Date.now())
+    return accepted || decision.accept
   }
 
   /**

@@ -2,7 +2,7 @@ import type { LlmStreamingControlCallManifest } from '@proj-airi/pipelines-audio
 import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 import type { UserMessage } from '@xsai/shared-chat'
 
-import type { AgentTurn } from '../../../libs/participants'
+import type { AgentTurn, ParticipantActivity } from '../../../libs/participants'
 import type { ChatStreamEventContext, ContextMessage, StreamingAssistantMessage } from '../../../types/chat'
 import type { SparkNotifyPerformanceResult, SparkNotifyReactionOptions } from './spark-notify-reaction'
 
@@ -68,7 +68,8 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
   const streamingControl = useLlmStreamingControlStore()
   const participantsStore = useParticipantsStore()
   const coplayStore = useCoplayStore()
-  const { activeCard } = storeToRefs(useAiriCardStore())
+  const cardStore = useAiriCardStore()
+  const { activeCard } = storeToRefs(cardStore)
 
   /**
    * Whether the active card talks with other AI agents. Read per speech event,
@@ -86,6 +87,14 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
    */
   let agentRepliedAt: number[] = []
   const agentTurnAssembler = createAgentTurnAssembler(turn => void answerAgentTurn(turn))
+  /**
+   * Her speech that went out to other stages and has not ended: the number of
+   * open `start` events, and the name they carried. Runtime state of this
+   * window. A clip's end goes out while a start is open, whatever the card
+   * says now, so a card change cannot leave other stages hearing her forever.
+   */
+  let openSelfSpeech = 0
+  let selfSpeechName: string | undefined
 
   type SparkNotifyBridgeMessage
     = | {
@@ -669,6 +678,50 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
   }
 
   /**
+   * Agent channel out: sends her self activity to other stages as
+   * `output:speech:activity`, and each clip's text as `output:speech:utterance`
+   * right after its start.
+   *
+   * The card of the speaking session decides, through `converseWithAgents`.
+   * Only the window that plays her speech has self activity, because the
+   * participants store is not synchronized, so only that window sends.
+   * Receivers ignore events with their own `stageParticipantId`.
+   */
+  function publishSelfSpeech(activity: ParticipantActivity) {
+    if (activity.participant.kind !== 'self')
+      return
+
+    const participantId = participantsStore.stageParticipantId
+    if (activity.phase === 'end') {
+      if (openSelfSpeech === 0)
+        return
+      openSelfSpeech -= 1
+      serverChannelStore.send({
+        type: 'output:speech:activity',
+        data: { participantId, name: selfSpeechName, phase: 'end', at: activity.at },
+      })
+      return
+    }
+
+    const card = activity.sessionId ? cardStore.getCard(chatOrchestrator.personaOf(activity.sessionId)) : undefined
+    if (!card?.extensions?.airi?.modules?.initiative?.converseWithAgents)
+      return
+
+    openSelfSpeech += 1
+    selfSpeechName = card.name
+    serverChannelStore.send({
+      type: 'output:speech:activity',
+      data: { participantId, name: selfSpeechName, phase: 'start', at: activity.at },
+    })
+    if (activity.text?.trim()) {
+      serverChannelStore.send({
+        type: 'output:speech:utterance',
+        data: { id: nanoid(), participantId, name: selfSpeechName, turnId: activity.turnId, text: activity.text, at: activity.at },
+      })
+    }
+  }
+
+  /**
    * Speech events reach every peer except the sending connection, so other
    * windows of this same stage receive what this stage published. They carry
    * this stage's participant id and are not another agent.
@@ -1045,9 +1098,8 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
       }))
 
       // Agent channel in. Activity goes to the participants store at once, on
-      // this renderer's clock, so barge-in can yield to an agent the same way
-      // it yields to a person. Utterances are joined into whole turns before
-      // the character answers.
+      // this renderer's clock, the same clock as her own activity. Utterances
+      // are joined into whole turns before the character answers.
       disposeHookFns.value.push(serverChannelStore.onEvent('output:speech:activity', (event) => {
         if (!isAgentSpeech(event.data.participantId))
           return
@@ -1070,6 +1122,11 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
       disposeHookFns.value.push(() => {
         agentTurnAssembler.reset()
         participantsStore.endAllAgentActivity(Date.now())
+      })
+      // Agent channel out, gated per clip by the speaking session's card.
+      disposeHookFns.value.push(participantsStore.onActivity(publishSelfSpeech))
+      disposeHookFns.value.push(() => {
+        openSelfSpeech = 0
       })
 
       // Co-play in. Peer game events go to the co-play store, which joins

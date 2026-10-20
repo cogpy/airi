@@ -13,6 +13,7 @@ const SETTLE_MS = 1500
 
 const serverEventHandlers = new Map<string, ServerEventHandler[]>()
 const ingest = vi.fn(async () => undefined)
+const send = vi.fn()
 const chatProvider = { generation: vi.fn() }
 const initiative = ref<Record<string, unknown>>({})
 
@@ -27,6 +28,7 @@ vi.mock('../../character', () => ({
 vi.mock('../../chat', () => ({
   useChatStore: () => ({
     ingest,
+    personaOf: (sessionId: string) => `character-of-${sessionId}`,
     onBeforeMessageComposed: noopHook,
     onAfterMessageComposed: noopHook,
     onBeforeSend: noopHook,
@@ -69,13 +71,16 @@ vi.mock('../../modules/consciousness', () => ({
 vi.mock('../../modules/airi-card', () => ({
   useAiriCardStore: () => ({
     activeCard: ref({ name: 'Local', extensions: { airi: { modules: { initiative: initiative.value } } } }),
+    getCard: (id: string) => id === 'character-of-session-1'
+      ? { name: 'Local', extensions: { airi: { modules: { initiative: initiative.value } } } }
+      : undefined,
   }),
 }))
 
 vi.mock('./channel-server', () => ({
   useModsServerChannelStore: () => ({
     ensureConnected: vi.fn(async () => undefined),
-    send: vi.fn(),
+    send,
     onReconnected: noopHook,
     onContextUpdate: noopHook,
     onEvent: (type: string, handler: ServerEventHandler) => {
@@ -88,6 +93,11 @@ vi.mock('./channel-server', () => ({
 async function emitServerEvent(type: string, data: Record<string, unknown>) {
   for (const handler of serverEventHandlers.get(type) ?? [])
     await handler({ data })
+}
+
+/** The speech events this stage sent to other stages. */
+function sentSpeech() {
+  return send.mock.calls.map(([event]) => event).filter(event => event.type.startsWith('output:speech:'))
 }
 
 /** Publishes one sentence the way another stage does: start, its text, then end. */
@@ -103,6 +113,7 @@ describe('context bridge agent speech', () => {
     setActivePinia(createPinia())
     serverEventHandlers.clear()
     ingest.mockClear()
+    send.mockClear()
     initiative.value = { converseWithAgents: true }
   })
 
@@ -172,5 +183,42 @@ describe('context bridge agent speech', () => {
 
     expect(ingest).toHaveBeenCalledTimes(1)
     expect(activity.filter(event => event.phase === 'start')).toHaveLength(2)
+  })
+
+  it('sends her own speech to other stages when the speaking session\'s card converses with agents', async () => {
+    const participants = useParticipantsStore()
+    await useContextBridgeStore().initialize()
+
+    participants.publishSelfPlaybackStart({ id: 'clip-1', text: 'Hi there.', at: 5, turnId: 'turn-1', sessionId: 'session-1' })
+    participants.publishSelfPlaybackStop({ id: 'clip-1', at: 9 })
+
+    const participantId = participants.stageParticipantId
+    expect(sentSpeech()).toEqual([
+      { type: 'output:speech:activity', data: { participantId, name: 'Local', phase: 'start', at: 5 } },
+      { type: 'output:speech:utterance', data: { id: expect.any(String), participantId, name: 'Local', turnId: 'turn-1', text: 'Hi there.', at: 5 } },
+      { type: 'output:speech:activity', data: { participantId, name: 'Local', phase: 'end', at: 9 } },
+    ])
+  })
+
+  it('does not send her speech when the speaking session\'s card does not converse with agents', async () => {
+    initiative.value = { yieldWhenInterrupted: true }
+    const participants = useParticipantsStore()
+    await useContextBridgeStore().initialize()
+
+    participants.publishSelfPlaybackStart({ id: 'clip-1', text: 'Hi there.', at: 5, sessionId: 'session-1' })
+    participants.publishSelfPlaybackStop({ id: 'clip-1', at: 9 })
+
+    expect(sentSpeech()).toEqual([])
+  })
+
+  it('still sends the end of a clip after the card stops conversing, so other stages do not hear her forever', async () => {
+    const participants = useParticipantsStore()
+    await useContextBridgeStore().initialize()
+
+    participants.publishSelfPlaybackStart({ id: 'clip-1', text: 'Hi there.', at: 5, sessionId: 'session-1' })
+    initiative.value = {}
+    participants.publishSelfPlaybackStop({ id: 'clip-1', at: 9 })
+
+    expect(sentSpeech().at(-1)).toEqual({ type: 'output:speech:activity', data: { participantId: participants.stageParticipantId, name: 'Local', phase: 'end', at: 9 } })
   })
 })

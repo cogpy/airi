@@ -23,8 +23,8 @@ export interface EchoGateConfig {
    * Expected delay from the playback start event to the echo reaching the
    * microphone: output buffering, the air path, and input buffering.
    *
-   * The playback manager stamps `startedAt` before the audio node starts, so
-   * this also covers the time to schedule the node.
+   * The self channel stamps the start when the voice pipeline schedules the
+   * first audio of a clip, so this also covers the time to start the node.
    *
    * @default 80
    */
@@ -136,7 +136,7 @@ export function createDefaultEchoGateConfig(): EchoGateConfig {
 
 /** A self playback registered with the gate. */
 export interface SelfPlayback {
-  /** Correlates `startSelf` with `stopSelf`. The playback item id. */
+  /** Correlates `startSelf` with `stopSelf`. The speech clip id. */
   id: string
   /** When playback started, in `Date.now()` milliseconds. */
   at: number
@@ -180,8 +180,8 @@ export interface EchoGate {
   /**
    * Marks a playback as stopped at `at`. Envelope frames after `at` no longer
    * predict echo; the tail window still runs from `at`. Unknown ids are
-   * ignored, because the playback manager may report a stop for an item the
-   * gate never saw (for example, one rejected before it started).
+   * ignored, because the self channel reports a stop for a clip the gate
+   * never saw (for example, a clip that had no decoded audio).
    */
   stopSelf: (id: string, at: number) => void
   /**

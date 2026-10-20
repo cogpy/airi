@@ -1,45 +1,19 @@
-import type { EchoGateConfig, EchoGateDecision, EnvelopeSource, Participant, ParticipantActivity } from '../libs/participants'
+import type { AudioWindow } from '@proj-airi/pipelines-audio'
+
+import type { EchoClassifierConfig, EchoClassifierDecision, EchoGateConfig, EnvelopeSource, Participant, ParticipantActivity } from '../libs/participants'
 
 import { useLocalStorage } from '@vueuse/core'
 import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createDefaultEchoGateConfig, createEchoGate, energyEnvelope } from '../libs/participants'
+import { createDefaultEchoGateConfig, createEchoClassifier, createEchoGate, energyEnvelope } from '../libs/participants'
 
 /** The character's own output. A stage has exactly one. */
 export const SELF_PARTICIPANT: Participant = Object.freeze({ id: 'self', kind: 'self' })
 
 /** The local microphone. One device is one participant: no diarization. */
 export const DEVICE_PARTICIPANT: Participant = Object.freeze({ id: 'device:microphone', kind: 'other', origin: 'device' })
-
-/**
- * How the store turns per-frame gate answers into speech start and end for
- * the device participant.
- */
-export interface DeviceActivityConfig {
-  /**
-   * Consecutive `other` frames, while voice detection reports speech, before
-   * the device counts as speaking over her. Five 10 ms frames is 50 ms: it
-   * skips single-frame spikes such as a click.
-   *
-   * @default 5
-   */
-  onsetFrames: number
-  /**
-   * Consecutive frames her echo explains, while she is audible, before the
-   * device stops counting as speaking over her. Thirty 10 ms frames is 300 ms:
-   * a person's gap between words does not end their interruption, which the
-   * barge-in controller would read as a new, short overlap.
-   *
-   * @default 30
-   */
-  releaseFrames: number
-}
-
-function createDefaultDeviceActivityConfig(): DeviceActivityConfig {
-  return { onsetFrames: 5, releaseFrames: 30 }
-}
 
 /**
  * Owns the participants a stage perceives and their speech activity.
@@ -49,19 +23,13 @@ function createDefaultDeviceActivityConfig(): DeviceActivityConfig {
  *
  * State model:
  *
- * - Self (runtime state). Set by the stage from its playback manager.
- *   `selfSpeaking` is true while any published playback has not stopped.
- * - Device speech (runtime state). `deviceSpeaking` follows voice detection on
- *   the microphone. It does not say who is talking: her echo also trips voice
- *   detection.
- * - Other speech (derived runtime state). `otherSpeaking` is true when the
- *   device is speaking and the echo gate says the sound is not her. Outside
- *   her playback, it starts with device speech. During her playback, it
- *   starts after `onsetFrames` `other` frames and ends after `releaseFrames`
- *   frames her echo explains. It always ends with device speech.
- * - Echo gate (learned state). Lives as long as the store, so calibration
- *   carries over between utterances. {@link configure} replaces it and drops
- *   what it learned.
+ * - Self (runtime state). Set by the self channel from the voice pipeline's
+ *   speech output (`composables/speech-output-self-channel.ts`).
+ *   `selfSpeaking` is true while any published clip has not stopped.
+ * - Echo gate and echo classifier (learned state). They live as long as the
+ *   store, so calibration carries over between utterances. The voice store
+ *   asks {@link classifyDeviceWindow} whether a microphone window is speech
+ *   over her echo. {@link configure} replaces both and drops what they learned.
  * - Agent speech (runtime state). Other AI agents on the server channel, by
  *   participant id. `agentSpeaking` is true while any of them has started and
  *   not ended. Fed by the context bridge from speech events.
@@ -77,8 +45,6 @@ function createDefaultDeviceActivityConfig(): DeviceActivityConfig {
  */
 export const useParticipantsStore = defineStore('participants', () => {
   const selfSpeaking = ref(false)
-  const deviceSpeaking = ref(false)
-  const otherSpeaking = ref(false)
   const agentSpeaking = ref(false)
   const storedStageParticipantId = useLocalStorage('settings/participants/stage-participant-id', () => `stage:${nanoid()}`)
   const stageParticipantId = computed(() => storedStageParticipantId.value)
@@ -86,65 +52,44 @@ export const useParticipantsStore = defineStore('participants', () => {
   const speakingAgents = new Set<string>()
 
   let gateConfig: EchoGateConfig = createDefaultEchoGateConfig()
-  let activityConfig: DeviceActivityConfig = createDefaultDeviceActivityConfig()
   let gate = createEchoGate(gateConfig)
+  let classifier = createEchoClassifier(gate, { frameMs: gateConfig.frameMs })
   const activeSelfPlaybacks = new Set<string>()
   const handlers = new Set<(activity: ParticipantActivity) => void>()
-
-  let otherFrames = 0
-  let otherOnsetAt = 0
-  let explainedFrames = 0
 
   function emit(activity: ParticipantActivity): void {
     for (const handler of handlers)
       handler(activity)
   }
 
-  function resetDeviceCounters(): void {
-    otherFrames = 0
-    explainedFrames = 0
-  }
-
-  function startOther(at: number): void {
-    if (otherSpeaking.value)
-      return
-    otherSpeaking.value = true
-    explainedFrames = 0
-    emit({ participant: DEVICE_PARTICIPANT, phase: 'start', at })
-  }
-
-  function endOther(at: number): void {
-    if (!otherSpeaking.value)
-      return
-    otherSpeaking.value = false
-    resetDeviceCounters()
-    emit({ participant: DEVICE_PARTICIPANT, phase: 'end', at })
-  }
-
   /**
-   * Replaces the echo gate and the activity thresholds. The new gate starts
-   * uncalibrated. Device and self activity are kept.
+   * Replaces the echo gate and the echo classifier. Both start fresh: the
+   * gate uncalibrated, the classifier with no clock estimate. Self activity
+   * is kept. The classifier's frame length follows the gate's.
    */
-  function configure(config: { echoGate?: Partial<EchoGateConfig>, deviceActivity?: Partial<DeviceActivityConfig> } = {}): void {
+  function configure(config: { echoGate?: Partial<EchoGateConfig>, echoClassifier?: Partial<Omit<EchoClassifierConfig, 'frameMs'>> } = {}): void {
     gateConfig = { ...createDefaultEchoGateConfig(), ...config.echoGate }
-    activityConfig = { ...createDefaultDeviceActivityConfig(), ...config.deviceActivity }
     gate = createEchoGate(gateConfig)
-    resetDeviceCounters()
+    classifier = createEchoClassifier(gate, { ...config.echoClassifier, frameMs: gateConfig.frameMs })
   }
 
   /**
-   * Publishes that one playback item became audible: the efference copy of
-   * what she is about to say.
+   * Publishes that one speech clip became audible.
    *
-   * `id` correlates this call with {@link publishSelfPlaybackStop}. `at` is the
-   * playback manager's `startedAt`.
+   * `id` correlates this call with {@link publishSelfPlaybackStop}. `at` is
+   * `Date.now()` when the clip started. With `audio`, the echo gate gets the
+   * clip's loudness envelope: the efference copy of what she is about to say.
+   * Without it, only the activity is published, and the gate treats the
+   * microphone as if she were silent.
    */
-  function publishSelfPlaybackStart(playback: { id: string, audio: EnvelopeSource, text: string, at: number, turnId?: string }): void {
-    gate.startSelf({
-      id: playback.id,
-      at: playback.at,
-      envelope: energyEnvelope(playback.audio, gateConfig.frameMs),
-    })
+  function publishSelfPlaybackStart(playback: { id: string, audio?: EnvelopeSource, text: string, at: number, turnId?: string, sessionId?: string }): void {
+    if (playback.audio) {
+      gate.startSelf({
+        id: playback.id,
+        at: playback.at,
+        envelope: energyEnvelope(playback.audio, gateConfig.frameMs),
+      })
+    }
     activeSelfPlaybacks.add(playback.id)
     selfSpeaking.value = true
     emit({
@@ -153,12 +98,13 @@ export const useParticipantsStore = defineStore('participants', () => {
       at: playback.at,
       text: playback.text,
       ...(playback.turnId ? { turnId: playback.turnId } : {}),
+      ...(playback.sessionId ? { sessionId: playback.sessionId } : {}),
     })
   }
 
   /**
-   * Publishes that a playback item ended, was interrupted, or was rejected.
-   * A stop for an item that never started is ignored.
+   * Publishes that a speech clip ended, was stopped, or failed. A stop for a
+   * clip that never started is ignored.
    */
   function publishSelfPlaybackStop(playback: { id: string, at: number }): void {
     if (!activeSelfPlaybacks.delete(playback.id))
@@ -170,60 +116,12 @@ export const useParticipantsStore = defineStore('participants', () => {
   }
 
   /**
-   * Feeds one microphone loudness frame (linear RMS, about 10 ms) to the
-   * echo gate and updates other speech. Returns the gate's decision for logs.
-   *
-   * Frames are fed whether or not voice detection reports speech, because the
-   * gate calibrates on her echo alone.
+   * Decides whether one microphone window is speech over her echo. The voice
+   * store calls it as the voice pipeline's echo check, with `now` from
+   * `Date.now()`. See {@link createEchoClassifier} for the clock and the rule.
    */
-  function feedDeviceFrame(at: number, rms: number): EchoGateDecision {
-    const decision = gate.observeFrame(at, rms)
-    if (!deviceSpeaking.value)
-      return decision
-
-    if (!otherSpeaking.value) {
-      if (decision.source !== 'other') {
-        otherFrames = 0
-        return decision
-      }
-
-      if (otherFrames === 0)
-        otherOnsetAt = at
-      otherFrames += 1
-      if (otherFrames >= activityConfig.onsetFrames)
-        startOther(otherOnsetAt)
-      return decision
-    }
-
-    // Only frames her echo explains end an interruption. Silence does not:
-    // voice detection ends it when the person really stops.
-    if (decision.source === 'other') {
-      explainedFrames = 0
-    }
-    else if (decision.source === 'self') {
-      explainedFrames += 1
-      if (explainedFrames >= activityConfig.releaseFrames)
-        endOther(at)
-    }
-    return decision
-  }
-
-  /**
-   * Voice detection on the microphone heard speech start. Outside her
-   * playback that is another person at once; during it, the frames decide.
-   */
-  function reportDeviceSpeechStart(at: number): void {
-    deviceSpeaking.value = true
-    resetDeviceCounters()
-    if (!gate.isSelfAudible(at))
-      startOther(at)
-  }
-
-  /** Voice detection on the microphone heard speech end, or listening stopped. */
-  function reportDeviceSpeechEnd(at: number): void {
-    deviceSpeaking.value = false
-    resetDeviceCounters()
-    endOther(at)
+  function classifyDeviceWindow(window: AudioWindow, now: number): EchoClassifierDecision {
+    return classifier.classify(window, now)
   }
 
   /**
@@ -232,7 +130,7 @@ export const useParticipantsStore = defineStore('participants', () => {
    *
    * A repeated start or an end without a start is ignored, so one agent's
    * activity always alternates. `at` must be on this renderer's clock, not
-   * the agent's, because barge-in compares it with local playback times.
+   * the agent's, so it compares with local playback times.
    */
   function reportAgentActivity(activity: { participantId: string, phase: 'start' | 'end', at: number }): void {
     let participant = agents.get(activity.participantId)
@@ -257,7 +155,7 @@ export const useParticipantsStore = defineStore('participants', () => {
   /**
    * Ends the speech of every agent still marked as speaking, for example when
    * the card stops conversing with agents or the channel goes away. Without
-   * it, a lost end event would leave barge-in waiting on an agent forever.
+   * it, a lost end event leaves the agent marked as speaking forever.
    */
   function endAllAgentActivity(at: number): void {
     // Deleting the visited entry while iterating a Set is well defined.
@@ -267,8 +165,8 @@ export const useParticipantsStore = defineStore('participants', () => {
 
   /**
    * Subscribes to activity of every participant. Returns an unsubscribe.
-   * Consumers that act only on others, such as barge-in, filter on
-   * `activity.participant.kind`.
+   * Consumers that act on one kind, such as the context bridge publishing
+   * her speech, filter on `activity.participant.kind`.
    */
   function onActivity(handler: (activity: ParticipantActivity) => void): () => void {
     handlers.add(handler)
@@ -279,17 +177,13 @@ export const useParticipantsStore = defineStore('participants', () => {
 
   return {
     selfSpeaking,
-    deviceSpeaking,
-    otherSpeaking,
     agentSpeaking,
     stageParticipantId,
 
     configure,
     publishSelfPlaybackStart,
     publishSelfPlaybackStop,
-    feedDeviceFrame,
-    reportDeviceSpeechStart,
-    reportDeviceSpeechEnd,
+    classifyDeviceWindow,
     reportAgentActivity,
     endAllAgentActivity,
     onActivity,

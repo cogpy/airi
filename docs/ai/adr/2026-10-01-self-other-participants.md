@@ -1,6 +1,6 @@
 # Participants: the character hears herself apart from others
 
-Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`. Its done condition is not tested with real audio. Phase 2 is implemented behind `initiative.converseWithAgents`. It is not tested between two live stages. The phase 3 core is implemented behind `coplay.enabled`: a game-neutral session in `cognitive-airicog/coplay`, tic-tac-toe as the reference game, and the `output:game:session` and `output:game:action` events. Chess waits for the chess plugin source. No live game has been played.
+Status: proposed. Phase 1 is implemented behind `initiative.yieldWhenInterrupted`, on the shared voice pipeline. Its done condition is not tested with real audio. Phase 2 is implemented behind `initiative.converseWithAgents`. It is not tested between two live stages. The phase 3 core is implemented behind `coplay.enabled`: a game-neutral session in `cognitive-airicog/coplay`, tic-tac-toe as the reference game, and the `output:game:session` and `output:game:action` events. Chess waits for the chess plugin source. No live game has been played.
 
 ## Context
 
@@ -45,13 +45,17 @@ Each participant publishes the same three signals:
 
 ### Self channel
 
-The stage publishes the `self` participant from the playback manager. On each playback start it publishes:
+The voice store publishes the `self` participant from the speech output of each response turn. `observeSelfSpeech` wraps the `SpeechOutput` that the voice controller receives, next to `traceSpeechOutput`. On each clip start it publishes:
 
-- the activity signal,
-- the utterance text (`PlaybackItem.text`),
-- an energy envelope of the played `AudioBuffer`, in 10 ms frames.
+- the activity signal, with the turn id and the session id,
+- the utterance text (`SpeechClip.text`),
+- the decoded audio of a synthesized clip. The store turns it into an energy envelope in 10 ms frames.
 
 This is an efference copy. The character knows what she said and when, without listening to it.
+
+The clip's decoding starts when synthesis returns. It uses the same `decodeAudioData` path as speech tracing. A clip of a streaming provider has no decoded audio. It publishes only activity and text, and the echo gate treats the microphone as if she were silent.
+
+The channel publishes only when the card of the turn's session sets `yieldWhenInterrupted` or `converseWithAgents`. It always publishes stops, because the store ignores clips that it never saw.
 
 ### Echo separation
 
@@ -63,13 +67,25 @@ The microphone participant uses the self channel to separate the character's ech
 
 This is double-talk detection, not echo cancellation. It decides who is talking. It does not clean the audio for transcription. Transcription stays suppressed while the character speaks, as it is now.
 
+The gate is the external echo classifier of the voice pipeline. The voice activity plugin calls `acceptSpeech` for each window that can start an input. When the active session's card sets `yieldWhenInterrupted`, the voice store's check is:
+
+```text
+accepted = (!nowSpeaking || echoCancellation) || classifier.accept
+```
+
+The first part is the pipeline's own rule. The classifier can only turn a rejection into an acceptance. Without the card setting, the check is the pipeline's rule only.
+
+The classifier (`createEchoClassifier`) splits the window into 10 ms frames and gives each frame's RMS to the gate. It accepts when the gate judges 5 consecutive frames `other`. A gap between windows, or a frame that is not `other`, starts the count again.
+
+**Clock.** Self playback times are `Date.now()` when a clip's first audio is scheduled. A microphone window has only sample positions. The classifier dates a frame as `offset + endSample * 1000 / sampleRate`. Per source, `offset` is the smallest `now - windowEnd * 1000 / sampleRate` seen so far. That is the arrival time of a sample with the smallest queue and detection delay. The estimate can rise by 1 ms per second, so a slow microphone clock does not leave it behind. The gate's `latencyMs` (80 ms) and `latencyToleranceMs` (60 ms) cover output buffering, the air path, and input buffering.
+
 A full acoustic echo canceller can replace the gate later, behind the same interface. Options include WebRTC loopback playback or a WASM echo canceller. Per AGENTS.md, the user selects the library before that work starts.
 
 ### Turn-taking
 
-The barge-in controller subscribes only to `other` activity. `decideYield` gets one new input: the participant that overlaps. The policy is the same for every `other` participant. A card can make the character yield to people and not to agents, or the opposite.
+The voice pipeline owns barge-in. When it accepts speech, it interrupts the active turns of the session. The echo classifier only decides whether the microphone speech is someone other than her.
 
-Voice detection stays active during playback only when the active card turns it on. The default stays as it is now.
+`decideYield` keeps its input for the participant that overlaps. The barge-in controller in `libs/speech/barge-in.ts` is not connected to the voice pipeline. Yielding to agent speech is not connected either. Agent activity reaches the participants store, but nothing interrupts her for it.
 
 ### Agent participants
 
@@ -97,16 +113,17 @@ The first game is chess. It is turn-based, so it needs no low-latency action, an
 ## Ownership
 
 - `packages/cognitive-airicog/src/initiative` owns the policy: `decideYield` with the overlap source, and the loop guard for agent conversation. It stays free of Vue and audio code.
-- `packages/stage-ui/src/libs/participants` owns the pure parts: the participant types, the energy envelope, and the echo gate. These are new.
-- A new unsynchronized Pinia store in `packages/stage-ui/src/stores/participants.ts` owns runtime state: the active participants and their activity. Each renderer has its own audio, so this state must not be synchronized across windows.
-- `Stage.vue` owns the self channel, because it owns the playback manager.
-- `useVoiceInputSession` owns the device participant, because it owns voice detection.
+- `packages/stage-ui/src/libs/participants` owns the pure parts: the participant types, the energy envelope, the echo gate, and the echo classifier with its clock. These are new.
+- A new unsynchronized Pinia store in `packages/stage-ui/src/stores/participants.ts` owns runtime state: the active participants, their activity, and the learned echo state. Each renderer has its own audio, so this state must not be synchronized across windows.
+- `packages/stage-ui/src/composables/speech-output-self-channel.ts` owns the self channel. The voice store applies it to each turn's speech output, because the voice store gives that output to the voice controller.
+- `packages/stage-ui/src/stores/voice.ts` owns the device check. Its `acceptSpeech` default asks the participants store, because the voice store builds the voice activity plugin.
+- The context bridge (`stores/mods/api/context-bridge.ts`) owns the agent channel in both directions. It already owns the server channel and the receiving side. It sends self activity only when the speaking session's card sets `converseWithAgents`.
 - `packages/plugin-protocol` owns the new speech events.
 - The chess plugin owns the game state and the move tools.
 
 ## Phases
 
-1. **Self channel and barge-in.** Self channel, envelope, echo gate, device participant, barge-in controller connected. Off by default. Done when a person can stop the character with speakers on, and the character does not stop herself during a 10-minute monologue.
+1. **Self channel and barge-in.** Self channel, envelope, echo gate, and the echo classifier as the voice pipeline's echo check. Off by default. Done when a person can stop the character with speakers on, and the character does not stop herself during a 10-minute monologue.
 2. **Agent participants.** Speech events in the protocol, agent participants, structured speaker field, loop guard. Done when two stages hold a conversation that stops within the turn budget.
 3. **Co-play.** Chess with a human partner, then with an agent partner, through one game interface.
 
@@ -129,12 +146,12 @@ Each phase ships on its own and keeps the earlier default behavior unless a card
 
 ```mermaid
 graph TD
-  StageVue[Stage.vue playback] -->|self signals| Participants[participants store]
-  VoiceInput[useVoiceInputSession] -->|device signals| Participants
+  SpeechOutput[voice store speech output] -->|observeSelfSpeech self signals| Participants[participants store]
+  VoiceActivity[voice activity plugin acceptSpeech] -->|microphone windows| Participants
   ServerChannel[server channel speech events] -->|agent signals| Participants
-  Participants --> EchoGate[libs/participants echo gate]
-  Participants --> BargeIn[libs/speech barge-in]
-  BargeIn --> Yield[airicog decideYield]
+  Participants --> EchoGate[libs/participants echo gate and classifier]
+  Participants -->|self activity| Bridge[context bridge]
+  Bridge -->|output:speech events| ServerChannel
   Participants --> Chat[chat runtime speaker field]
   Chat --> LoopGuard[airicog loop guard]
   Game[chess gamelet] -->|context:update game| Chat
@@ -153,9 +170,9 @@ packages/stage-ui/src/
   libs/coplay/                     (new)
   stores/participants.ts           (new)
   stores/coplay.ts                 (new)
-  libs/speech/barge-in.ts
-  components/scenes/Stage.vue
-  composables/audio/voice-input-session.ts
+  composables/speech-output-self-channel.ts  (new)
+  stores/voice.ts
+  stores/chat.ts
   stores/mods/api/context-bridge.ts
   types/airiCard.ts
 packages/plugin-protocol/src/types/events.ts

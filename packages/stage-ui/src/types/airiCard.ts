@@ -103,11 +103,11 @@ export interface AiriExtension {
        * Whether a person can stop the character by talking over her. Off by
        * default.
        *
-       * When on, the microphone keeps listening while she speaks, so voice
-       * detection can hear an interruption. It does not transcribe during her
-       * speech. With speakers instead of headphones, she may misjudge her own
-       * echo at first. Until the echo gate has calibrated, she does not yield
-       * at all.
+       * When on, the echo gate judges microphone speech while she speaks, and
+       * speech louder than her echo stops her even without platform echo
+       * cancellation. Without it, she stops only when echo cancellation is on.
+       * With speakers instead of headphones, she can misjudge her own echo at
+       * first. Until the echo gate has calibrated, the gate does not stop her.
        */
       yieldWhenInterrupted?: boolean
       /**

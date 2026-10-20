@@ -66,9 +66,6 @@
     "test": "vitest run",
     "examples": "tsx src/examples.ts"
   },
-  "dependencies": {
-    "@moeru/std": "catalog:"
-  },
   "devDependencies": {
     "vitest": "catalog:vitest"
   }

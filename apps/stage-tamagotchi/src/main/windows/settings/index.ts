@@ -1,7 +1,8 @@
 import type { I18n } from '../../libs/i18n'
 import type { ServerChannel } from '../../services/airi/channel-server'
 import type { GodotStageManager } from '../../services/airi/godot-stage'
-import type { McpStdioManager } from '../../services/airi/mcp-servers'
+import type { IOTraceRecordingService } from '../../services/airi/io-trace-recording'
+import type { McpManager } from '../../services/airi/mcp-servers'
 import type { AutoUpdater } from '../../services/electron/auto-updater'
 import type { GlobalShortcutService } from '../../services/electron/global-shortcut'
 import type { DevtoolsWindowManager } from '../devtools'
@@ -16,6 +17,7 @@ import { BrowserWindow } from 'electron'
 import icon from '../../../../resources/icon.png?asset'
 
 import { electronSettingsNavigate } from '../../../shared/eventa'
+import { SETTINGS_WINDOW_WIDTH } from '../../../shared/settings-window'
 import { baseUrl, getElectronMainDirname, load, withHashRoute } from '../../libs/electron/location'
 import { createReusableWindow } from '../../libs/electron/window-manager'
 import { protectPrivilegedWindowNavigation, toggleWindowShow } from '../shared'
@@ -24,6 +26,10 @@ import { setupSettingsWindowInvokes } from './rpc/index.electron'
 export interface SettingsWindowManager {
   getWindow: () => Promise<BrowserWindow>
   openWindow: (route?: string) => Promise<void>
+  /** The route that the open settings window shows, or `undefined` while it is closed. */
+  shownRoute: () => string | undefined
+  /** Closes the settings window when it is open. */
+  closeWindow: () => void
 }
 
 export function setupSettingsWindowReusableFunc(params: {
@@ -34,10 +40,11 @@ export function setupSettingsWindowReusableFunc(params: {
   onWindowCreated?: (window: BrowserWindow) => void
   serverChannel: ServerChannel
   godotStageManager: GodotStageManager
-  mcpStdioManager: McpStdioManager
+  mcpManager: McpManager
   i18n: I18n
   globalShortcut: GlobalShortcutService
   spotlightWindow: SpotlightWindowManager
+  ioTraceRecording: IOTraceRecordingService
 }): SettingsWindowManager {
   const rendererBase = baseUrl(resolve(getElectronMainDirname(), '..', 'renderer'))
   const defaultRoute = '/settings'
@@ -47,7 +54,7 @@ export function setupSettingsWindowReusableFunc(params: {
   const reusable = createReusableWindow(async () => {
     const window = new BrowserWindow({
       title: 'Settings',
-      width: 600.0,
+      width: SETTINGS_WINDOW_WIDTH,
       height: 800.0,
       show: false,
       icon,
@@ -72,10 +79,11 @@ export function setupSettingsWindowReusableFunc(params: {
       getMainWindow: params.getMainWindow,
       serverChannel: params.serverChannel,
       godotStageManager: params.godotStageManager,
-      mcpStdioManager: params.mcpStdioManager,
+      mcpManager: params.mcpManager,
       i18n: params.i18n,
       globalShortcut: params.globalShortcut,
       spotlightWindow: params.spotlightWindow,
+      ioTraceRecording: params.ioTraceRecording,
     })
 
     await load(window, withHashRoute(rendererBase, currentRoute, {
@@ -106,8 +114,16 @@ export function setupSettingsWindowReusableFunc(params: {
     toggleWindowShow(window)
   }
 
+  function shownRoute() {
+    const window = reusable.getOpenWindow()
+    // The page routes with the URL hash, so the hash names the page that shows.
+    return window ? new URL(window.webContents.getURL()).hash.slice(1) || defaultRoute : undefined
+  }
+
   return {
     getWindow: reusable.getWindow,
     openWindow,
+    shownRoute,
+    closeWindow: reusable.close,
   }
 }

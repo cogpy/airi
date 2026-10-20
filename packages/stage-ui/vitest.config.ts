@@ -15,9 +15,22 @@ import { sharedUnoConfig } from '../../uno.config'
 export default defineConfig({
   root: import.meta.dirname,
   // Shared settings pages import these optional UI dependencies through the
-  // component barrel. Bundle them before a browser test starts to avoid HMR.
+  // component barrel, and test Workers import the eventa Worker adapter.
+  // Bundle them before a browser test starts to avoid HMR.
   optimizeDeps: {
-    include: ['embla-carousel-vue', 'html2canvas', 'node-vibrant/browser'],
+    include: [
+      '@moeru/eventa/adapters/webworkers',
+      '@moeru/eventa/adapters/webworkers/worker',
+      '@moeru/std',
+      '@vueuse/core',
+      'embla-carousel-vue',
+      'html2canvas',
+      'node-vibrant/browser',
+      'reka-ui',
+      'vaul-vue',
+      'vue',
+      'vue-i18n',
+    ],
   },
   plugins: [
     Info(),
@@ -61,7 +74,7 @@ export default defineConfig({
           browser: {
             enabled: true,
             headless: true,
-            provider: playwright(),
+            provider: playwright({ launchOptions: { args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] } }),
             instances: [
               { browser: 'chromium' },
             ],

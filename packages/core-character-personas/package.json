@@ -1,0 +1,47 @@
+{
+  "name": "@proj-airi/core-character-personas",
+  "type": "module",
+  "version": "0.12.0-beta.5",
+  "private": true,
+  "description": "Core character implementations for AIRI - featuring Melody's ontogenetic humour system with multi-layered comedy",
+  "author": {
+    "name": "Moeru AI Project AIRI Team",
+    "email": "airi@moeru.ai",
+    "url": "https://github.com/moeru-ai"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moeru-ai/airi.git",
+    "directory": "packages/core-character-personas"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "README.md",
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "examples": "tsx src/run-examples.ts"
+  },
+  "dependencies": {
+    "@moeru/std": "catalog:",
+    "@proj-airi/cognitive-airicog": "workspace:^",
+    "@proj-airi/stream-kit": "workspace:^",
+    "clustr": "catalog:",
+    "es-toolkit": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:vitest"
+  }
+}

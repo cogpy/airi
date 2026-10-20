@@ -80,7 +80,35 @@ export {
   toQuanta,
 } from './attention/quanta'
 
+// Co-play - Turn-based games with a partner
+export { chooseFallbackMove } from './coplay/fallback'
+
+export type { GameOutcome, GamePlayer, GameRules } from './coplay/rules'
+
+export {
+  createGameSession,
+  type GameMoveRecord,
+  type GameMoveRejection,
+  type GameSession,
+  type GameSubmitResult,
+} from './coplay/session'
+
+export {
+  ticTacToe,
+  type TicTacToeMove,
+  type TicTacToeState,
+} from './coplay/tic-tac-toe'
+
 // Initiative - Speaking during a lull
+export {
+  type AgentReplyDecision,
+  type AgentReplyHold,
+  type AgentReplyState,
+  type ConversationGuardConfig,
+  createDefaultConversationGuardConfig,
+  decideAgentReply,
+} from './initiative/conversation-guard'
+
 export {
   candidatesFromFocus,
   createDefaultInitiativeConfig,
@@ -116,6 +144,16 @@ export {
   rehearse,
   shouldRetain,
 } from './memory/episodic'
+export {
+  createDefaultReflectionConfig,
+  decideReflection,
+  parseReflection,
+  type ReflectionConfig,
+  type ReflectionDecision,
+  reflectionEpisodes,
+  reflectionPrompt,
+  type ReflectionState,
+} from './memory/reflection'
 
 // Ontogenesis - Self-Generating Kernels
 export {

@@ -12,7 +12,7 @@ import { SpanStatusCode } from '@opentelemetry/api'
 import { IOAttributes, IOSpanNames } from '@proj-airi/stage-shared'
 import { createPinia, defineStore, disposePinia, setActivePinia } from 'pinia'
 import { createSyncedPiniaPlugin } from 'pinia-plugin-synced'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, createApp, nextTick, reactive, ref } from 'vue'
 
 import { getAnalytics } from '../libs/product-signals'
@@ -258,17 +258,32 @@ vi.mock('./modules/consciousness', () => ({
 
 const cardPrompt = vi.hoisted(() => ({ value: 'system prompt' }))
 
+/**
+ * The card every session character resolves to. Undefined by default, so a
+ * session has no card; an initiative test sets one to turn a behaviour on.
+ */
+const cardMock = vi.hoisted(() => ({
+  activeCard: undefined as unknown,
+}))
+
 vi.mock('./modules/airi-card', () => ({
   useAiriCardStore: () => ({
     activeCard: undefined,
     activeCardId: 'default',
     getSystemPrompt: () => cardPrompt.value,
-    getCard: () => undefined,
+    getCard: () => cardMock.activeCard,
     getModules: (id: string) => ({
       consciousness: cardSelections.get(id) ?? { provider: activeProviderRef.value, model: activeModelRef.value },
       vision: { provider: visionMocks.configured ? 'vision-provider' : '', model: visionMocks.configured ? 'vision-model' : '' },
     }),
   }),
+}))
+
+const topicNamingStreamMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@proj-airi/core-agent', async importOriginal => ({
+  ...await importOriginal<typeof import('@proj-airi/core-agent')>(),
+  streamFrom: topicNamingStreamMock,
 }))
 
 vi.mock('./modules/artistry-autonomous', () => ({
@@ -277,9 +292,21 @@ vi.mock('./modules/artistry-autonomous', () => ({
   }),
 }))
 
-const initiativeMocks = vi.hoisted(() => ({
-  noteInteraction: vi.fn(),
-}))
+const initiativeMocks = vi.hoisted(() => {
+  const mocks = {
+    noteInteraction: vi.fn(),
+    recordEpisode: vi.fn(),
+    remember: vi.fn(),
+    episodes: [] as { id: string, atomId?: string, at: number, salience: number, kind?: 'experience' | 'reflection' }[],
+    lastReflectionAt: undefined as number | undefined,
+    // Behaves like the store: keeps the insights so they can be read back.
+    recordReflection: vi.fn((insights: typeof mocks.episodes, at: number) => {
+      mocks.episodes.push(...insights)
+      mocks.lastReflectionAt = at
+    }),
+  }
+  return mocks
+})
 
 vi.mock('./modules/initiative', () => ({
   useInitiativeStore: () => initiativeMocks,
@@ -1255,6 +1282,7 @@ describe('chat store contract', () => {
     // Without this the character never learns a lull has begun, so it either
     // stays silent forever or talks over someone who has just spoken.
     initiativeMocks.noteInteraction.mockClear()
+    initiativeMocks.remember.mockClear()
 
     llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
       await options.onStreamEvent?.({ type: 'text-delta', text: 'hi back' })
@@ -1264,8 +1292,105 @@ describe('chat store contract', () => {
     const store = useChatStore()
     await store.send({ sessionId: 'session-1', text: 'hello' })
 
-    // Once for the user's turn, once for the character's own reply.
-    expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
+    // The user's turn is remembered as something to pick back up, which also
+    // counts as interaction; the character's own reply only counts as timing.
+    expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello' })
+    expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
+  })
+
+  it('names the subject of a remark for a card that opts into nameTopics', async () => {
+    // A card that pays for naming should remember "the job interview", so
+    // later mentions reinforce one memory instead of each remark standing alone.
+    initiativeMocks.noteInteraction.mockClear()
+    initiativeMocks.recordEpisode.mockClear()
+    initiativeMocks.remember.mockClear()
+    cardMock.activeCard = { extensions: { airi: { modules: { initiative: { enabled: true, nameTopics: true } } } } }
+    topicNamingStreamMock.mockImplementationOnce(async ({ options }) => {
+      await options.onStreamEvent({ type: 'text-delta', text: '"The job interview."' })
+    })
+
+    llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
+      await options.onStreamEvent?.({ type: 'text-delta', text: 'good luck!' })
+      await options.onStreamEvent?.({ type: 'finish' })
+    })
+
+    try {
+      const store = useChatStore()
+      await store.send({ sessionId: 'session-1', text: 'I have a job interview tomorrow' })
+      await vi.waitFor(() => expect(initiativeMocks.recordEpisode).toHaveBeenCalledOnce())
+
+      expect(initiativeMocks.recordEpisode).toHaveBeenCalledWith({ topic: 'the job interview' }, expect.any(Number))
+      expect(initiativeMocks.remember).not.toHaveBeenCalled()
+      // Once when the remark arrived, once for her reply.
+      expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
+    }
+    finally {
+      cardMock.activeCard = undefined
+    }
+  })
+
+  describe('reflection', () => {
+    function rememberedRemarks(count: number) {
+      const at = Date.now() - 60_000
+      return Array.from({ length: count }, (_, index) => ({ id: `ep_${index}`, atomId: `remark ${index}`, at: at + index, salience: 0.6 }))
+    }
+
+    function replyOnce() {
+      llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
+        await options.onStreamEvent?.({ type: 'text-delta', text: 'ok' })
+        await options.onStreamEvent?.({ type: 'finish' })
+      })
+    }
+
+    beforeEach(() => {
+      initiativeMocks.episodes = rememberedRemarks(5)
+      initiativeMocks.lastReflectionAt = undefined
+      initiativeMocks.recordReflection.mockClear()
+      ingestContextMessageMock.mockClear()
+      topicNamingStreamMock.mockReset()
+    })
+
+    afterEach(() => {
+      cardMock.activeCard = undefined
+    })
+
+    it('reflects on recent remarks for a card that opts in, and puts the insights in context', async () => {
+      cardMock.activeCard = { name: 'Vexa', extensions: { airi: { modules: { initiative: { enabled: true, reflect: true } } } } }
+      topicNamingStreamMock.mockImplementationOnce(async ({ options }) => {
+        await options.onStreamEvent({ type: 'text-delta', text: '1. They like cats.\n2. I tease them too much.' })
+      })
+      replyOnce()
+
+      await useChatStore().send({ sessionId: 'session-1', text: 'my cat knocked over my coffee again' })
+      await vi.waitFor(() => expect(initiativeMocks.recordReflection).toHaveBeenCalledOnce())
+
+      const [insights] = initiativeMocks.recordReflection.mock.calls[0]!
+      expect(insights.map(insight => [insight.kind, insight.atomId])).toEqual([['reflection', 'They like cats.'], ['reflection', 'I tease them too much.']])
+      expect(String(topicNamingStreamMock.mock.calls[0]![0].conversation.turns[0].content[0].text)).toContain('You are Vexa.')
+      const contextMessage = ingestContextMessageMock.mock.calls.map(([message]) => message).find(message => message.lane === 'memory')
+      expect(contextMessage?.text).toContain('- They like cats.')
+    })
+
+    it('makes no reflection call for a card that does not opt in', async () => {
+      cardMock.activeCard = { extensions: { airi: { modules: { initiative: { enabled: true } } } } }
+      replyOnce()
+
+      await useChatStore().send({ sessionId: 'session-1', text: 'hello again' })
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(topicNamingStreamMock).not.toHaveBeenCalled()
+      expect(initiativeMocks.recordReflection).not.toHaveBeenCalled()
+    })
+
+    it('marks a failed reflection as done so the model is not asked again at once', async () => {
+      cardMock.activeCard = { extensions: { airi: { modules: { initiative: { enabled: true, reflect: true } } } } }
+      topicNamingStreamMock.mockRejectedValueOnce(new Error('provider down'))
+      replyOnce()
+
+      await useChatStore().send({ sessionId: 'session-1', text: 'still there?' })
+      await vi.waitFor(() => expect(initiativeMocks.recordReflection).toHaveBeenCalledWith([], expect.any(Number)))
+      expect(ingestContextMessageMock.mock.calls.some(([message]) => message.lane === 'memory')).toBe(false)
+    })
   })
 
   it('passes the current consciousness reasoning option to the chat provider', async () => {

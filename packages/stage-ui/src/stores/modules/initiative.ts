@@ -65,6 +65,11 @@ export interface BindToChatOptions {
  */
 export const useInitiativeStore = defineStore('initiative', () => {
   const episodes = ref<Episode[]>([])
+  /**
+   * When she last reflected, or `undefined` if never this session. Runtime
+   * state only, like `episodes`: both start empty in a new session.
+   */
+  const lastReflectionAt = ref<number>()
   const recentlyRaised = ref<RaisedTopic[]>([])
   const lastInteractionAt = ref(Date.now())
   const lastInitiativeAt = ref<number | undefined>(undefined)
@@ -108,7 +113,9 @@ export const useInitiativeStore = defineStore('initiative', () => {
   }
 
   /**
-   * Remembers something as being about a subject, and counts it as interaction.
+   * Remembers something as being about a subject without counting it as
+   * interaction. For subjects named after the fact: `at` is when the remark
+   * was made, and replaying it as interaction would move the lull's start back.
    */
   function recordEpisode(
     entry: { topic: string, salience?: number, valence?: number },
@@ -121,6 +128,17 @@ export const useInitiativeStore = defineStore('initiative', () => {
       salience: entry.salience ?? 0.6,
       valence: entry.valence,
     })
+  }
+
+  /**
+   * Keeps the insights of one reflection and marks it done at `at`. Called
+   * with no insights when the reflection found nothing or failed, so the
+   * refractory gap still applies and a failing model is not asked again at
+   * once.
+   */
+  function recordReflection(insights: readonly Episode[], at: number): void {
+    episodes.value.push(...insights)
+    lastReflectionAt.value = at
   }
 
   function remember(
@@ -261,6 +279,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
 
   return {
     episodes,
+    lastReflectionAt,
     recentlyRaised,
     lastInteractionAt,
     lastInitiativeAt,
@@ -269,6 +288,8 @@ export const useInitiativeStore = defineStore('initiative', () => {
     configure,
     isEnabled,
     noteInteraction,
+    recordEpisode,
+    recordReflection,
     remember,
     poll,
     forget,

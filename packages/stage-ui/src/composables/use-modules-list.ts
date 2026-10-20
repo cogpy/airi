@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import factorioIcon from '../assets/factorio-simple.png'
 
 import { useMemoryStore } from '../stores/memory'
+import { useAiriCardStore } from '../stores/modules/airi-card'
 import { useArtistryStore } from '../stores/modules/artistry'
 import { useConsciousnessStore } from '../stores/modules/consciousness'
 import { useDiscordStore } from '../stores/modules/discord'
@@ -49,6 +50,9 @@ export function useModulesList() {
   const homeAssistantStore = useHomeAssistantStore()
   const artistryStore = useArtistryStore()
   const memoryStore = useMemoryStore()
+  // Co-play is a per-card switch. Reading it from the card avoids creating
+  // the co-play store, which would start the chat runtime just to list modules.
+  const cardStore = useAiriCardStore()
   const beatSyncState = ref<BeatSyncDetectorState>()
   const beatSyncSupported = isBeatSyncSupported()
 
@@ -153,6 +157,15 @@ export function useModulesList() {
       to: '/settings/modules/x',
       configured: twitterStore.configured,
       category: 'messaging',
+    },
+    {
+      id: 'gaming-coplay',
+      name: t('settings.pages.modules.gaming-coplay.title'),
+      description: t('settings.pages.modules.gaming-coplay.description'),
+      icon: 'i-solar:gamepad-bold-duotone',
+      to: '/settings/modules/gaming-coplay',
+      configured: cardStore.activeCard?.extensions?.airi?.modules?.coplay?.enabled ?? false,
+      category: 'gaming',
     },
     {
       id: 'gaming-minecraft',

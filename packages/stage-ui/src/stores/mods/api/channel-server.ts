@@ -94,6 +94,10 @@ export const useModsServerChannelStore = defineStore('mods:channels:proj-airi:se
     'output:gen-ai:chat:message',
     'output:gen-ai:chat:complete',
     'output:gen-ai:chat:tool-call',
+    'output:speech:activity',
+    'output:speech:utterance',
+    'output:game:session',
+    'output:game:action',
     'ui:configure',
     'asset:get:request',
   ]

@@ -10,10 +10,11 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 |---|---|
 | **Affect** | Mood that carries between turns and settles back to temperament |
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
+| **Co-play** | Turn-based games with a partner: rules contract, turn-enforcing session, fallback move, tic-tac-toe |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
-| **Initiative** | Turn-taking: when to take the floor during a lull, and when to give it back |
-| **Memory** | What an experience was worth, how firmly it is still held, what resurfaces |
+| **Initiative** | Turn-taking: when to take the floor during a lull, when to give it back, and when to stop answering another agent |
+| **Memory** | What an experience was worth, how firmly it is still held, what resurfaces, and the insights drawn from it (reflection) |
 | **Orchestration** | Multi-agent coordination and shared knowledge base |
 | **Ontogenesis** | Self-generating, evolving cognitive kernels |
 
@@ -254,6 +255,78 @@ Continuity of `overlapMs` is the audio layer's to track: a pause that ends the
 overlap resets it, so a run of short backchannels never accumulates into an
 interruption.
 
+### Conversation guard (talking with another agent)
+
+Two characters that each answer the other never stop on their own. The guard
+is the brake: she replies to at most `turnBudget` agent turns in any
+`windowMs`, and never to two agent turns closer than `cooldownMs`.
+
+```ts
+import { decideAgentReply } from '@proj-airi/cognitive-airicog/initiative'
+
+const repliedAt: number[] = []
+
+function onAgentTurn(now: number) {
+  const decision = decideAgentReply({ now, repliedAt }, { turnBudget: 6 })
+  if (!decision.reply)
+    return // decision.reason is 'over-budget' or 'cooldown'
+
+  repliedAt.push(now)
+  reply()
+}
+```
+
+Only turns she replied to spend budget. When the budget is spent she falls
+quiet, the other agent has nothing to answer, and the conversation stops on
+both sides. Once the oldest replies leave the window she answers again.
+
+| Setting | Default | Raising it |
+|---|---|---|
+| `turnBudget` | 6 | lets the conversation run longer |
+| `windowMs` | 120000 | makes the pause after a spent budget longer |
+| `cooldownMs` | 2000 | slows the exchange; a burst gets one reply |
+
+### Co-play (playing a game with someone)
+
+A game is a shared environment, not a participant. `GameRules` is the whole
+contract a game implements: its seats, the starting state, whose turn it is,
+the legal moves, what a move does, the result, a text description a model can
+read, and how a move is written and read as text. Everything else is written
+against it, so chess or another game plugs in without changing the session.
+
+```ts
+import { chooseFallbackMove, createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
+
+const session = createGameSession(ticTacToe, [
+  { seat: 'X', participantId: 'stage:airi', kind: 'self' },
+  { seat: 'O', participantId: 'device:microphone', kind: 'other' },
+])
+
+session.submitText('device:microphone', 'b2')
+// => { status: 'rejected', reason: 'not-your-turn', currentSeat: 'X' }
+
+const result = session.submitText('stage:airi', 'I take b2')
+if (result.status === 'accepted')
+  console.info(result.record.text, result.outcome) // 'b2', { status: 'in-progress' }
+
+console.info(ticTacToe.describe(session.state(), 'O')) // board, sides, legal moves
+
+// When the model names no legal move, keep the game going
+const move = chooseFallbackMove(ticTacToe, session.state())
+```
+
+The session owns the state and the history and changes only through an
+accepted move. It refuses a move, and changes nothing, for the first reason
+that applies: `unknown-player`, `game-over`, `not-your-turn`,
+`unreadable-move`, `illegal-move`. It has no clock and does no IO: the caller
+asks the character, reads the user's input, or receives a peer's event, then
+submits the move.
+
+`chooseFallbackMove` wins at once if it can, otherwise avoids any move that
+lets the opponent win at once, otherwise plays the first legal move. It knows
+nothing about the game beyond `GameRules`, and the same state always gives the
+same move.
+
 ### Memory (episodic)
 
 The policy layer for remembering: not storage, and not similarity search —
@@ -304,6 +377,39 @@ const decision = decideInitiative({
   candidates: asInitiativeCandidates(episodes, now),
 })
 ```
+
+#### Reflection
+
+Episodes say what happened, never what it meant. Reflection turns a run of
+experiences into a few insights the character keeps. Ported from the
+`character-echo` package in the cogpy/moeru-ai fork, where reflections were
+stored and never read: here each insight is an `Episode` of kind `reflection`,
+so it decays, is recalled, and can be raised in a lull like any other memory.
+
+```ts
+import {
+  decideReflection,
+  parseReflection,
+  reflectionEpisodes,
+  reflectionPrompt,
+} from '@proj-airi/cognitive-airicog/memory'
+
+const decision = decideReflection({ now, episodes, lastReflectionAt })
+if (decision.reflect) {
+  const prompt = reflectionPrompt(decision.sources, episode => episode.atomId, { characterName: 'Vexa' })
+  const reply = await askModel(prompt) // the caller owns the model call
+  episodes.push(...reflectionEpisodes(parseReflection(reply), decision.sources, now))
+  lastReflectionAt = now
+}
+```
+
+A reflection is due when the new experiences since the last one are strong
+enough in sum (`importanceThreshold`, about five ordinary remarks) or numerous
+enough (`maxPending`, Echo's interval of ten), and never sooner than
+`minIntervalMs` after the last, because each one is a model call. Only
+experiences count, so an insight never feeds the next reflection. Insights
+encode at `insightSalience`, above an ordinary remark, so they outlast what
+they were drawn from.
 
 ### Affect (mood between turns)
 
@@ -396,6 +502,7 @@ pnpm -F @proj-airi/cognitive-airicog examples
 src/
   atomspace/    AtomSpace + type definitions
   attention/    ECAN + RelevanceRealization
+  coplay/       GameRules, game session, fallback move, tic-tac-toe
   reasoning/    PLN + TVFormulas
   orchestration/  CognitiveOrchestrator
   ontogenesis/  OntogeneticKernel + evolution

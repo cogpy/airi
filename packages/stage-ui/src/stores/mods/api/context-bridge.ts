@@ -2,11 +2,13 @@ import type { LlmStreamingControlCallManifest } from '@proj-airi/pipelines-audio
 import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 import type { UserMessage } from '@xsai/shared-chat'
 
+import type { AgentTurn, ParticipantActivity } from '../../../libs/participants'
 import type { ChatStreamEventContext, ContextMessage, StreamingAssistantMessage } from '../../../types/chat'
 import type { SparkNotifyPerformanceResult, SparkNotifyReactionOptions } from './spark-notify-reaction'
 
 import { errorMessageFrom } from '@moeru/std'
 import { encodeBase64 } from '@moeru/std/base64'
+import { createDefaultConversationGuardConfig, decideAgentReply } from '@proj-airi/cognitive-airicog/initiative'
 import { isStageTamagotchi, isStageWeb } from '@proj-airi/stage-shared'
 import { useBroadcastChannel } from '@vueuse/core'
 import { Mutex } from 'es-toolkit'
@@ -15,6 +17,7 @@ import { defineStore, storeToRefs } from 'pinia'
 import { computed, ref, shallowReactive, toRaw, watch } from 'vue'
 
 import { ChatAssetTooLargeError, chatEventAttachmentsOf, MAX_CHAT_ASSET_BYTES, readChatAsset } from '../../../libs/chat-assets'
+import { createAgentTurnAssembler } from '../../../libs/participants'
 import { getSpeechBusContext, voiceGenerationEnded } from '../../../services/speech/bus'
 import { getEventSourceKey, getMetadataSourceLabel } from '../../../utils/event-source'
 import { useLlmStreamingControlStore } from '../../ai/chat-llm/streaming-control'
@@ -23,8 +26,11 @@ import { useChatStore } from '../../chat'
 import { useChatContextStore } from '../../chat/context-store'
 import { useChatSessionStore } from '../../chat/session-store'
 import { useChatStreamStore } from '../../chat/stream-store'
+import { useCoplayStore } from '../../coplay'
 import { useContextObservabilityStore } from '../../devtools/context-observability'
+import { useAiriCardStore } from '../../modules/airi-card'
 import { useConsciousnessStore } from '../../modules/consciousness'
+import { useParticipantsStore } from '../../participants'
 import { useModsServerChannelStore } from './channel-server'
 import { createContextChannel } from './context-channel'
 
@@ -60,6 +66,35 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
   const consciousnessStore = useConsciousnessStore()
   const { activeProvider, activeModel, activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
   const streamingControl = useLlmStreamingControlStore()
+  const participantsStore = useParticipantsStore()
+  const coplayStore = useCoplayStore()
+  const cardStore = useAiriCardStore()
+  const { activeCard } = storeToRefs(cardStore)
+
+  /**
+   * Whether the active card talks with other AI agents. Read per speech event,
+   * so a card switch applies from the next event. Off by default: speech
+   * events from other stages are then ignored entirely.
+   */
+  const converseWithAgents = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.converseWithAgents ?? false)
+  const agentTurnBudget = computed(() => activeCard.value?.extensions?.airi?.modules?.initiative?.agentTurnBudget)
+  /**
+   * When this renderer decided to answer an agent turn, on its own clock.
+   * Runtime state for the conversation guard, pruned to the guard's window.
+   *
+   * Every window receives every speech event and runs the same guard, so each
+   * window keeps the same history even though only one of them answers.
+   */
+  let agentRepliedAt: number[] = []
+  const agentTurnAssembler = createAgentTurnAssembler(turn => void answerAgentTurn(turn))
+  /**
+   * Her speech that went out to other stages and has not ended: the number of
+   * open `start` events, and the name they carried. Runtime state of this
+   * window. A clip's end goes out while a start is open, whatever the card
+   * says now, so a card change cannot leave other stages hearing her forever.
+   */
+  let openSelfSpeech = 0
+  let selfSpeechName: string | undefined
 
   type SparkNotifyBridgeMessage
     = | {
@@ -600,6 +635,101 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
     }
   }
 
+  /**
+   * Answers one whole turn of another agent as a user turn with a structured
+   * speaker, unless the conversation guard says the conversation has run long
+   * enough. A declined turn is not ingested; its activity was already
+   * recorded in the participants store as it arrived.
+   */
+  async function answerAgentTurn(turn: AgentTurn) {
+    if (!converseWithAgents.value)
+      return
+
+    const now = Date.now()
+    const decision = decideAgentReply({ now, repliedAt: agentRepliedAt }, { turnBudget: agentTurnBudget.value })
+    if (!decision.reply) {
+      console.info('[context-bridge] Not answering agent turn:', { participantId: turn.participantId, reason: decision.reason, retryInMs: decision.retryInMs })
+      return
+    }
+
+    const { windowMs } = createDefaultConversationGuardConfig()
+    agentRepliedAt = [...agentRepliedAt.filter(at => now - at < windowMs), now]
+
+    if (!activeProvider.value || !activeModel.value)
+      return
+
+    // Every window assembled the same turn. The lock keyed by the turn's first
+    // utterance id lets the first window answer and makes the others skip.
+    await withContextBridgeExclusiveLock(`context-bridge:agent-turn:${turn.participantId}:${turn.id}`, async () => {
+      try {
+        const chatProvider = await consciousnessStore.getChatProviderInstance(activeProvider.value)
+        await chatOrchestrator.ingest(turn.text, {
+          model: activeModel.value,
+          chatProvider,
+          temperature: activeTemperature.value,
+          topP: activeTopP.value,
+          speaker: { id: turn.participantId, name: turn.name ?? 'another agent', kind: 'agent' },
+        })
+      }
+      catch (error) {
+        console.error('[context-bridge] Failed to answer agent turn:', errorMessageFrom(error) ?? error)
+      }
+    })
+  }
+
+  /**
+   * Agent channel out: sends her self activity to other stages as
+   * `output:speech:activity`, and each clip's text as `output:speech:utterance`
+   * right after its start.
+   *
+   * The card of the speaking session decides, through `converseWithAgents`.
+   * Only the window that plays her speech has self activity, because the
+   * participants store is not synchronized, so only that window sends.
+   * Receivers ignore events with their own `stageParticipantId`.
+   */
+  function publishSelfSpeech(activity: ParticipantActivity) {
+    if (activity.participant.kind !== 'self')
+      return
+
+    const participantId = participantsStore.stageParticipantId
+    if (activity.phase === 'end') {
+      if (openSelfSpeech === 0)
+        return
+      openSelfSpeech -= 1
+      serverChannelStore.send({
+        type: 'output:speech:activity',
+        data: { participantId, name: selfSpeechName, phase: 'end', at: activity.at },
+      })
+      return
+    }
+
+    const card = activity.sessionId ? cardStore.getCard(chatOrchestrator.personaOf(activity.sessionId)) : undefined
+    if (!card?.extensions?.airi?.modules?.initiative?.converseWithAgents)
+      return
+
+    openSelfSpeech += 1
+    selfSpeechName = card.name
+    serverChannelStore.send({
+      type: 'output:speech:activity',
+      data: { participantId, name: selfSpeechName, phase: 'start', at: activity.at },
+    })
+    if (activity.text?.trim()) {
+      serverChannelStore.send({
+        type: 'output:speech:utterance',
+        data: { id: nanoid(), participantId, name: selfSpeechName, turnId: activity.turnId, text: activity.text, at: activity.at },
+      })
+    }
+  }
+
+  /**
+   * Speech events reach every peer except the sending connection, so other
+   * windows of this same stage receive what this stage published. They carry
+   * this stage's participant id and are not another agent.
+   */
+  function isAgentSpeech(participantId: string) {
+    return converseWithAgents.value && participantId !== participantsStore.stageParticipantId
+  }
+
   async function initialize() {
     await mutex.acquire()
 
@@ -965,6 +1095,56 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
             }
           })
         }
+      }))
+
+      // Agent channel in. Activity goes to the participants store at once, on
+      // this renderer's clock, the same clock as her own activity. Utterances
+      // are joined into whole turns before the character answers.
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:speech:activity', (event) => {
+        if (!isAgentSpeech(event.data.participantId))
+          return
+        participantsStore.reportAgentActivity({ participantId: event.data.participantId, phase: event.data.phase, at: Date.now() })
+        agentTurnAssembler.activity(event.data)
+      }))
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:speech:utterance', (event) => {
+        if (!isAgentSpeech(event.data.participantId))
+          return
+        agentTurnAssembler.utterance(event.data)
+      }))
+      disposeHookFns.value.push(watch(converseWithAgents, (enabled) => {
+        if (enabled)
+          return
+        // Turning the option off mid-conversation must not leave an agent
+        // marked as speaking or a half-heard turn waiting to be answered.
+        agentTurnAssembler.reset()
+        participantsStore.endAllAgentActivity(Date.now())
+      }))
+      disposeHookFns.value.push(() => {
+        agentTurnAssembler.reset()
+        participantsStore.endAllAgentActivity(Date.now())
+      })
+      // Agent channel out, gated per clip by the speaking session's card.
+      disposeHookFns.value.push(participantsStore.onActivity(publishSelfSpeech))
+      disposeHookFns.value.push(() => {
+        openSelfSpeech = 0
+      })
+
+      // Co-play in. Peer game events go to the co-play store, which joins
+      // only games that seat this stage and plays only moves for its own
+      // session. Events with this stage's participant id come from another
+      // window of this stage and are dropped, like speech events.
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:game:session', (event) => {
+        if (event.data.participantId === participantsStore.stageParticipantId)
+          return
+        if (event.data.phase === 'start')
+          void coplayStore.joinSession(event.data)
+        else
+          coplayStore.receiveSessionEnd(event.data)
+      }))
+      disposeHookFns.value.push(serverChannelStore.onEvent('output:game:action', (event) => {
+        if (event.data.participantId === participantsStore.stageParticipantId)
+          return
+        coplayStore.receivePartnerAction(event.data)
       }))
 
       disposeHookFns.value.push(

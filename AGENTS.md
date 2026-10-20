@@ -156,6 +156,7 @@ Skills are in `.agents/skills/<name>/SKILL.md`. Read the listed file before you 
 | Create or prepare a pull request | [`create-pr`](.agents/skills/create-pr/SKILL.md) |
 | Upload a local file through a file input or a file chooser in a web or Electron app | [`use-agent-browser-with-input-file`](.agents/skills/use-agent-browser-with-input-file/SKILL.md) and [`agent-browser`](.agents/skills/agent-browser/SKILL.md). For Electron, also read [`agent-browser-electron`](.agents/skills/agent-browser-electron/SKILL.md). |
 | Test Live2D, VRM, or MMD import and rendering in stage-web, stage-tamagotchi, or stage-pocket | [`use-agent-browser-for-airi`](.agents/skills/use-agent-browser-for-airi/SKILL.md) |
+| Add or change a cognitive or autonomy capability (initiative, turn-taking, mood, memory, attention) in `packages/cognitive-airicog`, or connect one to stage-ui | [`add-airicog-capability`](.agents/skills/add-airicog-capability/SKILL.md) |
 
 These directories also have their own `AGENTS.md`. Read it before you work in the directory:
 

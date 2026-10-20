@@ -232,6 +232,57 @@ A spoken turn is one IO trace, from the wake word to playback:
 
 A typed turn starts its trace at `Interaction turn`.
 
+
+## Participants and barge-in
+
+`libs/participants` and `stores/participants.ts` tell the character's own voice
+apart from other speakers. Her own speech output is the `self` participant.
+`composables/speech-output-self-channel.ts` wraps each turn's speech output in
+the voice store and publishes every clip that plays. The store keeps a loudness
+envelope of each synthesized clip. The echo gate compares the microphone with
+that delayed envelope and decides whether someone else is talking over her.
+
+The voice pipeline interrupts her when it accepts speech during her turn. It
+needs platform echo cancellation or an external echo classifier for that. The
+echo classifier (`createEchoClassifier`) is that classifier. It runs in the
+voice store's default `acceptSpeech` check, and it can only add acceptances to
+the pipeline's own rule. It accepts after 5 consecutive 10 ms frames that are
+louder than her echo can explain.
+
+The feature is off by default. A card turns it on with
+`modules.initiative.yieldWhenInterrupted`. Use it when a person must be able to
+stop her by talking over speakers without echo cancellation. With speakers, she
+does not yield until the gate has learned her echo level. With a streaming
+speech provider, each PCM block that plays extends the clip's envelope.
+
+With `modules.initiative.converseWithAgents`, the context bridge sends her
+clips to other stages as `output:speech:activity` and
+`output:speech:utterance`.
+
+The store is not synchronized across windows, because each window has its own
+audio. See `docs/ai/adr/2026-10-01-self-other-participants.md`.
+
+## Co-play
+
+`stores/coplay.ts` lets the character play a turn-based game with the local
+user or with another AIRI stage. The rules and turn order come from
+`@proj-airi/cognitive-airicog/coplay`; `libs/coplay` opens a game by id and
+turns it into text for the model, the user, and the server channel. Only
+tic-tac-toe ships today, as the reference game.
+
+The feature is off by default. A card turns it on with
+`modules.coplay.enabled`, which the Co-play settings page
+(`/settings/modules/gaming-coplay`, component `GamingCoplay`) sets through
+`updateActiveCardCoplay`. A UI calls `startSession`, shows `board` (a grid
+from the game's board view, drawn by `CoplayBoard`) or `view` and
+`legalMoves` for a game without one, follows `turn` and `log`, and passes the
+user's moves to `submitPartnerMove`. On her turn the store makes
+one model call with a `game_move` tool. When she gives no legal move, a fixed
+fallback policy moves for her and the log says so. With another stage, both
+stages play the same moves under one session id through `output:game:session`
+and `output:game:action`. One window of a stage owns a game; the store is not
+synchronized across windows.
+
 ## Button analytics
 
 Register the shared plugin once in each Vue application:

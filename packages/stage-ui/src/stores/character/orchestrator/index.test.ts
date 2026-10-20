@@ -3,6 +3,7 @@ import type { WebSocketEventOf } from '@proj-airi/server-sdk'
 /* eslint-disable style/indent-binary-ops */
 /* eslint-disable style/operator-linebreak */
 import type { Pinia, Store, StoreDefinition } from 'pinia'
+import type { SyncedPiniaRuntime } from 'pinia-plugin-synced'
 import type { Mock } from 'vitest'
 import type { UnwrapRef } from 'vue'
 import type z from 'zod'
@@ -364,9 +365,29 @@ describe('store character-orchestrator', () => {
       airiCardStore.cards = new Map([['initiative-test', {
         name: 'Hero',
         version: '1.0',
-        extensions: { airi: { agents: {}, modules: { consciousness: { provider: 'mock-provider', model: 'mock-model' }, vision: { provider: 'mock-vision-provider', model: 'mock-vision-model' }, speech: { provider: 'mock-speech-provider', model: 'mock-speech-model', voice_id: 'alloy' }, initiative } } },
+        extensions: { airi: { agents: {}, avatarModels: [], modules: { consciousness: { provider: 'mock-provider', model: 'mock-model' }, vision: { provider: 'mock-vision-provider', model: 'mock-vision-model' }, speech: { provider: 'mock-speech-provider', model: 'mock-speech-model', voice_id: 'alloy' }, initiative } } },
       } satisfies AiriCard]])
       airiCardStore.activeCardId = 'initiative-test'
+    }
+
+    /**
+     * A leadership runtime in which this window leads. The orchestrator runs
+     * initiative only in the leader, so every test starts as one.
+     */
+    function leaderRuntime(): SyncedPiniaRuntime {
+      return {
+        dispose: vi.fn(),
+        getLeaderId: vi.fn(),
+        getParticipantCount: vi.fn(() => 1),
+        isLeader: vi.fn(() => true),
+        onCoordinationChange: vi.fn(() => vi.fn()),
+        onLeadershipChange: vi.fn((listener: (isLeader: boolean) => void) => {
+          listener(true)
+          return vi.fn()
+        }),
+        participantId: 'orchestrator-test',
+        plugin: vi.fn(),
+      }
     }
 
     beforeEach(() => {
@@ -375,7 +396,7 @@ describe('store character-orchestrator', () => {
 
     it('stays silent for a card that never turned initiative on', () => {
       const store = useCharacterOrchestratorStore(pinia)
-      store.initialize()
+      store.initialize(leaderRuntime())
 
       expect(useInitiativeStore(pinia).running).toBe(false)
       store.dispose()
@@ -391,7 +412,7 @@ describe('store character-orchestrator', () => {
     it('turns a lull into a notification that quotes what was said', () => {
       useCardInitiative({ enabled: true, threshold: 0.01 })
       const store = useCharacterOrchestratorStore(pinia)
-      store.initialize()
+      store.initialize(leaderRuntime())
 
       const initiative = useInitiativeStore(pinia)
       expect(initiative.running).toBe(true)
@@ -410,7 +431,7 @@ describe('store character-orchestrator', () => {
 
     it('follows the card when it is switched', async () => {
       const store = useCharacterOrchestratorStore(pinia)
-      store.initialize()
+      store.initialize(leaderRuntime())
       const initiative = useInitiativeStore(pinia)
 
       useCardInitiative({ enabled: true })

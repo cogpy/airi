@@ -1,3 +1,5 @@
+import { trimEnd } from 'es-toolkit'
+
 /**
  * A pinned Sherpaw preload pack. Asset hosting needs only these fields.
  * Transcription and keyword spotting packs share this shape.
@@ -125,8 +127,10 @@ export function sherpawModelArtifactUrl(
   endpoint: string = defaultSherpawModelEndpoint,
 ): string {
   // A mirror URL commonly arrives with a trailing slash. Keeping it would put an
-  // empty segment before the repository path.
-  const base = endpoint.trim().replace(/\/+$/, '') || defaultSherpawModelEndpoint
+  // empty segment before the repository path. `trimEnd` rather than `/\/+$/`:
+  // the pattern retried the slash run at every start position, so a mistyped
+  // endpoint of many slashes cost quadratic time.
+  const base = trimEnd(endpoint.trim(), '/') || defaultSherpawModelEndpoint
 
   return `${base}/${model.repository}/resolve/${model.revision}/${model.directory}/${filename}`
 }

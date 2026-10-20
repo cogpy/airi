@@ -247,7 +247,11 @@ onUnmounted(() => {
 })
 
 function handleRouteRenderError(error: unknown, _instance: unknown, info: string) {
-  console.error(`[App] Failed to render route ${route.fullPath} during ${info}:`, error)
+  // The route comes from the address bar, and `console.error` reads its first
+  // argument as a format string. Interpolating the path there let a `%s` in it
+  // consume the error and drop it from the line, so the parts that vary are
+  // passed as arguments instead.
+  console.error('[App] Failed to render route %s during %s:', route.fullPath, info, error)
 }
 </script>
 

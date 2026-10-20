@@ -68,7 +68,10 @@ function resolveImport(file, specifier) {
           continue
         const [prefix, suffix] = pattern.split('*')
         if (subpath.startsWith(prefix) && subpath.endsWith(suffix)) {
-          entry = value.replace('*', subpath.slice(prefix.length, suffix ? -suffix.length : undefined))
+          // Node substitutes every `*` on the right of a subpath pattern, not
+          // just the first, so a target such as `./src/*/index.*` resolves the
+          // same way here as it does at runtime.
+          entry = value.replaceAll('*', subpath.slice(prefix.length, suffix ? -suffix.length : undefined))
           break
         }
       }

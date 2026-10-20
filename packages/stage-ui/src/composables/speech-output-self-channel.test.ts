@@ -1,5 +1,5 @@
-import type { SpeechOutput } from '@proj-airi/core-agent'
-import type { AudioWindow, TtsRequest } from '@proj-airi/pipelines-audio'
+import type { SpeechAudio, SpeechOutput } from '@proj-airi/core-agent'
+import type { AudioWindow, PcmBlock, TtsRequest } from '@proj-airi/pipelines-audio'
 
 import type { EnvelopeSource, ParticipantActivity } from '../libs/participants'
 
@@ -34,6 +34,39 @@ async function synthesize(output: SpeechOutput) {
   if (!('synthesize' in output))
     throw new Error('Expected pipeline synthesis')
   await output.synthesize(request(), new AbortController().signal)
+}
+
+/** `count` one-second PCM blocks of a steady level at 1 kHz. */
+function pcmBlocks(count: number): ReadableStream<PcmBlock> {
+  return new ReadableStream({
+    start(controller) {
+      for (let index = 0; index < count; index++)
+        controller.enqueue({ range: { sourceId: 'speech', startFrame: index * 1000, endFrame: (index + 1) * 1000 }, sampleRate: 1000, channels: [new Float32Array(1000).fill(0.1)] })
+      controller.close()
+    },
+  })
+}
+
+/** A streaming provider that emits one audio part for the clip. */
+function streamedOutput(part: SpeechAudio): SpeechOutput {
+  return {
+    playback: new Playback({ nowMs: () => 0, play: vi.fn() }),
+    stream: async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue({ ...part, text: CLIP.text })
+        controller.close()
+      },
+    }),
+  }
+}
+
+/** Reads the one part of a streamed output, as the voice output does, and returns its audio. */
+async function readPart(output: SpeechOutput) {
+  if (!('stream' in output))
+    throw new Error('Expected streaming synthesis')
+  const parts = await output.stream(new ReadableStream(), new AbortController().signal)
+  const { value } = await parts.getReader().read()
+  return value!.audio as ReadableStream<PcmBlock>
 }
 
 /** A loud 32 ms microphone window delivered at `START + 200` ms. */
@@ -117,19 +150,46 @@ describe('observeSelfSpeech', () => {
     expect(useParticipantsStore().selfSpeaking).toBe(false)
   })
 
-  it('publishes a streamed clip without audio', async () => {
+  // ROOT CAUSE:
+  //
+  // A streamed clip was published without audio. The gate saw no playback of
+  // hers, so it refused all speech over it, and she never yielded.
+  //
+  // We fixed this by observing the PCM blocks as the playback reads them.
+  it('judges the microphone against every block of a streamed clip', async () => {
+    const output = observeSelfSpeech(TURN, streamedOutput({ audio: pcmBlocks(5) }), vi.fn(async () => AUDIO), () => true)
+    const audio = await readPart(output)
+
+    const reader = audio.getReader()
+    await reader.read()
+    output.onPlaybackStart?.(CLIP)
+    let read = await reader.read()
+    while (!read.done)
+      read = await reader.read()
+
+    expect(useParticipantsStore().classifyDeviceWindow(loudWindow(), START + 3200).reason).toBe('uncalibrated')
+  })
+
+  it('publishes a streamed clip with its decoded Blob audio', async () => {
     const activity = recordActivity()
-    const inner: SpeechOutput = {
-      playback: new Playback({ nowMs: () => 0, play: vi.fn() }),
-      stream: async () => new ReadableStream(),
-    }
-    const output = observeSelfSpeech(TURN, inner, vi.fn(async () => AUDIO), () => true)
+    const decode = vi.fn(async () => AUDIO)
+    const output = observeSelfSpeech(TURN, streamedOutput({ audio: new Blob(['speech']) }), decode, () => true)
+    await readPart(output)
+
+    output.onPlaybackStart?.(CLIP)
+    await vi.waitFor(() => expect(activity).toHaveLength(1))
+
+    expect(decode).toHaveBeenCalledWith(expect.any(Blob))
+    expect(useParticipantsStore().classifyDeviceWindow(loudWindow(), START + 200).reason).toBe('uncalibrated')
+  })
+
+  it('publishes a streamed clip without audio when the session card does not opt in', async () => {
+    const activity = recordActivity()
+    const output = observeSelfSpeech(TURN, streamedOutput({ audio: pcmBlocks(1) }), vi.fn(async () => AUDIO), () => false)
+    await readPart(output)
 
     output.onPlaybackStart?.(CLIP)
 
-    expect(activity).toEqual([
-      { participant: SELF_PARTICIPANT, phase: 'start', at: START, text: 'Hello.', turnId: 'turn-1', sessionId: 'session-1' },
-    ])
-    expect(useParticipantsStore().classifyDeviceWindow(loudWindow(), START + 200).reason).toBe('self-inaudible')
+    expect(activity).toEqual([])
   })
 })

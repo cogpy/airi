@@ -53,7 +53,7 @@ The voice store publishes the `self` participant from the speech output of each 
 
 This is an efference copy. The character knows what she said and when, without listening to it.
 
-The clip's decoding starts when synthesis returns. It uses the same `decodeAudioData` path as speech tracing. A clip of a streaming provider has no decoded audio. It publishes only activity and text, and the echo gate treats the microphone as if she were silent.
+The clip's decoding starts when synthesis returns. It uses the same `decodeAudioData` path as speech tracing. A streaming provider emits each audio part as one Blob or as PCM blocks. A Blob part is decoded like a synthesized clip. Each PCM block that plays extends the clip's envelope (`appendSelfPlaybackAudio`).
 
 The channel publishes only when the card of the turn's session sets `yieldWhenInterrupted` or `converseWithAgents`. It always publishes stops, because the store ignores clips that it never saw.
 

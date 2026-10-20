@@ -55,6 +55,8 @@ export const useParticipantsStore = defineStore('participants', () => {
   let gate = createEchoGate(gateConfig)
   let classifier = createEchoClassifier(gate, { frameMs: gateConfig.frameMs })
   const activeSelfPlaybacks = new Set<string>()
+  /** Echo gate playback ids of each active clip: the clip itself and its later chunks. */
+  const selfSegments = new Map<string, string[]>()
   const handlers = new Set<(activity: ParticipantActivity) => void>()
 
   function emit(activity: ParticipantActivity): void {
@@ -83,14 +85,10 @@ export const useParticipantsStore = defineStore('participants', () => {
    * microphone as if she were silent.
    */
   function publishSelfPlaybackStart(playback: { id: string, audio?: EnvelopeSource, text: string, at: number, turnId?: string, sessionId?: string }): void {
-    if (playback.audio) {
-      gate.startSelf({
-        id: playback.id,
-        at: playback.at,
-        envelope: energyEnvelope(playback.audio, gateConfig.frameMs),
-      })
-    }
     activeSelfPlaybacks.add(playback.id)
+    selfSegments.set(playback.id, [])
+    if (playback.audio)
+      addSelfSegment(playback.id, playback.audio, playback.at)
     selfSpeaking.value = true
     emit({
       participant: SELF_PARTICIPANT,
@@ -102,6 +100,24 @@ export const useParticipantsStore = defineStore('participants', () => {
     })
   }
 
+  function addSelfSegment(id: string, audio: EnvelopeSource, at: number): void {
+    const segments = selfSegments.get(id)!
+    const segmentId = `${id}#${segments.length}`
+    segments.push(segmentId)
+    gate.startSelf({ id: segmentId, at, envelope: energyEnvelope(audio, gateConfig.frameMs) })
+  }
+
+  /**
+   * Adds a later chunk of a playing clip to the echo gate. A streamed clip
+   * plays as chunks, and only the chunks that exist so far are known when it
+   * starts. `at` is `Date.now()` when the chunk plays. A chunk for a clip that
+   * is not playing is ignored.
+   */
+  function appendSelfPlaybackAudio(chunk: { id: string, audio: EnvelopeSource, at: number }): void {
+    if (activeSelfPlaybacks.has(chunk.id))
+      addSelfSegment(chunk.id, chunk.audio, chunk.at)
+  }
+
   /**
    * Publishes that a speech clip ended, was stopped, or failed. A stop for a
    * clip that never started is ignored.
@@ -110,7 +126,9 @@ export const useParticipantsStore = defineStore('participants', () => {
     if (!activeSelfPlaybacks.delete(playback.id))
       return
 
-    gate.stopSelf(playback.id, playback.at)
+    for (const segmentId of selfSegments.get(playback.id) ?? [])
+      gate.stopSelf(segmentId, playback.at)
+    selfSegments.delete(playback.id)
     selfSpeaking.value = activeSelfPlaybacks.size > 0
     emit({ participant: SELF_PARTICIPANT, phase: 'end', at: playback.at })
   }
@@ -182,6 +200,7 @@ export const useParticipantsStore = defineStore('participants', () => {
 
     configure,
     publishSelfPlaybackStart,
+    appendSelfPlaybackAudio,
     publishSelfPlaybackStop,
     classifyDeviceWindow,
     reportAgentActivity,

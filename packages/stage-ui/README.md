@@ -252,9 +252,8 @@ louder than her echo can explain.
 The feature is off by default. A card turns it on with
 `modules.initiative.yieldWhenInterrupted`. Use it when a person must be able to
 stop her by talking over speakers without echo cancellation. With speakers, she
-does not yield until the gate has learned her echo level. Do not use it with a
-streaming speech provider: those clips have no envelope, so she does not yield
-to speech over them.
+does not yield until the gate has learned her echo level. With a streaming
+speech provider, each PCM block that plays extends the clip's envelope.
 
 With `modules.initiative.converseWithAgents`, the context bridge sends her
 clips to other stages as `output:speech:activity` and

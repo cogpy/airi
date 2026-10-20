@@ -43,6 +43,12 @@ from something the other party did. The real gap was acting when nothing had
 happened. Build the missing primitive, not a parallel copy of an existing one,
 and finish one capability rather than starting three.
 
+**Check upstream too.** This branch syncs with `moeru-ai/airi`, and upstream can
+ship the same behaviour later. Upstream's shared voice pipeline added its own
+barge-in, with an `acceptSpeech` hook for an external echo classifier. The
+right port was to plug the echo gate into that hook, not to keep a second
+barge-in controller. When upstream owns a behaviour, extend its hook.
+
 ## 2. Shape the module: a pure decision and a thin adapter
 
 Every module here — `initiative`, `yielding`, `affect` (mood), `memory` — follows
@@ -95,6 +101,10 @@ Step 3 is the one that silently fails. Without an entry, tsdown builds only
 yet resolves to a file that was never emitted. Tests import source, so they pass
 regardless. Only loading the built output catches it — see step 5.
 
+CI runs no export check after the build. Two guards close this gap: a package
+test that compares the `exports` map with the tsdown `entry` list, or a CI step
+that runs `check-exports.mjs` after the build. Neither exists yet.
+
 The package also needs its own `vitest.config.ts` (it has one; keep it). Without
 it, `vitest run` inside the package inherits the root config and crashes with
 `Projects definition references a non-existing file or a directory: …/packages/cognitive-airicog/server/apps/auth`.
@@ -104,7 +114,8 @@ it, `vitest run` inside the package inherits the root config and crashes with
 - **Pure mappings go in `packages/stage-ui/src/libs/<area>/`** —
   `libs/affect/mood-prompt.ts` maps the display emotion the character already
   picks per reply onto a mood event, with no extra model call.
-  `libs/speech/barge-in.ts` sits the same way.
+  `libs/participants/echo-classifier.ts`, the accept rule of the echo gate,
+  sits the same way.
 - **Stateful loops go in `packages/stage-ui/src/stores/modules/<name>.ts`** as a
   Pinia setup store (`stores/modules/initiative.ts` runs the character's own
   turn-taking). The store owns its timer: start it explicitly, clear it on stop,
@@ -119,6 +130,21 @@ it, `vitest run` inside the package inherits the root config and crashes with
   settings from the card — the initiative store types them as
   `NonNullable<AiriExtension['modules']['initiative']>` and treats a missing
   `enabled` as `false`. A card that never asked for the behaviour doesn't get it.
+- **Read the session's character, not the selected card.** Each chat session
+  belongs to one character. Read its card with
+  `cardStore.getCard(chat.personaOf(sessionId))` and its model with
+  `cardStore.getModules(characterId).consciousness`. The selected card and the
+  global `activeModel` can belong to another window's choice. A side model
+  call, such as topic naming or reflection, uses the session's model.
+- **Run timers in the leader window only.** The character orchestrator starts
+  its consumers with `initialize(syncedPinia)`, and only the leader runs them.
+  Start a lull timer or another loop in `startConsumers` and stop it in
+  `stopConsumers`. A test passes a leadership runtime that reports leader.
+- **Voice goes through the shared voice pipeline.** `stores/voice.ts` owns
+  speech output and microphone input. Wrap the `SpeechOutput` of a turn to see
+  her clips (`composables/speech-output-self-channel.ts` does this), and use
+  the `acceptSpeech` option to judge microphone windows. `Stage.vue` no longer
+  owns a playback manager, so do not hook it.
 - **A card setting the UI can change goes through a synced card action.** Add
   an `updateActiveCard<Module>` action to `stores/modules/airi-card.ts`, list it
   under `synced.actions`, and make it idempotent. Read
@@ -231,8 +257,9 @@ code, and saying so is part of doing the job well:
   the arithmetic, not the conversation. Say plainly what has only been verified
   as arithmetic.
 - **A seam that doesn't exist yet.** If the pieces you need are never in scope
-  together (voice activity and the playback manager, for barge-in), propose where
-  the seam should go rather than forcing one in blind.
+  together, propose where the seam goes rather than forcing one in blind. For
+  example, a streaming speech provider does not expose clip audio in
+  `SpeechClip`, so the echo gate gets no envelope for those clips.
 
 When you finish, report three things separately: what shipped and was verified,
 what is implemented but only verified as arithmetic, and what is blocked and on
@@ -253,4 +280,7 @@ what.
 | `pnpm run` fails again on install after a failed postinstall | pnpm checks dependencies before each run | `pnpm_config_verify_deps_before_run=false` in the environment |
 | A test passes here and fails in CI, near a session or lock | Node 22 has no `navigator.locks`, so the lock path never ran locally | Reproduce with a `navigator.locks` stand-in. Release locks in `afterEach` |
 | CodeQL "Polynomial regular expression used on uncontrolled data" | An anchored `[…]+$` on a model reply | Trim by index scan, and add a long-run test |
+| A side model call uses the wrong model, or a card setting applies to the wrong session | It read the selected card or the global `activeModel` | Read the session's character: `getCard(personaOf(sessionId))` and `getModules(characterId)` |
+| Orchestrator tests: `initialize` expects 1 argument, or a loop never starts | The orchestrator starts consumers only in the leader | Pass a leadership runtime that reports leader. Start loops in `startConsumers` |
+| After a rebase, a README or other file lost upstream sections | `git checkout --theirs` (or `--ours`) on a whole path took one side of every conflict | Resolve each conflict by hand. Rebuild the file from `origin/main` plus your section if it happened |
 | A commit you know was merged "isn't in main" | Shallow clone, or it genuinely isn't | `git ls-tree` the tip; deepen with `--depth` before trusting ancestry |

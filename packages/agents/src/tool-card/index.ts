@@ -46,15 +46,36 @@ export interface ToolCard {
   program: string
 }
 
-const FENCE_PATTERN = /```[^\n]*\n([\s\S]*?)```/
+const FENCE = '```'
+
+/**
+ * Finds the first fence: an opening fence, the rest of its line, then the
+ * body up to the next fence.
+ *
+ * Index scans keep this linear in the reply length. A regular expression with
+ * a line run after the opening fence is quadratic on a reply of fences
+ * without a newline. The reply is model output, so its shape is not ours.
+ */
+function findFence(reply: string): { start: number, end: number, body: string } | undefined {
+  const start = reply.indexOf(FENCE)
+  if (start < 0)
+    return undefined
+  const lineEnd = reply.indexOf('\n', start + FENCE.length)
+  if (lineEnd < 0)
+    return undefined
+  const close = reply.indexOf(FENCE, lineEnd + 1)
+  if (close < 0)
+    return undefined
+  return { start, end: close + FENCE.length, body: reply.slice(lineEnd + 1, close) }
+}
 
 /** Reads the sentence and the fenced program of a reply. A reply without a fence throws. */
 export function readToolCardReply(reply: string): ToolCard {
-  const match = FENCE_PATTERN.exec(reply)
-  const program = match?.[1]?.trim()
-  if (!match || !program)
+  const fence = findFence(reply)
+  const program = fence?.body.trim()
+  if (!fence || !program)
     throw new Error('The card reply has no openui-lang fence')
-  const description = reply.replace(match[0], '').trim().split('\n')[0]?.trim() ?? ''
+  const description = (reply.slice(0, fence.start) + reply.slice(fence.end)).trim().split('\n')[0]?.trim() ?? ''
   return { description, program }
 }
 

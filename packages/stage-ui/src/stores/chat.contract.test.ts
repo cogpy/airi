@@ -302,6 +302,9 @@ const initiativeMocks = vi.hoisted(() => {
     episodes: [] as { id: string, atomId?: string, at: number, salience: number, kind?: 'experience' | 'reflection' }[],
     lastReflectionAt: undefined as number | undefined,
     // Behaves like the store: keeps the insights so they can be read back.
+    // Every session in these tests belongs to one character, so both read the shared fields.
+    episodesOf: () => mocks.episodes,
+    lastReflectionAtOf: () => mocks.lastReflectionAt,
     recordReflection: vi.fn((insights: typeof mocks.episodes, at: number) => {
       mocks.episodes.push(...insights)
       mocks.lastReflectionAt = at
@@ -1298,7 +1301,8 @@ describe('chat store contract', () => {
 
     // The user's turn is remembered as something to pick back up, which also
     // counts as interaction; the character's own reply only counts as timing.
-    expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello' })
+    // The remark goes to the session's own character.
+    expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello', characterId: 'alice' })
     expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
     // Only the user's turn can answer her after she speaks up.
     expect(initiativeMocks.noteUserTurn).toHaveBeenCalledOnce()
@@ -1325,7 +1329,7 @@ describe('chat store contract', () => {
       await store.send({ sessionId: 'session-1', text: 'I have a job interview tomorrow' })
       await vi.waitFor(() => expect(initiativeMocks.recordEpisode).toHaveBeenCalledOnce())
 
-      expect(initiativeMocks.recordEpisode).toHaveBeenCalledWith({ topic: 'the job interview' }, expect.any(Number))
+      expect(initiativeMocks.recordEpisode).toHaveBeenCalledWith({ topic: 'the job interview', characterId: 'alice' }, expect.any(Number))
       expect(initiativeMocks.remember).not.toHaveBeenCalled()
       // Once when the remark arrived, once for her reply.
       expect(initiativeMocks.noteInteraction).toHaveBeenCalledTimes(2)
@@ -1394,7 +1398,7 @@ describe('chat store contract', () => {
       replyOnce()
 
       await useChatStore().send({ sessionId: 'session-1', text: 'still there?' })
-      await vi.waitFor(() => expect(initiativeMocks.recordReflection).toHaveBeenCalledWith([], expect.any(Number)))
+      await vi.waitFor(() => expect(initiativeMocks.recordReflection).toHaveBeenCalledWith([], expect.any(Number), 'alice'))
       expect(ingestContextMessageMock.mock.calls.some(([message]) => message.lane === 'memory')).toBe(false)
     })
   })

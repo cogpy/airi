@@ -262,6 +262,8 @@ Each character card has its own state. The store keeps one
 `CognitiveOrchestrator` agent for each card, and `useCharacter(cardId)` switches
 the episodes, the mind, and the temperament. The orchestrator store calls it
 when the active card changes.
+A remark from any session goes to that session's own character. A remark
+from a background session of another card never reaches the active character.
 
 With `modules.initiative.adapt`, a `Temperament` learns how readily she speaks.
 A user turn within two minutes after she speaks up counts as an answer. Later,

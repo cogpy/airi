@@ -429,6 +429,25 @@ describe('store character-orchestrator', () => {
       expect(initiative.running).toBe(false)
     })
 
+    it('names the topics that came up with the raised one', () => {
+      useCardInitiative({ enabled: true, threshold: 0.01 })
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize(leaderRuntime())
+      const initiative = useInitiativeStore(pinia)
+
+      const saidAt = Date.now()
+      initiative.remember({ topic: 'my cat' }, saidAt)
+      initiative.remember({ topic: 'the vet' }, saidAt + 1000)
+      const decision = initiative.poll(saidAt + 10 * 60_000)
+
+      expect(decision.act).toBe(true)
+      const raised = decision.act ? decision.topicAtomId : ''
+      const other = raised === 'my cat' ? 'the vet' : 'my cat'
+      const notify = store.pendingNotifies.find(event => event.source === 'character:initiative')
+      expect(notify?.data.note).toContain(`It came up together with: ${other}`)
+      store.dispose()
+    })
+
     it('follows the card when it is switched', async () => {
       const store = useCharacterOrchestratorStore(pinia)
       store.initialize(leaderRuntime())

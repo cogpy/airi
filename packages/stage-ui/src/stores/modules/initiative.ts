@@ -5,7 +5,9 @@ import type { AiriExtension } from '../../types/airiCard'
 
 import {
   asInitiativeCandidates,
+  createTopicAttention,
   decideInitiative,
+  mergeCandidates,
   shouldRetain,
 } from '@proj-airi/cognitive-airicog'
 import { defineStore } from 'pinia'
@@ -80,6 +82,14 @@ export const useInitiativeStore = defineStore('initiative', () => {
   let timer: ReturnType<typeof setInterval> | undefined
 
   /**
+   * What is on her mind: remembered topics in an AtomSpace, with an attention
+   * economy over them. Topics that come up together become associated, so
+   * mentioning one brings the other to mind. Runtime state, like `episodes`.
+   * Not reactive: it is read only when she decides whether to speak.
+   */
+  const mind = createTopicAttention()
+
+  /**
    * How the active character card configures speaking up, with the module's own
    * defaults where the card is silent.
    *
@@ -121,13 +131,15 @@ export const useInitiativeStore = defineStore('initiative', () => {
     entry: { topic: string, salience?: number, valence?: number },
     at: number,
   ): void {
+    const salience = entry.salience ?? 0.6
     episodes.value.push({
       id: `ep_${at}_${episodes.value.length}`,
       atomId: entry.topic,
       at,
-      salience: entry.salience ?? 0.6,
+      salience,
       valence: entry.valence,
     })
+    mind.notice(entry.topic, salience, at)
   }
 
   /**
@@ -138,6 +150,10 @@ export const useInitiativeStore = defineStore('initiative', () => {
    */
   function recordReflection(insights: readonly Episode[], at: number): void {
     episodes.value.push(...insights)
+    for (const insight of insights) {
+      if (insight.atomId !== undefined)
+        mind.notice(insight.atomId, insight.salience, insight.at)
+    }
     lastReflectionAt.value = at
   }
 
@@ -168,7 +184,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
       now,
       lastInteractionAt: lastInteractionAt.value,
       lastInitiativeAt: lastInitiativeAt.value,
-      candidates: asInitiativeCandidates(episodes.value, now),
+      candidates: mergeCandidates(asInitiativeCandidates(episodes.value, now), mind.candidates()),
       recentlyRaised: recentlyRaised.value,
     }, {
       ...(threshold !== undefined ? { threshold } : {}),
@@ -193,6 +209,12 @@ export const useInitiativeStore = defineStore('initiative', () => {
    */
   function forget(now: number = Date.now()): void {
     episodes.value = episodes.value.filter(episode => shouldRetain(episode, now))
+    mind.prune(new Set(episodes.value.flatMap(episode => episode.atomId === undefined ? [] : [episode.atomId])))
+  }
+
+  /** Topics associated with `topic` on her mind, strongest first. */
+  function associationsOf(topic: string) {
+    return mind.associations(topic)
   }
 
   /**
@@ -222,6 +244,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
 
     running.value = true
     timer = setInterval(() => {
+      mind.step()
       poll()
       forget()
     }, intervalMs)
@@ -293,6 +316,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
     remember,
     poll,
     forget,
+    associationsOf,
     onInitiative,
     start,
     stop,

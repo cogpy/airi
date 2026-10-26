@@ -237,6 +237,29 @@ describe('initiative store', () => {
     expect(initiative.episodes).toHaveLength(0)
   })
 
+  it('associates subjects that came up together', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+
+    initiative.remember({ topic: 'my cat' }, now)
+    initiative.remember({ topic: 'the vet' }, now + MINUTE)
+    initiative.remember({ topic: 'tax forms' }, now + 30 * MINUTE)
+
+    expect(initiative.associationsOf('my cat').map(association => association.topic)).toEqual(['the vet'])
+  })
+
+  it('can raise a subject the attention focus still holds after its episode is forgotten', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+    initiative.remember({ topic: 'my cat' }, now)
+
+    initiative.forget(now + 365 * DAY)
+    const decision = initiative.poll(now + 365 * DAY)
+
+    expect(initiative.episodes).toHaveLength(0)
+    expect(decision).toMatchObject({ act: true, topicAtomId: 'my cat' })
+  })
+
   describe('bindToChat', () => {
     it('treats every message as the conversation being live', () => {
       const initiative = useInitiativeStore()

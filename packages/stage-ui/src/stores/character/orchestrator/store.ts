@@ -24,6 +24,8 @@ export { sparkNotifyCommandSchema } from '@proj-airi/core-agent/agents/spark-not
  * and the model only needs enough of it to recognise what was being discussed.
  */
 const MAX_QUOTED_REMARK = 280
+/** Most associated topics an initiative note names. */
+const MAX_RELATED_TOPICS = 3
 
 /** What a card that never mentions initiative configures: nothing, so it stays off. */
 const NO_INITIATIVE: Readonly<AiriInitiativeSettings> = Object.freeze({})
@@ -38,11 +40,18 @@ const NO_INITIATIVE: Readonly<AiriInitiativeSettings> = Object.freeze({})
  * user's own remark — so the headline quotes it and leaves the model to judge
  * how, or whether, to pick it back up.
  */
-function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number): WebSocketEventOf<'spark:notify'> {
+function quoteRemark(remark: string): string {
+  return remark.length > MAX_QUOTED_REMARK ? `${remark.slice(0, MAX_QUOTED_REMARK)}…` : remark
+}
+
+/**
+ * `related` are topics associated with the raised one, strongest first. The
+ * note names them, so the model can connect the subject to what came up with it.
+ */
+function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number, related: readonly string[] = []): WebSocketEventOf<'spark:notify'> {
   const id = `initiative-${now}`
-  const remark = decision.topicAtomId.length > MAX_QUOTED_REMARK
-    ? `${decision.topicAtomId.slice(0, MAX_QUOTED_REMARK)}…`
-    : decision.topicAtomId
+  const remark = quoteRemark(decision.topicAtomId)
+  const relatedRemarks = related.map(quoteRemark)
 
   return {
     type: 'spark:notify',
@@ -53,10 +62,13 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
       kind: 'ping',
       urgency: 'immediate',
       headline: 'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
-      note: `From earlier in the conversation: ${remark}`,
+      note: relatedRemarks.length > 0
+        ? `From earlier in the conversation: ${remark}\nIt came up together with: ${relatedRemarks.join('; ')}`
+        : `From earlier in the conversation: ${remark}`,
       destinations: ['character'],
       payload: {
         topic: remark,
+        related: relatedRemarks,
         urge: decision.urge,
         silencePressure: decision.silencePressure,
       },
@@ -353,7 +365,11 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     // A lull is only worth breaking once; by the next tick the conversation may
     // have resumed, so a failed attempt is dropped rather than retried.
     eventUnsubscribes.push(
-      initiativeStore.onInitiative(decision => enqueueSparkNotify(initiativeNotify(decision, Date.now()), {
+      initiativeStore.onInitiative(decision => enqueueSparkNotify(initiativeNotify(
+        decision,
+        Date.now(),
+        initiativeStore.associationsOf(decision.topicAtomId).slice(0, MAX_RELATED_TOPICS).map(association => association.topic),
+      ), {
         reason: 'initiative',
         maxAttempts: 1,
       })),

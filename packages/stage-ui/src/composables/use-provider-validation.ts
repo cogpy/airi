@@ -46,34 +46,35 @@ export function useProviderValidation(providerId: string) {
     })
   }, undefined)
 
+  /**
+   * Writes one credential of this provider. The provider id comes from the
+   * route, so a prototype key such as `__proto__` is refused: writing through
+   * it would set the field on every object.
+   */
+  function setCredential(field: 'apiKey' | 'baseUrl' | 'accountId', value: string) {
+    if (providerId === '__proto__' || providerId === 'constructor' || providerId === 'prototype')
+      return
+    if (!Object.hasOwn(providers.value, providerId))
+      providers.value[providerId] = {}
+    providers.value[providerId][field] = value
+  }
+
   // --- Internal Computed Properties for Credentials ---
   const credentials = computed(() => providers.value[providerId] || {})
 
   const apiKey = computed({
     get: () => credentials.value.apiKey || '',
-    set: (value) => {
-      if (!providers.value[providerId])
-        providers.value[providerId] = {}
-      providers.value[providerId].apiKey = value
-    },
+    set: value => setCredential('apiKey', value),
   })
 
   const baseUrl = computed({
     get: () => credentials.value.baseUrl || '',
-    set: (value) => {
-      if (!providers.value[providerId])
-        providers.value[providerId] = {}
-      providers.value[providerId].baseUrl = value
-    },
+    set: value => setCredential('baseUrl', value),
   })
 
   const accountId = computed({
     get: () => credentials.value.accountId || '',
-    set: (value) => {
-      if (!providers.value[providerId])
-        providers.value[providerId] = {}
-      providers.value[providerId].accountId = value
-    },
+    set: value => setCredential('accountId', value),
   })
   // --- End of Internal Computed Properties ---
 

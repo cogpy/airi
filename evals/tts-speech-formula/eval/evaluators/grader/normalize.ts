@@ -112,7 +112,8 @@ export function foldLetterCase(source: string, keep: ReadonlySet<string> = new S
  */
 export function caseSensitiveLetters(reference: string): Set<string> {
   // A calligraphic or a blackboard letter is still a letter, as `\\mathcal{U}` beside `u_t`. Upright words are names.
-  const body = reference.replace(/\\(?:mathbb|mathcal)\{([^}]*)\}/g, '$1').replace(/\\(?:mathrm|text|operatorname)\{[^}]*\}/g, '')
+  // `[^{}]` stops each scan at the next brace, so a run of unclosed `\mathbb{` stays linear.
+  const body = reference.replace(/\\(?:mathbb|mathcal)\{([^{}]*)\}/g, '$1').replace(/\\(?:mathrm|text|operatorname)\{[^{}]*\}/g, '')
   const commands = [...body.matchAll(/\\([A-Z]+)/gi)].map(match => match[1]!)
   const sensitive = new Set<string>()
   for (const name of commands) {

@@ -11,8 +11,31 @@ export function normalizeMathDelimiters(markdown: string): string {
     .split(codeSpans)
     .map((part, index) => index % 2 === 1
       ? part
-      : part
-          .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex: string) => `$$${tex}$$`)
-          .replace(/\\\(([\s\S]+?)\\\)/g, (_, tex: string) => `$${tex}$`))
+      : replaceDelimited(replaceDelimited(part, '\\[', '\\]', '$$'), '\\(', '\\)', '$'))
     .join('')
+}
+
+/**
+ * Replaces each `open … close` pair, with at least one character between, by
+ * `mark … mark`. Pairs are found left to right, and a pair ends at the first
+ * `close` after its `open`.
+ *
+ * Index scans keep this linear. A lazy regular expression retried the search
+ * for `close` at every `open`, which is quadratic on a reply with many `open`
+ * and no `close`. When one `open` has no `close` after it, no later one has.
+ */
+function replaceDelimited(text: string, open: string, close: string, mark: string): string {
+  let result = ''
+  let from = 0
+  while (true) {
+    const start = text.indexOf(open, from)
+    if (start < 0)
+      break
+    const end = text.indexOf(close, start + open.length + 1)
+    if (end < 0)
+      break
+    result += `${text.slice(from, start)}${mark}${text.slice(start + open.length, end)}${mark}`
+    from = end + close.length
+  }
+  return result + text.slice(from)
 }

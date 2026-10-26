@@ -376,8 +376,11 @@ describe('store character-orchestrator', () => {
      */
     function leaderRuntime(): SyncedPiniaRuntime {
       return {
+        addRole: vi.fn(() => vi.fn()),
         dispose: vi.fn(),
         getLeaderId: vi.fn(),
+        getParticipants: vi.fn(() => []),
+        getRoles: vi.fn(() => []),
         getParticipantCount: vi.fn(() => 1),
         isLeader: vi.fn(() => true),
         onCoordinationChange: vi.fn(() => vi.fn()),

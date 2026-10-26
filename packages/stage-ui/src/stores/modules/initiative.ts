@@ -209,7 +209,10 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * Records that the user spoke. Within two minutes of her speaking up, it
    * counts as an answer to her.
    */
-  function noteUserTurn(at: number = Date.now()): void {
+  function noteUserTurn(at: number = Date.now(), characterId?: string): void {
+    // A turn in another character's session does not answer this one.
+    if (characterId !== undefined && characterId !== activeCharacterId.value)
+      return
     if (awaitingAnswerSince !== undefined && at >= awaitingAnswerSince)
       settleAnswer(at - awaitingAnswerSince <= ANSWER_WINDOW_MS)
   }
@@ -249,19 +252,64 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * interaction. For subjects named after the fact: `at` is when the remark
    * was made, and replaying it as interaction would move the lull's start back.
    */
+  /**
+   * The episodes and reflection time of `characterId`, active or not. Without
+   * an id, the active character's.
+   */
+  function memoryOf(characterId?: string): { episodes: Episode[], lastReflectionAt: number | undefined, setLastReflectionAt: (at: number) => void } {
+    if (characterId === undefined || characterId === activeCharacterId.value) {
+      return {
+        episodes: episodes.value,
+        lastReflectionAt: lastReflectionAt.value,
+        setLastReflectionAt: (at) => {
+          lastReflectionAt.value = at
+        },
+      }
+    }
+    let state = parked.get(characterId)
+    if (!state) {
+      state = { episodes: [], lastReflectionAt: undefined, recentlyRaised: [], lastInitiativeAt: undefined }
+      parked.set(characterId, state)
+    }
+    const parkedState = state
+    return {
+      episodes: parkedState.episodes,
+      lastReflectionAt: parkedState.lastReflectionAt,
+      setLastReflectionAt: (at) => {
+        parkedState.lastReflectionAt = at
+      },
+    }
+  }
+
+  /** The episodes of `characterId`, or of the active character without an id. */
+  function episodesOf(characterId?: string): readonly Episode[] {
+    return memoryOf(characterId).episodes
+  }
+
+  /** When `characterId` last reflected, or the active character without an id. */
+  function lastReflectionAtOf(characterId?: string): number | undefined {
+    return memoryOf(characterId).lastReflectionAt
+  }
+
+  /**
+   * `characterId` names the character whose session the remark came from. A
+   * remark from another character's session goes to that character's memory
+   * and mind, not the active one's.
+   */
   function recordEpisode(
-    entry: { topic: string, salience?: number, valence?: number },
+    entry: { topic: string, salience?: number, valence?: number, characterId?: string },
     at: number,
   ): void {
     const salience = entry.salience ?? 0.6
-    episodes.value.push({
-      id: `ep_${at}_${episodes.value.length}`,
+    const memory = memoryOf(entry.characterId)
+    memory.episodes.push({
+      id: `ep_${at}_${memory.episodes.length}`,
       atomId: entry.topic,
       at,
       salience,
       valence: entry.valence,
     })
-    mind.notice(entry.topic, salience, at)
+    mindOf(entry.characterId ?? activeCharacterId.value).notice(entry.topic, salience, at)
   }
 
   /**
@@ -270,17 +318,19 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * refractory gap still applies and a failing model is not asked again at
    * once.
    */
-  function recordReflection(insights: readonly Episode[], at: number): void {
-    episodes.value.push(...insights)
+  function recordReflection(insights: readonly Episode[], at: number, characterId?: string): void {
+    const memory = memoryOf(characterId)
+    memory.episodes.push(...insights)
+    const characterMind = mindOf(characterId ?? activeCharacterId.value)
     for (const insight of insights) {
       if (insight.atomId !== undefined)
-        mind.notice(insight.atomId, insight.salience, insight.at)
+        characterMind.notice(insight.atomId, insight.salience, insight.at)
     }
-    lastReflectionAt.value = at
+    memory.setLastReflectionAt(at)
   }
 
   function remember(
-    entry: { topic: string, salience?: number, valence?: number },
+    entry: { topic: string, salience?: number, valence?: number, characterId?: string },
     now: number = Date.now(),
   ): void {
     noteInteraction(now)
@@ -447,6 +497,8 @@ export const useInitiativeStore = defineStore('initiative', () => {
     useCharacter,
     noteUserTurn,
     learnedTemperamentOf,
+    episodesOf,
+    lastReflectionAtOf,
     isEnabled,
     noteInteraction,
     recordEpisode,

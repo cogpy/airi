@@ -1173,12 +1173,13 @@ export const useChatStore = defineStore('chat', () => {
    * done, so its refractory gap applies.
    */
   async function reflectIfDue(sessionId: string) {
-    const card = cardStore.getCard(personaOf(sessionId))
+    const characterId = personaOf(sessionId)
+    const card = cardStore.getCard(characterId)
     if (!card?.extensions?.airi?.modules?.initiative?.reflect || reflecting)
       return
 
     const now = Date.now()
-    const decision = decideReflection({ now, episodes: initiativeStore.episodes, lastReflectionAt: initiativeStore.lastReflectionAt })
+    const decision = decideReflection({ now, episodes: initiativeStore.episodesOf(characterId), lastReflectionAt: initiativeStore.lastReflectionAtOf(characterId) })
     if (!decision.reflect)
       return
 
@@ -1187,14 +1188,14 @@ export const useChatStore = defineStore('chat', () => {
       const prompt = reflectionPrompt(decision.sources, episode => episode.atomId, { characterName: card.name })
       const reply = await completeText(sessionId, reflectionConversation(prompt))
       const insights = reply === undefined ? [] : parseReflection(reply)
-      initiativeStore.recordReflection(reflectionEpisodes(insights, decision.sources, now), now)
+      initiativeStore.recordReflection(reflectionEpisodes(insights, decision.sources, now), now, characterId)
 
-      const held = heldInsights(initiativeStore.episodes, Date.now())
+      const held = heldInsights(initiativeStore.episodesOf(characterId), Date.now())
       if (held.length > 0)
         chatContext.ingestContextMessage(insightsContextMessage(held))
     }
     catch {
-      initiativeStore.recordReflection([], now)
+      initiativeStore.recordReflection([], now, characterId)
     }
     finally {
       reflecting = false
@@ -1214,10 +1215,11 @@ export const useChatStore = defineStore('chat', () => {
    * because a missing subject only means one less thing to bring up.
    */
   function rememberRemark(sessionId: string, remark: string) {
-    initiativeStore.noteUserTurn()
-    const initiative = cardStore.getCard(personaOf(sessionId))?.extensions?.airi?.modules?.initiative
+    const characterId = personaOf(sessionId)
+    initiativeStore.noteUserTurn(Date.now(), characterId)
+    const initiative = cardStore.getCard(characterId)?.extensions?.airi?.modules?.initiative
     if (!initiative?.enabled || !initiative.nameTopics) {
-      initiativeStore.remember({ topic: remark })
+      initiativeStore.remember({ topic: remark, characterId })
       void reflectIfDue(sessionId)
       return
     }
@@ -1227,7 +1229,7 @@ export const useChatStore = defineStore('chat', () => {
     void nameTopic(sessionId, remark)
       .then((topic) => {
         if (topic !== undefined)
-          initiativeStore.recordEpisode({ topic }, at)
+          initiativeStore.recordEpisode({ topic, characterId }, at)
         return reflectIfDue(sessionId)
       })
       .catch(() => {})

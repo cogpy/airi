@@ -281,6 +281,43 @@ describe('initiative store', () => {
     expect(initiative.associationsOf('my cat').map(association => association.topic)).toEqual(['the vet'])
   })
 
+  // ROOT CAUSE:
+  //
+  // A remark from a background session of another card went to the active
+  // card's memory, so the active character could raise it in a lull.
+  //
+  // We fixed this by passing the session's character with each remark.
+  it('keeps a remark from another card\'s session out of the active character\'s memory', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+    initiative.useCharacter('card-a')
+
+    initiative.remember({ topic: 'chess openings', characterId: 'card-b' }, now)
+
+    expect(initiative.episodes).toEqual([])
+    expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: false, reason: 'no-candidates' })
+    expect(initiative.episodesOf('card-b').map(episode => episode.atomId)).toEqual(['chess openings'])
+
+    initiative.useCharacter('card-b')
+
+    expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: true, topicAtomId: 'chess openings' })
+  })
+
+  it('counts only a turn in the active character\'s session as an answer to her', () => {
+    const initiative = useInitiativeStore()
+    initiative.configure({ enabled: true, adapt: true })
+    initiative.useCharacter('card-a')
+    const now = Date.now()
+    initiative.remember({ topic: 'my cat', salience: 0.9 }, now)
+    expect(initiative.poll(now + 10 * MINUTE).act).toBe(true)
+
+    initiative.noteUserTurn(now + 10 * MINUTE + 30_000, 'card-b')
+    expect(initiative.learnedTemperament).toBeUndefined()
+
+    initiative.noteUserTurn(now + 10 * MINUTE + 40_000, 'card-a')
+    expect(initiative.learnedTemperament?.answerRate).toBeGreaterThan(0.5)
+  })
+
   describe('a card that adapts', () => {
     function speakUp(initiative: ReturnType<typeof useInitiativeStore>, at: number) {
       initiative.remember({ topic: `subject at ${at}`, salience: 0.9 }, at)

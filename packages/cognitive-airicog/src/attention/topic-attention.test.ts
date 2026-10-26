@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { createTopicAttention } from './topic-attention'
+import { createOrchestrator } from '../orchestration/orchestrator'
+import { createTopicAttention, topicAttentionEcanConfig } from './topic-attention'
 
 const START = 1_000_000
 
@@ -130,5 +131,17 @@ describe('topicAttention', () => {
     attention.notice('d', 0.6, START + 3000)
 
     expect(attention.associations('a').map(association => association.topic).sort()).toEqual(['b', 'c'])
+  })
+
+  it('works on an orchestrator agent, keeping one mind for each agent', () => {
+    const orchestrator = createOrchestrator({ enableGC: false })
+    const mindOf = (agentId: string) => createTopicAttention({}, orchestrator.getOrCreateAgent(agentId, topicAttentionEcanConfig()))
+
+    mindOf('character-a').notice('my cat', 0.3, START)
+    mindOf('character-b').notice('chess', 0.3, START)
+
+    expect(mindOf('character-a').candidates().map(candidate => candidate.atomId)).toEqual(['my cat'])
+    expect(mindOf('character-b').candidates().map(candidate => candidate.atomId)).toEqual(['chess'])
+    orchestrator.dispose()
   })
 })

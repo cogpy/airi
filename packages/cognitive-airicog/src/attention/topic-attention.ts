@@ -1,5 +1,6 @@
 import type { Link } from '../atomspace/types'
 import type { InitiativeCandidate } from '../initiative/initiative'
+import type { ECANConfig } from './ecan'
 
 import { AtomSpace } from '../atomspace/atomspace'
 import { reviseTruthValues } from '../atomspace/types'
@@ -41,6 +42,19 @@ export interface TopicAttentionConfig {
    * @default 0.02
    */
   decayRate: number
+}
+
+/** The ECAN settings a topic attention needs, for an economy created elsewhere. */
+export function topicAttentionEcanConfig(config: Partial<TopicAttentionConfig> = {}): Partial<ECANConfig> {
+  const resolved = { ...createDefaultTopicAttentionConfig(), ...config }
+  return {
+    attentionalFocusThreshold: resolved.focusThreshold,
+    attentionalFocusSize: resolved.focusSize,
+    taxRate: resolved.decayRate,
+    // Links carry no importance here, so there is nothing to diffuse.
+    diffusionAmount: 0,
+    accessWage: 0,
+  }
 }
 
 export function createDefaultTopicAttentionConfig(): TopicAttentionConfig {
@@ -89,18 +103,18 @@ export class TopicAttention {
   readonly ecan: ECAN
   private readonly config: TopicAttentionConfig
   private lastNotice: { atomId: string, at: number } | undefined
+  private readonly ownsSpace: boolean
 
-  constructor(config: Partial<TopicAttentionConfig> = {}) {
+  /**
+   * Without `space`, it owns a new AtomSpace and ECAN. With `space`, it works
+   * on that one, for example a `CognitiveOrchestrator` agent's. Create that
+   * ECAN with {@link topicAttentionEcanConfig}.
+   */
+  constructor(config: Partial<TopicAttentionConfig> = {}, space?: { atomSpace: AtomSpace, ecan: ECAN }) {
     this.config = { ...createDefaultTopicAttentionConfig(), ...config }
-    this.atomSpace = new AtomSpace({ name: 'topic-attention' })
-    this.ecan = new ECAN(this.atomSpace, {
-      attentionalFocusThreshold: this.config.focusThreshold,
-      attentionalFocusSize: this.config.focusSize,
-      taxRate: this.config.decayRate,
-      // Links carry no importance here, so there is nothing to diffuse.
-      diffusionAmount: 0,
-      accessWage: 0,
-    })
+    this.atomSpace = space?.atomSpace ?? new AtomSpace({ name: 'topic-attention' })
+    this.ecan = space?.ecan ?? new ECAN(this.atomSpace, topicAttentionEcanConfig(this.config))
+    this.ownsSpace = space === undefined
   }
 
   /**
@@ -185,7 +199,10 @@ export class TopicAttention {
     this.ecan.reconcile()
   }
 
+  /** Disposes the AtomSpace and ECAN it created. A supplied space stays with its owner. */
   dispose(): void {
+    if (!this.ownsSpace)
+      return
     this.ecan.dispose()
     this.atomSpace.dispose()
   }
@@ -234,6 +251,6 @@ function otherEnd(link: Link, atomId: string): string {
   return link.outgoing[0] === atomId ? link.outgoing[1]! : link.outgoing[0]!
 }
 
-export function createTopicAttention(config?: Partial<TopicAttentionConfig>): TopicAttention {
-  return new TopicAttention(config)
+export function createTopicAttention(config?: Partial<TopicAttentionConfig>, space?: { atomSpace: AtomSpace, ecan: ECAN }): TopicAttention {
+  return new TopicAttention(config, space)
 }

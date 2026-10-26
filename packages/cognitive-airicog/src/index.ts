@@ -86,6 +86,7 @@ export {
   type TopicAssociation,
   TopicAttention,
   type TopicAttentionConfig,
+  topicAttentionEcanConfig,
 } from './attention/topic-attention'
 
 // Co-play - Turn-based games with a partner
@@ -189,6 +190,15 @@ export {
   selfGenerate,
   selfOptimize,
 } from './ontogenesis/kernel'
+
+export {
+  createDefaultTemperamentConfig,
+  createTemperament,
+  TALKATIVENESS_GENE,
+  Temperament,
+  type TemperamentConfig,
+  type TemperamentSnapshot,
+} from './ontogenesis/temperament'
 
 // Orchestration - Multi-Agent Coordination
 export {

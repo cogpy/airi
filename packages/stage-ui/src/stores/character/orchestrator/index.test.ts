@@ -445,6 +445,11 @@ describe('store character-orchestrator', () => {
       const other = raised === 'my cat' ? 'the vet' : 'my cat'
       const notify = store.pendingNotifies.find(event => event.source === 'character:initiative')
       expect(notify?.data.note).toContain(`It came up together with: ${other}`)
+      // The lull turn is speech only, and asks in plain words to pick up the subject.
+      const control = store.scheduledNotifies.find(item => item.event === notify)?.control
+      expect(control?.forceTextResponse).toBe(true)
+      expect(control?.messageOverride?.replaceUserMessage).toContain(`Pick up what was said earlier: "${raised}"`)
+      expect(control?.messageOverride?.replaceUserMessage).toContain(`It came up together with: "${other}"`)
       store.dispose()
     })
 

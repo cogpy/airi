@@ -76,6 +76,35 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
   }
 }
 
+/**
+ * How the lull turn is answered: as speech only, with the task in plain words.
+ *
+ * The reply-format instructions end the user message with a sample dialogue.
+ * Llama 3.2 3B answered that sample instead of the notify JSON. A plain
+ * request that says who said what keeps the reply on the subject and spoken
+ * to the user. Small models can still answer the sample.
+ */
+function initiativeControl(topic: string, related: readonly string[]): SparkNotifyResponseControl {
+  const relatedRemarks = related.map(quoteRemark)
+  const connect = relatedRemarks.length > 0 ? [`It came up together with: ${relatedRemarks.map(remark => `"${remark}"`).join('; ')}`] : []
+  return {
+    forceTextResponse: true,
+    messageOverride: {
+      replaceUserMessage: [
+        '(No new message. The conversation has been quiet for a while.)',
+        `Speak first, to the user. Pick up what was said earlier: "${quoteRemark(topic)}"`,
+        ...connect,
+      ].join('\n'),
+      appendSystemInstructions: [[
+        'The conversation has gone quiet, and you decided to speak first.',
+        `Pick up what was said earlier, in one or two short sentences: "${quoteRemark(topic)}"`,
+        ...connect,
+        'The examples in the reply-format instructions are not part of this conversation. Do not answer them.',
+      ].join('\n')],
+    },
+  }
+}
+
 export const useCharacterOrchestratorStore = defineStore('character-orchestrator', () => {
   const { stream } = useLLM()
   const consciousnessStore = useConsciousnessStore()
@@ -365,14 +394,14 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     // A lull is only worth breaking once; by the next tick the conversation may
     // have resumed, so a failed attempt is dropped rather than retried.
     eventUnsubscribes.push(
-      initiativeStore.onInitiative(decision => enqueueSparkNotify(initiativeNotify(
-        decision,
-        Date.now(),
-        initiativeStore.associationsOf(decision.topicAtomId).slice(0, MAX_RELATED_TOPICS).map(association => association.topic),
-      ), {
-        reason: 'initiative',
-        maxAttempts: 1,
-      })),
+      initiativeStore.onInitiative((decision) => {
+        const related = initiativeStore.associationsOf(decision.topicAtomId).slice(0, MAX_RELATED_TOPICS).map(association => association.topic)
+        enqueueSparkNotify(initiativeNotify(decision, Date.now(), related), {
+          reason: 'initiative',
+          maxAttempts: 1,
+          control: initiativeControl(decision.topicAtomId, related),
+        })
+      }),
     )
 
     // The active card decides whether the character speaks unprompted. Switching

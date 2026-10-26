@@ -101,9 +101,11 @@ Step 3 is the one that silently fails. Without an entry, tsdown builds only
 yet resolves to a file that was never emitted. Tests import source, so they pass
 regardless. Only loading the built output catches it — see step 5.
 
-CI runs no export check after the build. Two guards close this gap: a package
-test that compares the `exports` map with the tsdown `entry` list, or a CI step
-that runs `check-exports.mjs` after the build. Neither exists yet.
+`src/build-entries.test.ts` guards this. It compares the `exports` map with
+the tsdown `entry` list, so a missing entry fails the package tests and CI's
+Unit Test job. When you add a subpath, add both, and the test stays green. It
+does not prove the built files load, so still run `check-exports.mjs` after a
+build.
 
 The package also needs its own `vitest.config.ts` (it has one; keep it). Without
 it, `vitest run` inside the package inherits the root config and crashes with
@@ -269,7 +271,7 @@ what.
 
 | What you see | Cause | Fix |
 |---|---|---|
-| A subpath import fails at runtime; all tests pass | No tsdown `entry` for it | Add the entry; run `check-exports.mjs` |
+| A subpath import fails at runtime, or `build-entries.test.ts` fails | No tsdown `entry` for it | Add the entry; run `check-exports.mjs` |
 | CI Type Check red, local tests and lint green | Type imported from a subpath that doesn't export it, so it became `any` | Run the consumer's typecheck (`vue-tsc` for stage-ui) |
 | `vitest run` in the package: "Projects definition references a non-existing file…" | Package has no `vitest.config.ts`; root config's `projects` resolve from the wrong cwd | Add a local `vitest.config.ts` with `name` and `include` |
 | Commit diff far larger than the change | Pre-commit `moeru-lint --fix` reformatted whole files | Lint-fix before committing, re-run tests |

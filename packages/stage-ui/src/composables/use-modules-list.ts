@@ -125,6 +125,15 @@ export function useModulesList() {
       category: 'essential',
     },
     {
+      id: 'initiative',
+      name: t('settings.pages.modules.initiative.title'),
+      description: t('settings.pages.modules.initiative.description'),
+      icon: 'i-solar:chat-round-dots-bold-duotone',
+      to: '/settings/modules/initiative',
+      configured: cardStore.activeCard?.extensions?.airi?.modules?.initiative?.enabled ?? false,
+      category: 'essential',
+    },
+    {
       id: 'memory-short-term',
       name: t('settings.pages.modules.memory-short-term.title'),
       description: t('settings.pages.modules.memory-short-term.description'),

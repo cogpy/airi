@@ -830,6 +830,40 @@ pages:
               provider-default-description: AIRI has no reasoning settings for this model. OpenRouter applies its default.
       title: Consciousness
     description: Thinking, vision, speech synthesis, gaming, etc.
+    initiative:
+      title: Initiative
+      description: Let your character speak first, reflect, and yield the floor
+      no-card: Select a Character Card to change these settings.
+      enabled:
+        label: Speak up during a lull
+        description: >-
+          When the conversation goes quiet, the character can bring up
+          something you said earlier. The setting is saved on the active
+          Character Card.
+      threshold:
+        label: Threshold to speak
+        description: A higher value keeps the character quieter.
+      name-topics:
+        label: Name the subject of each message
+        description: >-
+          Uses one model call for each message. Repeated mentions of one
+          subject then build one stronger memory.
+      reflect:
+        label: Reflect on recent remarks
+        description: >-
+          Now and then, the character draws insights from what you said and
+          uses them later. Uses one model call at most every five minutes.
+      yield:
+        label: Stop when someone talks over the character
+        description: >-
+          The character stops speaking when you or another AI character talk
+          over it. This works without echo cancellation, after a short
+          calibration.
+      agents:
+        label: Talk with other AI characters
+        description: >-
+          The character answers other AI characters on the server channel and
+          publishes what it says. A turn budget stops the conversation.
     gaming-coplay:
       title: Co-play
       description: Play turn-based games with your character

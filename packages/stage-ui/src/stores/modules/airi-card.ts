@@ -586,6 +586,16 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     return updateActiveCardModules(({ modules }) => ({ coplay: { ...modules.coplay, ...coplay } }))
   }
 
+  /**
+   * Changes the active card's initiative settings: speaking up in a lull,
+   * reflection, barge-in, and talking with other agents. Merges into the
+   * current settings. Leader-owned and idempotent, like co-play.
+   */
+  async function updateActiveCardInitiative(initiative: NonNullable<AiriExtension['modules']['initiative']>) {
+    await pendingAuthenticationSetup
+    return updateActiveCardModules(({ modules }) => ({ initiative: { ...modules.initiative, ...initiative } }))
+  }
+
   async function updateActiveCardVision(vision: AiriExtension['modules']['vision']) {
     await pendingAuthenticationSetup
     const updated = updateActiveCardModules(() => ({ vision }))
@@ -1421,6 +1431,7 @@ export const useAiriCardStore = defineStore('airi-card', () => {
     updateActiveCardVision,
     selectActiveCardVisionProvider,
     updateActiveCardCoplay,
+    updateActiveCardInitiative,
     getCard,
     getModules,
     getSystemPrompt,
@@ -1479,6 +1490,7 @@ export const useAiriCardStore = defineStore('airi-card', () => {
       'updateActiveCardVision',
       'selectActiveCardVisionProvider',
       'updateActiveCardCoplay',
+      'updateActiveCardInitiative',
       'updateCard',
       'restoreCardVersion',
       'restoreDeletedCard',

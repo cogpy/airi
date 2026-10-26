@@ -396,6 +396,17 @@ describe('airi-card store', () => {
     expect(cardStore.activeCard?.extensions.airi.modules.coplay).toEqual({ enabled: false })
   })
 
+  it('merges initiative settings into the active card, converging on repeated calls', async () => {
+    const cardStore = useAiriCardStore()
+    await cardStore.initialize()
+
+    expect(await cardStore.updateActiveCardInitiative({ enabled: true })).toBe(true)
+    expect(await cardStore.updateActiveCardInitiative({ enabled: true })).toBe(true)
+    expect(await cardStore.updateActiveCardInitiative({ yieldWhenInterrupted: true })).toBe(true)
+
+    expect(cardStore.activeCard?.extensions.airi.modules.initiative).toEqual({ enabled: true, yieldWhenInterrupted: true })
+  })
+
   // ROOT CAUSE:
   //
   // Selecting Apple Vision stored an empty model on the card before the catalog

@@ -80,6 +80,14 @@ export {
   toQuanta,
 } from './attention/quanta'
 
+export {
+  createDefaultTopicAttentionConfig,
+  createTopicAttention,
+  type TopicAssociation,
+  TopicAttention,
+  type TopicAttentionConfig,
+} from './attention/topic-attention'
+
 // Co-play - Turn-based games with a partner
 export { chooseFallbackMove } from './coplay/fallback'
 
@@ -118,6 +126,7 @@ export {
   type InitiativeDecision,
   type InitiativeHold,
   type InitiativeState,
+  mergeCandidates,
   type RaisedTopic,
 } from './initiative/initiative'
 

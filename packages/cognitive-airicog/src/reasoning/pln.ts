@@ -62,6 +62,64 @@ export interface PLNConfig {
 }
 
 /**
+ * Truth value formulas for PLN operations
+ */
+export const TVFormulas = {
+  /**
+   * Calculate truth value for deduction: A->B, B->C => A->C.
+   * Strength multiplies. Confidence multiplies and loses a tenth per step.
+   */
+  deduction(tvAB: TruthValue, tvBC: TruthValue): TruthValue {
+    return {
+      strength: tvAB.strength * tvBC.strength,
+      confidence: tvAB.confidence * tvBC.confidence * 0.9,
+    }
+  },
+
+  /**
+   * Calculate truth value for negation
+   */
+  negation(tv: TruthValue): TruthValue {
+    return {
+      strength: 1 - tv.strength,
+      confidence: tv.confidence,
+    }
+  },
+
+  /**
+   * Calculate truth value for conjunction (AND)
+   */
+  conjunction(tv1: TruthValue, tv2: TruthValue): TruthValue {
+    return {
+      strength: tv1.strength * tv2.strength,
+      confidence: Math.min(tv1.confidence, tv2.confidence),
+    }
+  },
+
+  /**
+   * Calculate truth value for disjunction (OR)
+   */
+  disjunction(tv1: TruthValue, tv2: TruthValue): TruthValue {
+    return {
+      strength: tv1.strength + tv2.strength - tv1.strength * tv2.strength,
+      confidence: Math.min(tv1.confidence, tv2.confidence),
+    }
+  },
+
+  /**
+   * Calculate truth value for implication
+   */
+  implication(tvPremise: TruthValue, tvConclusion: TruthValue): TruthValue {
+    // P(B|A) approximation
+    const s = tvConclusion.strength / Math.max(tvPremise.strength, 0.001)
+    return {
+      strength: Math.min(1, Math.max(0, s)),
+      confidence: tvPremise.confidence * tvConclusion.confidence,
+    }
+  },
+}
+
+/**
  * Probabilistic Logic Networks inference engine
  */
 export class PLN {
@@ -105,13 +163,7 @@ export class PLN {
     const a = abLink.outgoing[0]
     const c = bcLink.outgoing[1]
 
-    // Calculate deduction truth value
-    // P(A->C) = P(A->B) * P(B->C)
-    const tvAB = abLink.truthValue
-    const tvBC = bcLink.truthValue
-
-    const strength = tvAB.strength * tvBC.strength
-    const confidence = tvAB.confidence * tvBC.confidence * 0.9 // Slightly reduce confidence
+    const { strength, confidence } = TVFormulas.deduction(abLink.truthValue, bcLink.truthValue)
 
     if (strength < this.config.minStrength || confidence < this.config.minConfidence) {
       return null
@@ -468,51 +520,4 @@ export class PLN {
  */
 export function createPLN(atomSpace: AtomSpace, config?: Partial<PLNConfig>): PLN {
   return new PLN(atomSpace, config)
-}
-
-/**
- * Truth value formulas for PLN operations
- */
-export const TVFormulas = {
-  /**
-   * Calculate truth value for negation
-   */
-  negation(tv: TruthValue): TruthValue {
-    return {
-      strength: 1 - tv.strength,
-      confidence: tv.confidence,
-    }
-  },
-
-  /**
-   * Calculate truth value for conjunction (AND)
-   */
-  conjunction(tv1: TruthValue, tv2: TruthValue): TruthValue {
-    return {
-      strength: tv1.strength * tv2.strength,
-      confidence: Math.min(tv1.confidence, tv2.confidence),
-    }
-  },
-
-  /**
-   * Calculate truth value for disjunction (OR)
-   */
-  disjunction(tv1: TruthValue, tv2: TruthValue): TruthValue {
-    return {
-      strength: tv1.strength + tv2.strength - tv1.strength * tv2.strength,
-      confidence: Math.min(tv1.confidence, tv2.confidence),
-    }
-  },
-
-  /**
-   * Calculate truth value for implication
-   */
-  implication(tvPremise: TruthValue, tvConclusion: TruthValue): TruthValue {
-    // P(B|A) approximation
-    const s = tvConclusion.strength / Math.max(tvPremise.strength, 0.001)
-    return {
-      strength: Math.min(1, Math.max(0, s)),
-      confidence: tvPremise.confidence * tvConclusion.confidence,
-    }
-  },
 }

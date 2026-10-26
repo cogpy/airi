@@ -6,3 +6,4 @@
 
 export * from './ecan'
 export * from './quanta'
+export * from './topic-attention'

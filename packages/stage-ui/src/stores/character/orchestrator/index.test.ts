@@ -450,6 +450,8 @@ describe('store character-orchestrator', () => {
       expect(control?.forceTextResponse).toBe(true)
       expect(control?.messageOverride?.replaceUserMessage).toContain(`Pick up what was said earlier: "${raised}"`)
       expect(control?.messageOverride?.replaceUserMessage).toContain(`It came up together with: "${other}"`)
+      // The request also ends the message, after the reply-format examples.
+      expect(control?.messageOverride?.appendFinalUserSections).toEqual([control?.messageOverride?.replaceUserMessage])
       store.dispose()
     })
 

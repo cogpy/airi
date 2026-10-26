@@ -79,22 +79,23 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
 /**
  * How the lull turn is answered: as speech only, with the task in plain words.
  *
- * The reply-format instructions end the user message with a sample dialogue.
- * Llama 3.2 3B answered that sample instead of the notify JSON. A plain
- * request that says who said what keeps the reply on the subject and spoken
- * to the user. Small models can still answer the sample.
+ * The reply-format instructions come after the notify payload and end with a
+ * sample dialogue. Llama 3.2 3B answered that sample instead of the subject.
+ * So the request says who said what, and it also ends the user message.
  */
 function initiativeControl(topic: string, related: readonly string[]): SparkNotifyResponseControl {
   const relatedRemarks = related.map(quoteRemark)
   const connect = relatedRemarks.length > 0 ? [`It came up together with: ${relatedRemarks.map(remark => `"${remark}"`).join('; ')}`] : []
+  const request = [
+    '(No new message. The conversation has been quiet for a while.)',
+    `Speak first, to the user. Pick up what was said earlier: "${quoteRemark(topic)}"`,
+    ...connect,
+  ].join('\n')
   return {
     forceTextResponse: true,
     messageOverride: {
-      replaceUserMessage: [
-        '(No new message. The conversation has been quiet for a while.)',
-        `Speak first, to the user. Pick up what was said earlier: "${quoteRemark(topic)}"`,
-        ...connect,
-      ].join('\n'),
+      replaceUserMessage: request,
+      appendFinalUserSections: [request],
       appendSystemInstructions: [[
         'The conversation has gone quiet, and you decided to speak first.',
         `Pick up what was said earlier, in one or two short sentences: "${quoteRemark(topic)}"`,

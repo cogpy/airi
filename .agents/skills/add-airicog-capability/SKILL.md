@@ -258,8 +258,8 @@ code, and saying so is part of doing the job well:
   as arithmetic.
 - **A seam that doesn't exist yet.** If the pieces you need are never in scope
   together, propose where the seam goes rather than forcing one in blind. For
-  example, a streaming speech provider does not expose clip audio in
-  `SpeechClip`, so the echo gate gets no envelope for those clips.
+  example, another agent's speech reaches the participants store, but nothing
+  in the voice pipeline can interrupt her for it yet.
 
 When you finish, report three things separately: what shipped and was verified,
 what is implemented but only verified as arithmetic, and what is blocked and on

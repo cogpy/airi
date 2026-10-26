@@ -21,6 +21,7 @@ import { nextTick, ref } from 'vue'
 import { sparkNotifyCommandSchema, useCharacterOrchestratorStore } from '.'
 import { useCharacterStore } from '..'
 import { useLLM } from '../../ai/chat-llm/llm'
+import { useChatSessionStore } from '../../chat/session-store'
 import { useModsServerChannelStore } from '../../mods/api/channel-server'
 import { useAiriCardStore, useConsciousnessStore } from '../../modules'
 import { useInitiativeStore } from '../../modules/initiative'
@@ -427,6 +428,40 @@ describe('store character-orchestrator', () => {
       expect(store.scheduledNotifies.find(item => item.event === notify)?.maxAttempts).toBe(1)
       store.dispose()
       expect(initiative.running).toBe(false)
+    })
+
+    // ROOT CAUSE:
+    //
+    // The orchestrator read initiative from the selected card. A chat session
+    // keeps its own character, so selecting another card turned initiative on
+    // or off for a conversation with a different character.
+    //
+    // We fixed this by reading the card of the active session's character.
+    it('follows the active session character, not the selected card', async () => {
+      const card = (name: string, initiative?: { enabled: boolean }) => ({
+        name,
+        version: '1.0',
+        extensions: { airi: { agents: {}, avatarModels: [], modules: { consciousness: { provider: 'mock-provider', model: 'mock-model' }, vision: { provider: 'mock-vision-provider', model: 'mock-vision-model' }, speech: { provider: 'mock-speech-provider', model: 'mock-speech-model', voice_id: 'alloy' }, initiative } } },
+      } satisfies AiriCard)
+      const airiCardStore = useAiriCardStore(pinia)
+      airiCardStore.cards = new Map([['selected', card('Selected', { enabled: true })], ['quiet', card('Quiet')]])
+      airiCardStore.activeCardId = 'selected'
+      const chatSession = useChatSessionStore(pinia)
+      chatSession.sessionMetas = {
+        'quiet-session': { sessionId: 'quiet-session', userId: 'local', characterId: 'quiet', createdAt: 1, updatedAt: 1 },
+        'selected-session': { sessionId: 'selected-session', userId: 'local', characterId: 'selected', createdAt: 1, updatedAt: 1 },
+      }
+      chatSession.activeSessionId = 'quiet-session'
+
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize(leaderRuntime())
+      const initiative = useInitiativeStore(pinia)
+      expect(initiative.running).toBe(false)
+
+      chatSession.activeSessionId = 'selected-session'
+      await nextTick()
+      expect(initiative.running).toBe(true)
+      store.dispose()
     })
 
     it('follows the card when it is switched', async () => {

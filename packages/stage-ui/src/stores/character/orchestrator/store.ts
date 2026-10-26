@@ -12,6 +12,8 @@ import { onScopeDispose, ref, watch } from 'vue'
 import { useCharacterNotebookStore, useCharacterStore } from '../'
 import { useAiriRuntimePrompt } from '../../../composables/use-airi-runtime-prompt'
 import { useLLM } from '../../ai/chat-llm/llm'
+import { useChatStore } from '../../chat'
+import { useChatSessionStore } from '../../chat/session-store'
 import { useModsServerChannelStore } from '../../mods/api/channel-server'
 import { useAiriCardStore } from '../../modules/airi-card'
 import { useConsciousnessStore } from '../../modules/consciousness'
@@ -74,6 +76,8 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
   const runtimePrompt = useAiriRuntimePrompt()
   const modsServerChannelStore = useModsServerChannelStore()
   const cardStore = useAiriCardStore()
+  const chatStore = useChatStore()
+  const chatSession = useChatSessionStore()
   const initiativeStore = useInitiativeStore()
 
   const processing = ref(false)
@@ -359,12 +363,12 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
       })),
     )
 
-    // The active card decides whether the character speaks unprompted. Switching
-    // cards restarts the lull timer under the new card's settings; a card
-    // without initiative leaves it stopped, since start() is a no-op while off.
+    // The active session's character decides whether she speaks unprompted,
+    // not the selected card. A session switch or a character edit restarts the
+    // lull timer with the new settings. Without initiative, start() does nothing.
     eventUnsubscribes.push(
       watch(
-        () => cardStore.activeCard?.extensions?.airi?.modules?.initiative,
+        () => cardStore.getCard(chatStore.personaOf(chatSession.activeSessionId))?.extensions?.airi?.modules?.initiative,
         (settings) => {
           initiativeStore.stop()
           initiativeStore.configure(settings ?? NO_INITIATIVE)

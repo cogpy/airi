@@ -448,10 +448,27 @@ describe('store character-orchestrator', () => {
       // The lull turn is speech only, and asks in plain words to pick up the subject.
       const control = store.scheduledNotifies.find(item => item.event === notify)?.control
       expect(control?.forceTextResponse).toBe(true)
-      expect(control?.messageOverride?.replaceUserMessage).toContain(`Pick up what was said earlier: "${raised}"`)
+      expect(control?.messageOverride?.replaceUserMessage).toContain(`Ask about what the user said earlier: "${raised}"`)
       expect(control?.messageOverride?.replaceUserMessage).toContain(`It came up together with: "${other}"`)
       // The request also ends the message, after the reply-format examples.
       expect(control?.messageOverride?.appendFinalUserSections).toEqual([control?.messageOverride?.replaceUserMessage])
+      store.dispose()
+    })
+
+    it('raises her own reflection as her thought, not as the user\'s words', () => {
+      useCardInitiative({ enabled: true, threshold: 0.01 })
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize(leaderRuntime())
+      const initiative = useInitiativeStore(pinia)
+
+      const at = Date.now()
+      initiative.recordReflection([{ id: 'insight-1', atomId: 'They practice every evening', at, salience: 0.9, kind: 'reflection' }], at)
+      const decision = initiative.poll(at + 10 * 60_000)
+
+      expect(decision).toMatchObject({ act: true, topicAtomId: 'They practice every evening' })
+      const notify = store.pendingNotifies.find(event => event.source === 'character:initiative')
+      const control = store.scheduledNotifies.find(item => item.event === notify)?.control
+      expect(control?.messageOverride?.replaceUserMessage).toContain('Share this thought of yours from earlier: "They practice every evening"')
       store.dispose()
     })
 

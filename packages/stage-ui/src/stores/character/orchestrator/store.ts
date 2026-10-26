@@ -82,13 +82,17 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
  * The reply-format instructions come after the notify payload and end with a
  * sample dialogue. Llama 3.2 3B answered that sample instead of the subject.
  * So the request says who said what, and it also ends the user message.
+ * In a live run, a request that did not say who said the remark made her
+ * repeat the user's words as her own.
  */
-function initiativeControl(topic: string, related: readonly string[]): SparkNotifyResponseControl {
+function initiativeControl(topic: string, related: readonly string[], origin: 'user' | 'reflection'): SparkNotifyResponseControl {
   const relatedRemarks = related.map(quoteRemark)
   const connect = relatedRemarks.length > 0 ? [`It came up together with: ${relatedRemarks.map(remark => `"${remark}"`).join('; ')}`] : []
   const request = [
     '(No new message. The conversation has been quiet for a while.)',
-    `Speak first, to the user. Pick up what was said earlier: "${quoteRemark(topic)}"`,
+    origin === 'reflection'
+      ? `Speak first, to the user. Share this thought of yours from earlier: "${quoteRemark(topic)}"`
+      : `Speak first, to the user. Ask about what the user said earlier: "${quoteRemark(topic)}"`,
     ...connect,
   ].join('\n')
   return {
@@ -98,7 +102,9 @@ function initiativeControl(topic: string, related: readonly string[]): SparkNoti
       appendFinalUserSections: [request],
       appendSystemInstructions: [[
         'The conversation has gone quiet, and you decided to speak first.',
-        `Pick up what was said earlier, in one or two short sentences: "${quoteRemark(topic)}"`,
+        origin === 'reflection'
+          ? `Share this thought of yours, in one or two short sentences: "${quoteRemark(topic)}"`
+          : `Ask about what the user said earlier, in one or two short sentences. These are the user's words, not yours: "${quoteRemark(topic)}"`,
         ...connect,
         'The examples in the reply-format instructions are not part of this conversation. Do not answer them.',
       ].join('\n')],
@@ -400,7 +406,11 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
         enqueueSparkNotify(initiativeNotify(decision, Date.now(), related), {
           reason: 'initiative',
           maxAttempts: 1,
-          control: initiativeControl(decision.topicAtomId, related),
+          control: initiativeControl(
+            decision.topicAtomId,
+            related,
+            initiativeStore.episodes.some(episode => episode.atomId === decision.topicAtomId && episode.kind === 'reflection') ? 'reflection' : 'user',
+          ),
         })
       }),
     )

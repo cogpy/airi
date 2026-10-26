@@ -10,9 +10,11 @@ import { ECAN } from './ecan'
 export interface TopicAttentionConfig {
   /**
    * Two topics noticed within this time of each other become associated.
-   * Raise it to link topics across a slower conversation.
+   * Raise it to link topics across a slower conversation. A live run with a
+   * local model had 134 s between two related remarks, so the default leaves
+   * room for slow replies.
    *
-   * @default 120000
+   * @default 300000
    */
   coMentionWindowMs: number
   /**
@@ -59,7 +61,7 @@ export function topicAttentionEcanConfig(config: Partial<TopicAttentionConfig> =
 
 export function createDefaultTopicAttentionConfig(): TopicAttentionConfig {
   return {
-    coMentionWindowMs: 120_000,
+    coMentionWindowMs: 300_000,
     spreadRatio: 0.5,
     focusThreshold: 0.1,
     focusSize: 20,

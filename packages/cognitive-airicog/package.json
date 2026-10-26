@@ -68,6 +68,7 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:run": "vitest run --config vitest.config.ts",
     "examples": "tsx src/examples.ts"
   },
   "devDependencies": {

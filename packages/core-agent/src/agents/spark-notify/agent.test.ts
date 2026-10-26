@@ -107,4 +107,30 @@ describe('createSparkNotifyAgent', () => {
 
     expect(run).toHaveBeenCalledTimes(1)
   })
+
+  it('ends the user message with the final sections, after the runtime prompt', async () => {
+    const run = vi.fn(async (request: SparkNotifyRunRequest) => {
+      expect(request.conversation.turns[1].type === 'user' ? request.conversation.turns[1].content : undefined).toEqual([{ type: 'text', text: 'Task\n\nRuntime prompt\n\nTask again' }])
+    })
+    const agent = createSparkNotifyAgent({ runner: { run } })
+
+    await agent.handle({
+      event: createEvent(),
+      selectedChat: {
+        providerId: 'mock-provider',
+        model: 'mock-model',
+        provider: { generation: model => ({ protocol: 'chat-completions', config: { model, baseURL: 'https://example.test/' } }) },
+      },
+      systemPrompt: 'You are a character.',
+      runtimePrompt: 'Runtime prompt',
+      control: {
+        messageOverride: {
+          replaceUserMessage: 'Task',
+          appendFinalUserSections: ['Task again'],
+        },
+      },
+    })
+
+    expect(run).toHaveBeenCalledTimes(1)
+  })
 })

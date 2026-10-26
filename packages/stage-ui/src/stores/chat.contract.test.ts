@@ -296,6 +296,7 @@ vi.mock('./modules/artistry-autonomous', () => ({
 const initiativeMocks = vi.hoisted(() => {
   const mocks = {
     noteInteraction: vi.fn(),
+    noteUserTurn: vi.fn(),
     recordEpisode: vi.fn(),
     remember: vi.fn(),
     episodes: [] as { id: string, atomId?: string, at: number, salience: number, kind?: 'experience' | 'reflection' }[],
@@ -1284,6 +1285,7 @@ describe('chat store contract', () => {
     // Without this the character never learns a lull has begun, so it either
     // stays silent forever or talks over someone who has just spoken.
     initiativeMocks.noteInteraction.mockClear()
+    initiativeMocks.noteUserTurn.mockClear()
     initiativeMocks.remember.mockClear()
 
     llmStreamMock.mockImplementationOnce(async (_model: string, _chatProvider: GenerationProvider, _messages: Conversation, options: StreamOptions) => {
@@ -1298,6 +1300,8 @@ describe('chat store contract', () => {
     // counts as interaction; the character's own reply only counts as timing.
     expect(initiativeMocks.remember).toHaveBeenCalledExactlyOnceWith({ topic: 'hello' })
     expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
+    // Only the user's turn can answer her after she speaks up.
+    expect(initiativeMocks.noteUserTurn).toHaveBeenCalledOnce()
   })
 
   it('names the subject of a remark for a card that opts into nameTopics', async () => {

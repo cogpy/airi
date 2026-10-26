@@ -4,6 +4,7 @@ import type { InitiativeChatBindings } from './initiative'
 
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import { useInitiativeStore } from './initiative'
 
@@ -36,6 +37,7 @@ function fakeChat() {
 
 describe('initiative store', () => {
   beforeEach(() => {
+    localStorage.clear()
     setActivePinia(createPinia())
     vi.useFakeTimers()
   })
@@ -235,6 +237,116 @@ describe('initiative store', () => {
     initiative.forget(now + 365 * DAY)
 
     expect(initiative.episodes).toHaveLength(0)
+  })
+
+  it('associates subjects that came up together', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+
+    initiative.remember({ topic: 'my cat' }, now)
+    initiative.remember({ topic: 'the vet' }, now + MINUTE)
+    initiative.remember({ topic: 'tax forms' }, now + 30 * MINUTE)
+
+    expect(initiative.associationsOf('my cat').map(association => association.topic)).toEqual(['the vet'])
+  })
+
+  it('can raise a subject the attention focus still holds after its episode is forgotten', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+    initiative.remember({ topic: 'my cat' }, now)
+
+    initiative.forget(now + 365 * DAY)
+    const decision = initiative.poll(now + 365 * DAY)
+
+    expect(initiative.episodes).toHaveLength(0)
+    expect(decision).toMatchObject({ act: true, topicAtomId: 'my cat' })
+  })
+
+  it('keeps each character\'s memory and mind apart, and brings it back', () => {
+    const initiative = useInitiativeStore()
+    const now = Date.now()
+    initiative.useCharacter('card-a')
+    initiative.remember({ topic: 'my cat' }, now)
+    initiative.remember({ topic: 'the vet' }, now + MINUTE)
+
+    initiative.useCharacter('card-b')
+
+    expect(initiative.episodes).toEqual([])
+    expect(initiative.associationsOf('my cat')).toEqual([])
+    expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: false, reason: 'no-candidates' })
+
+    initiative.useCharacter('card-a')
+
+    expect(initiative.episodes.map(episode => episode.atomId)).toEqual(['my cat', 'the vet'])
+    expect(initiative.associationsOf('my cat').map(association => association.topic)).toEqual(['the vet'])
+  })
+
+  describe('a card that adapts', () => {
+    function speakUp(initiative: ReturnType<typeof useInitiativeStore>, at: number) {
+      initiative.remember({ topic: `subject at ${at}`, salience: 0.9 }, at)
+      const decision = initiative.poll(at + 10 * MINUTE)
+      expect(decision.act).toBe(true)
+      return at + 10 * MINUTE
+    }
+
+    it('speaks up more readily after people answer her', () => {
+      const initiative = useInitiativeStore()
+      initiative.configure({ enabled: true, adapt: true })
+      let now = Date.now()
+
+      for (let round = 0; round < 5; round++) {
+        const spokeAt = speakUp(initiative, now)
+        initiative.noteUserTurn(spokeAt + 30_000)
+        now = spokeAt + 60 * MINUTE
+      }
+
+      expect(initiative.learnedTemperament?.answerRate).toBeGreaterThan(0.5)
+      expect(initiative.learnedTemperament?.thresholdFactor).toBeLessThan(1)
+    })
+
+    it('grows quieter after people ignore her', () => {
+      const initiative = useInitiativeStore()
+      initiative.configure({ enabled: true, adapt: true })
+      let now = Date.now()
+
+      for (let round = 0; round < 5; round++) {
+        const spokeAt = speakUp(initiative, now)
+        // The next poll after the answer window settles her turn as ignored.
+        initiative.poll(spokeAt + 3 * MINUTE)
+        now = spokeAt + 60 * MINUTE
+      }
+
+      expect(initiative.learnedTemperament?.answerRate).toBeLessThan(0.5)
+      expect(initiative.learnedTemperament?.thresholdFactor).toBeGreaterThan(1)
+    })
+
+    it('learns nothing when the card does not adapt', () => {
+      const initiative = useInitiativeStore()
+      initiative.configure({ enabled: true })
+      const spokeAt = speakUp(initiative, Date.now())
+
+      initiative.noteUserTurn(spokeAt + 30_000)
+
+      expect(initiative.learnedTemperament).toBeUndefined()
+    })
+
+    it('keeps what it learned across a restart, for that card only', async () => {
+      const first = useInitiativeStore()
+      first.configure({ enabled: true, adapt: true })
+      first.useCharacter('card-a')
+      const spokeAt = speakUp(first, Date.now())
+      first.noteUserTurn(spokeAt + 30_000)
+      const learned = first.learnedTemperament
+      expect(learned).toBeDefined()
+      // Local storage is written on the next tick.
+      await nextTick()
+
+      setActivePinia(createPinia())
+      const restarted = useInitiativeStore()
+
+      expect(restarted.learnedTemperamentOf('card-a')).toEqual(learned)
+      expect(restarted.learnedTemperamentOf('card-b')).toBeUndefined()
+    })
   })
 
   describe('bindToChat', () => {

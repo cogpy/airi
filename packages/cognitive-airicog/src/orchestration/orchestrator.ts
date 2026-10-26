@@ -8,7 +8,7 @@
 
 import type { AtomSpace } from '../atomspace/atomspace'
 import type { Atom, AtomSpaceConfig, Link, Node, TruthValue } from '../atomspace/types'
-import type { ECAN } from '../attention/ecan'
+import type { ECAN, ECANConfig } from '../attention/ecan'
 import type { PLN } from '../reasoning/pln'
 
 import { createAtomSpace } from '../atomspace/atomspace'
@@ -119,11 +119,13 @@ export class CognitiveOrchestrator {
   }
 
   /**
-   * Create a new cognitive agent
+   * Create a new cognitive agent. `ecanConfig` configures the agent's
+   * attention economy, for example its focus threshold.
    */
   createAgent(
     agentId: string,
     atomSpaceConfig?: AtomSpaceConfig,
+    ecanConfig?: Partial<ECANConfig>,
   ): AgentState {
     if (this.agents.has(agentId)) {
       throw new Error(`Agent already exists: ${agentId}`)
@@ -138,7 +140,7 @@ export class CognitiveOrchestrator {
       ...atomSpaceConfig,
     })
 
-    const ecan = createECAN(atomSpace)
+    const ecan = createECAN(atomSpace, ecanConfig)
     const pln = createPLN(atomSpace)
 
     const agentState: AgentState = {
@@ -183,13 +185,13 @@ export class CognitiveOrchestrator {
   }
 
   /**
-   * Get or create an agent
+   * Get or create an agent. `ecanConfig` applies only when the agent is created.
    */
-  getOrCreateAgent(agentId: string): AgentState {
+  getOrCreateAgent(agentId: string, ecanConfig?: Partial<ECANConfig>): AgentState {
     const existing = this.getAgent(agentId)
     if (existing)
       return existing
-    return this.createAgent(agentId)
+    return this.createAgent(agentId, undefined, ecanConfig)
   }
 
   /**

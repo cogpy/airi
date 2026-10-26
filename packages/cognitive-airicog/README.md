@@ -161,6 +161,45 @@ is bit-exact no matter how many transfers have been made. The continuous
 `[0, 1]` importance scale is the appearance; the integer partition of quanta is
 what is conserved.
 
+### Topic attention (what is on her mind)
+
+`TopicAttention` joins the AtomSpace, ECAN and PLN into one runtime state for a
+conversation. stage-ui's initiative store owns one for each session.
+
+```ts
+import { createTopicAttention } from '@proj-airi/cognitive-airicog/attention'
+import { decideInitiative, mergeCandidates } from '@proj-airi/cognitive-airicog/initiative'
+
+const mind = createTopicAttention()
+
+mind.notice('my cat', 0.6, Date.now())
+mind.notice('the vet', 0.6, Date.now() + 20_000)
+
+// Each timer tick charges rent to the topics in focus, so unmentioned ones fade.
+mind.step()
+
+const decision = decideInitiative({
+  now: Date.now(),
+  lastInteractionAt: Date.now() - 600_000,
+  candidates: mergeCandidates(mind.candidates()),
+})
+console.info(decision, mind.associations('my cat'))
+```
+
+- A noticed topic becomes a `ConceptNode` and is stimulated by its salience.
+- Two topics noticed within `coMentionWindowMs` get an `AssociativeLink`. Each
+  later co-mention revises its truth value, so the association grows firmer.
+- A notice spreads importance along its links, so mentioning one topic brings
+  its associated topics back into focus.
+- When an association forms, PLN deduction (`TVFormulas.deduction`) infers
+  weaker ones across it: A~B and B~C give A~C. A direct co-mention later turns
+  an inferred association into a direct one.
+- `prune(retain)` removes topics that left focus, with their links.
+
+`candidates()` uses the topic name as `atomId`, like episodes do. So
+`mergeCandidates` can join it with `asInitiativeCandidates` from episodic
+memory. A subject keeps its highest salience across the sources.
+
 ### PLN (uncertain reasoning)
 
 ```ts
@@ -460,6 +499,19 @@ orch.cognitiveStep('melody')
 orch.dispose()
 ```
 
+`getOrCreateAgent(id, ecanConfig)` and `createAgent(id, atomSpaceConfig, ecanConfig)`
+configure an agent's attention economy. stage-ui's initiative store keeps one
+agent for each character card and runs a `TopicAttention` on it:
+
+```ts
+import { createTopicAttention, topicAttentionEcanConfig } from '@proj-airi/cognitive-airicog/attention'
+import { createOrchestrator } from '@proj-airi/cognitive-airicog/orchestration'
+
+const orchestrator = createOrchestrator({ enableGC: false })
+const mind = createTopicAttention({}, orchestrator.getOrCreateAgent('card-id', topicAttentionEcanConfig()))
+mind.notice('my cat', 0.6, Date.now())
+```
+
 ### Ontogenesis (self-evolving kernels)
 
 ```ts
@@ -478,6 +530,25 @@ const optimized = selfOptimize(offspring, 10)
 const generations = runOntogenesis({
   evolution: { populationSize: 20, maxGenerations: 50 },
 })
+```
+
+#### Temperament (learning how readily to speak)
+
+`Temperament` holds an ontogenetic kernel for one character. Each time she
+speaks up, `recordOutcome(answered)` updates the kernel's fitness, a running
+answer rate. Then `selfOptimize` moves the mutable genes up or down. The
+`curiosity` gene sets `thresholdFactor()`, which scales the initiative
+threshold between `1 - range` and `1 + range`. Constraint genes never change.
+
+```ts
+import { createTemperament } from '@proj-airi/cognitive-airicog/ontogenesis'
+
+const temperament = createTemperament()
+temperament.recordOutcome(true)
+
+const threshold = 0.25 * temperament.thresholdFactor()
+const saved = temperament.snapshot() // resume later with createTemperament(saved)
+console.info(threshold, saved)
 ```
 
 ## Development
@@ -501,11 +572,11 @@ pnpm -F @proj-airi/cognitive-airicog examples
 ```
 src/
   atomspace/    AtomSpace + type definitions
-  attention/    ECAN + RelevanceRealization
+  attention/    ECAN + RelevanceRealization + TopicAttention
   coplay/       GameRules, game session, fallback move, tic-tac-toe
   reasoning/    PLN + TVFormulas
   orchestration/  CognitiveOrchestrator
-  ontogenesis/  OntogeneticKernel + evolution
+  ontogenesis/  OntogeneticKernel + evolution + Temperament
   index.ts      Public API + createAiriCog()
   examples.ts   Runnable usage examples
 ```

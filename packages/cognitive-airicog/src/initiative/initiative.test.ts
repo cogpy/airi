@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createAtomSpace } from '../atomspace/atomspace'
 import { createECAN } from '../attention/ecan'
-import { candidatesFromFocus, createDefaultInitiativeConfig, decideInitiative } from './initiative'
+import { candidatesFromFocus, createDefaultInitiativeConfig, decideInitiative, mergeCandidates } from './initiative'
 
 const NOW = 1_000_000
 
@@ -183,5 +183,22 @@ describe('candidatesFromFocus', () => {
 
     ecan.dispose()
     atomSpace.dispose()
+  })
+})
+
+describe('mergeCandidates', () => {
+  it('keeps each subject once, at its highest salience across sources', () => {
+    const memory = [{ atomId: 'cats', salience: 0.3 }, { atomId: 'dogs', salience: 0.5 }]
+    const focus = [{ atomId: 'cats', salience: 0.7 }, { atomId: 'birds', salience: 0.2 }]
+
+    expect(mergeCandidates(memory, focus)).toEqual([
+      { atomId: 'cats', salience: 0.7 },
+      { atomId: 'dogs', salience: 0.5 },
+      { atomId: 'birds', salience: 0.2 },
+    ])
+  })
+
+  it('dedupes a subject repeated within one source', () => {
+    expect(mergeCandidates([{ atomId: 'cats', salience: 0.2 }, { atomId: 'cats', salience: 0.4 }])).toEqual([{ atomId: 'cats', salience: 0.4 }])
   })
 })

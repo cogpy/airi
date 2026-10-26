@@ -24,6 +24,8 @@ export { sparkNotifyCommandSchema } from '@proj-airi/core-agent/agents/spark-not
  * and the model only needs enough of it to recognise what was being discussed.
  */
 const MAX_QUOTED_REMARK = 280
+/** Most associated topics an initiative note names. */
+const MAX_RELATED_TOPICS = 3
 
 /** What a card that never mentions initiative configures: nothing, so it stays off. */
 const NO_INITIATIVE: Readonly<AiriInitiativeSettings> = Object.freeze({})
@@ -38,11 +40,18 @@ const NO_INITIATIVE: Readonly<AiriInitiativeSettings> = Object.freeze({})
  * user's own remark — so the headline quotes it and leaves the model to judge
  * how, or whether, to pick it back up.
  */
-function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number): WebSocketEventOf<'spark:notify'> {
+function quoteRemark(remark: string): string {
+  return remark.length > MAX_QUOTED_REMARK ? `${remark.slice(0, MAX_QUOTED_REMARK)}…` : remark
+}
+
+/**
+ * `related` are topics associated with the raised one, strongest first. The
+ * note names them, so the model can connect the subject to what came up with it.
+ */
+function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number, related: readonly string[] = []): WebSocketEventOf<'spark:notify'> {
   const id = `initiative-${now}`
-  const remark = decision.topicAtomId.length > MAX_QUOTED_REMARK
-    ? `${decision.topicAtomId.slice(0, MAX_QUOTED_REMARK)}…`
-    : decision.topicAtomId
+  const remark = quoteRemark(decision.topicAtomId)
+  const relatedRemarks = related.map(quoteRemark)
 
   return {
     type: 'spark:notify',
@@ -53,13 +62,52 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
       kind: 'ping',
       urgency: 'immediate',
       headline: 'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
-      note: `From earlier in the conversation: ${remark}`,
+      note: relatedRemarks.length > 0
+        ? `From earlier in the conversation: ${remark}\nIt came up together with: ${relatedRemarks.join('; ')}`
+        : `From earlier in the conversation: ${remark}`,
       destinations: ['character'],
       payload: {
         topic: remark,
+        related: relatedRemarks,
         urge: decision.urge,
         silencePressure: decision.silencePressure,
       },
+    },
+  }
+}
+
+/**
+ * How the lull turn is answered: as speech only, with the task in plain words.
+ *
+ * The reply-format instructions come after the notify payload and end with a
+ * sample dialogue. Llama 3.2 3B answered that sample instead of the subject.
+ * So the request says who said what, and it also ends the user message.
+ * In a live run, a request that did not say who said the remark made her
+ * repeat the user's words as her own.
+ */
+function initiativeControl(topic: string, related: readonly string[], origin: 'user' | 'reflection'): SparkNotifyResponseControl {
+  const relatedRemarks = related.map(quoteRemark)
+  const connect = relatedRemarks.length > 0 ? [`It came up together with: ${relatedRemarks.map(remark => `"${remark}"`).join('; ')}`] : []
+  const request = [
+    '(No new message. The conversation has been quiet for a while.)',
+    origin === 'reflection'
+      ? `Speak first, to the user. Share this thought of yours from earlier: "${quoteRemark(topic)}"`
+      : `Speak first, to the user. Ask about what the user said earlier: "${quoteRemark(topic)}"`,
+    ...connect,
+  ].join('\n')
+  return {
+    forceTextResponse: true,
+    messageOverride: {
+      replaceUserMessage: request,
+      appendFinalUserSections: [request],
+      appendSystemInstructions: [[
+        'The conversation has gone quiet, and you decided to speak first.',
+        origin === 'reflection'
+          ? `Share this thought of yours, in one or two short sentences: "${quoteRemark(topic)}"`
+          : `Ask about what the user said earlier, in one or two short sentences. These are the user's words, not yours: "${quoteRemark(topic)}"`,
+        ...connect,
+        'The examples in the reply-format instructions are not part of this conversation. Do not answer them.',
+      ].join('\n')],
     },
   }
 }
@@ -353,20 +401,31 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     // A lull is only worth breaking once; by the next tick the conversation may
     // have resumed, so a failed attempt is dropped rather than retried.
     eventUnsubscribes.push(
-      initiativeStore.onInitiative(decision => enqueueSparkNotify(initiativeNotify(decision, Date.now()), {
-        reason: 'initiative',
-        maxAttempts: 1,
-      })),
+      initiativeStore.onInitiative((decision) => {
+        const related = initiativeStore.associationsOf(decision.topicAtomId).slice(0, MAX_RELATED_TOPICS).map(association => association.topic)
+        enqueueSparkNotify(initiativeNotify(decision, Date.now(), related), {
+          reason: 'initiative',
+          maxAttempts: 1,
+          control: initiativeControl(
+            decision.topicAtomId,
+            related,
+            initiativeStore.episodes.some(episode => episode.atomId === decision.topicAtomId && episode.kind === 'reflection') ? 'reflection' : 'user',
+          ),
+        })
+      }),
     )
 
     // The active card decides whether the character speaks unprompted. Switching
     // cards restarts the lull timer under the new card's settings; a card
     // without initiative leaves it stopped, since start() is a no-op while off.
+    // Each card keeps its own memory, mind, and temperament.
     eventUnsubscribes.push(
       watch(
-        () => cardStore.activeCard?.extensions?.airi?.modules?.initiative,
-        (settings) => {
+        () => [cardStore.activeCardId, cardStore.activeCard?.extensions?.airi?.modules?.initiative] as const,
+        ([cardId, settings]) => {
           initiativeStore.stop()
+          if (cardId)
+            initiativeStore.useCharacter(cardId)
           initiativeStore.configure(settings ?? NO_INITIATIVE)
           initiativeStore.start()
         },

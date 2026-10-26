@@ -80,6 +80,7 @@ function renderSparkNotifyUserMessage(input: SparkNotifyHandleRequest, userSecti
     ...(messageOverride?.appendUserSections ?? []),
     input.runtimePrompt ?? '',
     ...userSections,
+    ...(messageOverride?.appendFinalUserSections ?? []),
   ].filter(section => section.trim().length > 0).join('\n\n')
 }
 

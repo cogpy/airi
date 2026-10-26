@@ -38,6 +38,18 @@ export interface SparkNotifyMessageOverride {
    * @default undefined
    */
   replaceUserMessage?: string
+  /**
+   * Sections appended after the runtime prompt and the plugin sections, so they end the user message.
+   *
+   * Use when:
+   * - The task must be the last thing the model reads, after reply-format instructions and their examples
+   *
+   * Expects:
+   * - Entries already serialized into provider-safe text
+   *
+   * @default []
+   */
+  appendFinalUserSections?: string[]
 }
 
 /**

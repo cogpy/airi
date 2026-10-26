@@ -5,3 +5,4 @@
  */
 
 export * from './kernel'
+export * from './temperament'

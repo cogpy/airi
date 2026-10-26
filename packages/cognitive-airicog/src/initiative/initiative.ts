@@ -215,6 +215,20 @@ export function decideInitiative(
 }
 
 /**
+ * Joins candidates from several sources, such as episodic memory and the
+ * attention focus. A subject that appears more than once keeps its highest
+ * salience, so one source can raise a subject but never lower it.
+ */
+export function mergeCandidates(...sources: readonly (readonly InitiativeCandidate[])[]): InitiativeCandidate[] {
+  const merged = new Map<string, number>()
+  for (const source of sources) {
+    for (const { atomId, salience } of source)
+      merged.set(atomId, Math.max(merged.get(atomId) ?? -Infinity, salience))
+  }
+  return [...merged].map(([atomId, salience]) => ({ atomId, salience }))
+}
+
+/**
  * Reads the attention economy's current focus as initiative candidates.
  *
  * Short-term importance is already the economy's answer to "what matters now",

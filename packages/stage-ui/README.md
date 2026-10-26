@@ -246,6 +246,31 @@ A spoken turn is one IO trace, from the wake word to playback:
 A typed turn starts its trace at `Interaction turn`.
 
 
+## Initiative
+
+`stores/modules/initiative.ts` decides when the character speaks during a lull,
+and about what. Its candidates come from two sources, joined by
+`mergeCandidates`:
+
+- episodic memory: what was said, and how firmly it is still held
+- a `TopicAttention` from `cognitive-airicog`: what is on her mind now
+
+Topics that come up together become associated. A lull note names the topics
+associated with the raised one, so the model can connect them.
+
+Each character card has its own state. The store keeps one
+`CognitiveOrchestrator` agent for each card, and `useCharacter(cardId)` switches
+the episodes, the mind, and the temperament. The orchestrator store calls it
+when the active card changes.
+
+With `modules.initiative.adapt`, a `Temperament` learns how readily she speaks.
+A user turn within two minutes after she speaks up counts as an answer. Later,
+she counts as ignored. The learned state is kept in local storage for each card.
+
+The **Initiative** module page (`settings/modules/initiative`) changes the
+active card's `modules.initiative` settings through `updateActiveCardInitiative`.
+Every setting is off by default.
+
 ## Participants and barge-in
 
 `libs/participants` and `stores/participants.ts` tell the character's own voice

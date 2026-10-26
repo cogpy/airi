@@ -1214,6 +1214,7 @@ export const useChatStore = defineStore('chat', () => {
    * because a missing subject only means one less thing to bring up.
    */
   function rememberRemark(sessionId: string, remark: string) {
+    initiativeStore.noteUserTurn()
     const initiative = cardStore.getCard(personaOf(sessionId))?.extensions?.airi?.modules?.initiative
     if (!initiative?.enabled || !initiative.nameTopics) {
       initiativeStore.remember({ topic: remark })

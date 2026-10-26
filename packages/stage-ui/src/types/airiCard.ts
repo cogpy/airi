@@ -93,6 +93,14 @@ export interface AiriExtension {
        */
       nameTopics?: boolean
       /**
+       * Whether she learns how readily to speak up from how people respond.
+       * Off by default. When on, being answered after she speaks up makes her
+       * speak more readily, and being ignored makes her quieter. The learned
+       * temperament scales `threshold` by `0.5` to `1.5` and is kept on this
+       * device for each card.
+       */
+      adapt?: boolean
+      /**
        * Whether she reflects on recent remarks now and then, keeping a few
        * insights she can use in later replies and bring up in a lull. Off by
        * default: each reflection is an extra model call, at most one every

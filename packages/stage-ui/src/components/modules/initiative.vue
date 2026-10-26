@@ -8,10 +8,12 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useAiriCardStore } from '../../stores/modules/airi-card'
+import { useInitiativeStore } from '../../stores/modules/initiative'
 
 const { t } = useI18n()
 const cardStore = useAiriCardStore()
-const { activeCard } = storeToRefs(cardStore)
+const { activeCard, activeCardId } = storeToRefs(cardStore)
+const initiativeStore = useInitiativeStore()
 
 const settings = computed<AiriInitiativeSettings>(() => activeCard.value?.extensions?.airi?.modules?.initiative ?? {})
 
@@ -30,10 +32,14 @@ function cardSetting<K extends keyof AiriInitiativeSettings>(key: K, fallback: N
 
 const enabled = cardSetting('enabled', false)
 const threshold = cardSetting('threshold', createDefaultInitiativeConfig().threshold)
+const adapt = cardSetting('adapt', false)
 const nameTopics = cardSetting('nameTopics', false)
 const reflect = cardSetting('reflect', false)
 const yieldWhenInterrupted = cardSetting('yieldWhenInterrupted', false)
 const converseWithAgents = cardSetting('converseWithAgents', false)
+
+const learned = computed(() => initiativeStore.learnedTemperamentOf(activeCardId.value))
+const percent = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 0 })
 </script>
 
 <template>
@@ -56,6 +62,17 @@ const converseWithAgents = cardSetting('converseWithAgents', false)
           :label="t('settings.pages.modules.initiative.threshold.label')"
           :description="t('settings.pages.modules.initiative.threshold.description')"
         />
+        <FieldCheckbox
+          v-if="enabled"
+          v-model="adapt"
+          :label="t('settings.pages.modules.initiative.adapt.label')"
+          :description="t('settings.pages.modules.initiative.adapt.description')"
+        />
+        <p v-if="enabled && adapt" :class="['text-sm', 'text-neutral-500 dark:text-neutral-400']">
+          {{ learned
+            ? t('settings.pages.modules.initiative.adapt.learned', { answered: percent.format(learned.answerRate), factor: learned.thresholdFactor.toFixed(2) })
+            : t('settings.pages.modules.initiative.adapt.none') }}
+        </p>
         <FieldCheckbox
           v-model="nameTopics"
           :label="t('settings.pages.modules.initiative.name-topics.label')"

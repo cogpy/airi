@@ -258,6 +258,15 @@ and about what. Its candidates come from two sources, joined by
 Topics that come up together become associated. A lull note names the topics
 associated with the raised one, so the model can connect them.
 
+Each character card has its own state. The store keeps one
+`CognitiveOrchestrator` agent for each card, and `useCharacter(cardId)` switches
+the episodes, the mind, and the temperament. The orchestrator store calls it
+when the active card changes.
+
+With `modules.initiative.adapt`, a `Temperament` learns how readily she speaks.
+A user turn within two minutes after she speaks up counts as an answer. Later,
+she counts as ignored. The learned state is kept in local storage for each card.
+
 The **Initiative** module page (`settings/modules/initiative`) changes the
 active card's `modules.initiative` settings through `updateActiveCardInitiative`.
 Every setting is off by default.

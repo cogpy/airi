@@ -378,11 +378,14 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     // The active card decides whether the character speaks unprompted. Switching
     // cards restarts the lull timer under the new card's settings; a card
     // without initiative leaves it stopped, since start() is a no-op while off.
+    // Each card keeps its own memory, mind, and temperament.
     eventUnsubscribes.push(
       watch(
-        () => cardStore.activeCard?.extensions?.airi?.modules?.initiative,
-        (settings) => {
+        () => [cardStore.activeCardId, cardStore.activeCard?.extensions?.airi?.modules?.initiative] as const,
+        ([cardId, settings]) => {
           initiativeStore.stop()
+          if (cardId)
+            initiativeStore.useCharacter(cardId)
           initiativeStore.configure(settings ?? NO_INITIATIVE)
           initiativeStore.start()
         },

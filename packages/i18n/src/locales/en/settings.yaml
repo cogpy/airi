@@ -843,6 +843,16 @@ pages:
       threshold:
         label: Threshold to speak
         description: A higher value keeps the character quieter.
+      adapt:
+        label: Learn how often to speak up
+        description: >-
+          When you answer the character after it speaks up, it speaks up more
+          readily. When you ignore it, it grows quieter. What it learns is kept
+          on this device for this card.
+        learned: >-
+          Answered {answered} of the time. The threshold is scaled by
+          {factor}.
+        none: Nothing learned yet.
       name-topics:
         label: Name the subject of each message
         description: >-

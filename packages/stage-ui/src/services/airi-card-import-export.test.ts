@@ -145,12 +145,12 @@ describe('airi card package import/export', () => {
   it('keeps typed initiative and co-play settings and drops the rest', async () => {
     const source = exportToJSON(createCard('preset-live2d-1'))
     const modules = (source.data.extensions.airi as AiriExtension).modules as Record<string, unknown>
-    modules.initiative = { enabled: true, threshold: 0.2, refractorySeconds: Number.NaN, nameTopics: 'yes', converseWithAgents: false, unknownFlag: true }
+    modules.initiative = { enabled: true, threshold: 0.2, refractorySeconds: Number.NaN, nameTopics: 'yes', converseWithAgents: false, adapt: true, unknownFlag: true }
     modules.coplay = { enabled: true, extra: 1 }
 
     const imported = await importAiriCardPackage({ file: await packageFile(source), displayModelsStore: useDisplayModelsStore() })
 
-    expect(airiFrom(imported).modules.initiative).toEqual({ enabled: true, threshold: 0.2, converseWithAgents: false })
+    expect(airiFrom(imported).modules.initiative).toEqual({ enabled: true, threshold: 0.2, converseWithAgents: false, adapt: true })
     expect(airiFrom(imported).modules.coplay).toEqual({ enabled: true })
   })
 

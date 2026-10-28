@@ -8,7 +8,7 @@ import { createI18n } from 'vue-i18n'
 
 import { useAiriRuntimePrompt } from './use-airi-runtime-prompt'
 
-const BUILT_IN_SAMPLE = '<|ACT {"emotion":"surprised"}|><|DELAY 1|> Wow... You prepared a gift\nfor me? <|ACT {"emotion":"curious"}|><|DELAY 1|> Can I open it?'
+const BUILT_IN_SAMPLE = '<|ACT {"emotion":"neutral"}|><|DELAY 1|> This sample line only shows the token\nformat. <|ACT {"emotion":"curious"}|><|DELAY 1|> A new token starts where the feeling changes.'
 
 const apps: App[] = []
 
@@ -50,7 +50,7 @@ describe('useAiriRuntimePrompt with the English messages', () => {
     const prompt = mountPrompt({ emotionExample: () => sample }).value
 
     expect(prompt).toContain(`ACT payloads are JSON objects:\n\n${sample}\n\nACT JSON format`)
-    expect(prompt).not.toContain('You prepared a gift')
+    expect(prompt).not.toContain('only shows the token')
   })
 
   it('follows the sample when it changes', () => {

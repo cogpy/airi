@@ -53,8 +53,8 @@ prompt:
 
     The available emotions:
   emotionExample: |-
-    <{'|'}ACT {'{"emotion":"surprised"}'}{'|'}><{'|'}DELAY 1{'|'}> Wow... You prepared a gift
-    for me? <{'|'}ACT {'{"emotion":"curious"}'}{'|'}><{'|'}DELAY 1{'|'}> Can I open it?
+    <{'|'}ACT {'{"emotion":"neutral"}'}{'|'}><{'|'}DELAY 1{'|'}> This sample line only shows the token
+    format. <{'|'}ACT {'{"emotion":"curious"}'}{'|'}><{'|'}DELAY 1{'|'}> A new token starts where the feeling changes.
   emoji: |
     Do not use emojis or text that a speaker cannot pronounce.
   suffix: |

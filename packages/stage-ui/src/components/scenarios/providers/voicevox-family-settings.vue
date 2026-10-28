@@ -20,7 +20,6 @@ const props = defineProps<{
   /** Translation key for the `intonationScale` label. Each engine reads that field differently. */
   intonationLabelKey: string
   intonationDescriptionKey: string
-  defaultText: string
 }>()
 
 const { t } = useI18n()
@@ -154,7 +153,6 @@ async function handleGenerateSpeech(input: string, voiceId: string) {
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
         :use-ssml="false"
-        :default-text="props.defaultText"
       />
     </template>
   </SpeechProviderSettings>

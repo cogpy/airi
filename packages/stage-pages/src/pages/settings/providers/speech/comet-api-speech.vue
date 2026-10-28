@@ -180,7 +180,6 @@ const {
         v-model:voice="voice as any"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
-        default-text="Hello! This is a test of the CometAPI Speech."
       />
     </template>
 

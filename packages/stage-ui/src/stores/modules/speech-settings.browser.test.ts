@@ -128,6 +128,8 @@ it('issue #3153: cancels a speech preview when another window disables speech', 
   await leader.speech.selectProviderModel(provider, 'tts-1', 'alloy')
   const follower = mountRenderer(namespace, SpeechSettings)
   const preview = () => Array.from(follower.container.querySelectorAll('button')).find(button => button.textContent?.includes('Test Voice'))!
+  // No chat model is set here, so the preview line stays empty until the user types one.
+  await page.elementLocator(follower.container.querySelector('textarea')!).fill('Hello there.')
   await vi.waitFor(() => expect(preview()?.disabled).toBe(false))
   preview().click()
   await vi.waitFor(() => expect(generateSpeech).toHaveBeenCalledTimes(1))

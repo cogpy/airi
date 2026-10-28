@@ -1222,6 +1222,10 @@ pages:
             buttons:
               stop:
                 label: Stop
+              write-line:
+                label: Write a new line
+                writing: Writing...
+            no-chat-model: Set a chat model, and the character writes a line to try her voice. You can also type your own text.
             select-voice:
               loading: Loading model...
               required: Please select a voice
@@ -2215,7 +2219,6 @@ pages:
           q4f16:
             description: 4-bit with FP16
         playground:
-          default-text: Hello! This is a test of the Kokoro text-to-speech system.
           title: Voice Playground
         title: Kokoro TTS (Local)
       fireworks:
@@ -2257,7 +2260,6 @@ pages:
               label: Model
               placeholder: Select a MiniMax model...
         playground:
-          default-text: Hello! This is a test of MiniMax speech synthesis.
         title: MiniMax Speech
       mimo:
         description: api.xiaomimimo.com

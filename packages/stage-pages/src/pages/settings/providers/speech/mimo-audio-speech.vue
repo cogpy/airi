@@ -199,7 +199,6 @@ const {
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
         :voices-loading="speechStore.voiceCatalogStatus[providerId]?.loading ?? false"
-        default-text="Hello! This is a test of the Xiaomi MiMo Speech."
       />
     </template>
 

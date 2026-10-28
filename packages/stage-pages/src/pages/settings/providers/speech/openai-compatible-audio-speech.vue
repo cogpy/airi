@@ -193,7 +193,6 @@ const apiKeyPlaceholder = computedAsync(async () => {
         v-model:voice="voice as any"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
-        default-text="Hello! This is a test of the OpenAI Compatible Speech."
       />
     </template>
 

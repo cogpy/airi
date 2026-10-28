@@ -150,7 +150,6 @@ watchDebounced([
         :voice="voice"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
-        :default-text="t('settings.pages.providers.provider.minimax-speech.playground.default-text')"
         @update:voice="selectVoice"
       />
     </template>

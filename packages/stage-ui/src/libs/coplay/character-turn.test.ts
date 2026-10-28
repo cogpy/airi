@@ -23,11 +23,11 @@ describe('coplay table', () => {
     expect(table.currentPlayer()?.participantId).toBe('device:microphone')
   })
 
-  it('plays a fallback move only for the player to move', () => {
+  it('takes a move only from the player to move', () => {
     const table = openTicTacToe()
 
-    expect(table.submitFallback('device:microphone')).toMatchObject({ status: 'rejected', reason: 'not-your-turn' })
-    expect(table.submitFallback('stage:airi')).toMatchObject({ status: 'accepted', move: 'a1' })
+    expect(table.submitText('device:microphone', 'a1')).toMatchObject({ status: 'rejected', reason: 'not-your-turn' })
+    expect(table.ply()).toBe(0)
   })
 
   it('does not know a game it was never given', () => {

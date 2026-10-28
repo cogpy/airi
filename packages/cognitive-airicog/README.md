@@ -10,7 +10,7 @@ AiriCog provides a suite of building blocks for symbolic, probabilistic, and att
 |---|---|
 | **Affect** | Mood that carries between turns and settles back to temperament |
 | **AtomSpace** | Hypergraph-based knowledge representation (Nodes + Links) |
-| **Co-play** | Turn-based games with a partner: rules contract, turn-enforcing session, fallback move, tic-tac-toe |
+| **Co-play** | Turn-based games with a partner: rules contract, turn-enforcing session, tic-tac-toe |
 | **ECAN** | Economic Attention Networks for cognitive resource allocation |
 | **PLN** | Probabilistic Logic Networks for uncertain reasoning |
 | **Initiative** | Turn-taking: when to take the floor during a lull, when to give it back, and when to stop answering another agent |
@@ -334,7 +334,7 @@ read, and how a move is written and read as text. Everything else is written
 against it, so chess or another game plugs in without changing the session.
 
 ```ts
-import { chooseFallbackMove, createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
+import { createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
 
 const session = createGameSession(ticTacToe, [
   { seat: 'X', participantId: 'stage:airi', kind: 'self' },
@@ -349,9 +349,6 @@ if (result.status === 'accepted')
   console.info(result.record.text, result.outcome) // 'b2', { status: 'in-progress' }
 
 console.info(ticTacToe.describe(session.state(), 'O')) // board, sides, legal moves
-
-// When the model names no legal move, keep the game going
-const move = chooseFallbackMove(ticTacToe, session.state())
 ```
 
 The session owns the state and the history and changes only through an
@@ -361,10 +358,9 @@ that applies: `unknown-player`, `game-over`, `not-your-turn`,
 asks the character, reads the user's input, or receives a peer's event, then
 submits the move.
 
-`chooseFallbackMove` wins at once if it can, otherwise avoids any move that
-lets the opponent win at once, otherwise plays the first legal move. It knows
-nothing about the game beyond `GameRules`, and the same state always gives the
-same move.
+The package never picks a move for the character. Her moves come from her
+model. When the model gives no legal move, the caller asks it again or lets the
+game wait on her turn.
 
 ### Memory (episodic)
 
@@ -573,7 +569,7 @@ pnpm -F @proj-airi/cognitive-airicog examples
 src/
   atomspace/    AtomSpace + type definitions
   attention/    ECAN + RelevanceRealization + TopicAttention
-  coplay/       GameRules, game session, fallback move, tic-tac-toe
+  coplay/       GameRules, game session, tic-tac-toe
   reasoning/    PLN + TVFormulas
   orchestration/  CognitiveOrchestrator
   ontogenesis/  OntogeneticKernel + evolution + Temperament

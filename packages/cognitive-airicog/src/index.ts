@@ -90,8 +90,6 @@ export {
 } from './attention/topic-attention'
 
 // Co-play - Turn-based games with a partner
-export { chooseFallbackMove } from './coplay/fallback'
-
 export type { GameOutcome, GamePlayer, GameRules } from './coplay/rules'
 
 export {

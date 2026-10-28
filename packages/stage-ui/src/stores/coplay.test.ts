@@ -48,7 +48,7 @@ vi.mock('./modules/airi-card', () => ({
 
 const devicePartner = { participantId: DEVICE_PARTICIPANT.id, origin: 'device' as const, name: 'you' }
 
-/** Lets the store's background model call and fallback settle. */
+/** Lets the store's background model calls settle. */
 async function settle() {
   await vi.waitFor(() => expect(useCoplayStore().characterThinking).toBe(false))
   await new Promise(resolve => setTimeout(resolve, 0))
@@ -127,37 +127,65 @@ describe('coplay store', () => {
     expect(store.board?.cells[4]).toMatchObject({ mark: 'X' })
   })
 
-  it('moves for her with the fallback policy when the model skips the tool, and says so', async () => {
+  it('asks the model again with the reason when a call gives no move', async () => {
+    const store = useCoplayStore()
+    // The first call skips the tool; the second names a move.
+    ingest.mockImplementationOnce(async () => {})
+    modelMoves = ['b2']
+
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    expect(ingest).toHaveBeenCalledTimes(2)
+    expect(ingest.mock.calls[1]?.[0]).toContain('Your last try gave no legal move: she named no move.')
+    expect(store.log.map(entry => entry.kind)).toEqual(['started', 'move'])
+    expect(store.characterStuck).toBe(false)
+  })
+
+  it('waits on her turn when no model call gives a legal move, and moves when asked again', async () => {
     const store = useCoplayStore()
 
     await store.startSession({ partner: devicePartner })
     await settle()
 
-    expect(store.log.at(-1)).toMatchObject({ kind: 'fallback' })
-    expect(store.log.at(-1)?.text).toContain('She played a1 (chosen for her: she named no move).')
+    expect(ingest).toHaveBeenCalledTimes(3)
+    expect(store.log.at(-1)).toMatchObject({ kind: 'waiting', text: 'She did not move (she named no move). The game waits for her.' })
+    expect(store.characterStuck).toBe(true)
+    expect(store.turn).toBe('character')
+    expect(store.board?.cells.every(cell => !cell.mark)).toBe(true)
+
+    modelMoves = ['b2']
+    store.retryCharacterMove()
+    await settle()
+
+    expect(ingest).toHaveBeenCalledTimes(4)
+    expect(store.characterStuck).toBe(false)
+    expect(store.board?.cells[4]).toMatchObject({ mark: 'X' })
   })
 
-  it('moves for her when the model keeps naming an illegal move', async () => {
+  it('says which illegal move she kept naming when the game waits on her', async () => {
     const store = useCoplayStore()
     await store.startSession({ partner: devicePartner, characterMovesFirst: false })
     modelMoves = ['a1']
     store.submitPartnerMove('a1')
     await settle()
 
-    expect(store.log.map(entry => entry.kind)).toEqual(['started', 'move', 'rejected', 'fallback'])
+    expect(store.log.map(entry => entry.kind)).toEqual(['started', 'move', 'rejected', 'rejected', 'rejected', 'waiting'])
     expect(store.log.at(-1)?.text).toContain('her last move was "a1": that move is not legal now')
   })
 
   it('takes the user\'s moves, refuses a move out of turn, and plays to a result', async () => {
     const store = useCoplayStore()
-    // The model skips the tool, so the deterministic fallback plays her side:
-    // a1, then b1, then c1 to complete the top row.
+    // Her model plays a1, then b1, then c1 to complete the top row.
+    modelMoves = ['a1']
     await store.startSession({ partner: devicePartner })
     await settle()
 
     expect(store.submitPartnerMove('a1')).toMatchObject({ status: 'rejected', reason: 'illegal-move' })
+    modelMoves = ['b1']
     expect(store.submitPartnerMove('c3')).toMatchObject({ status: 'accepted' })
     await settle()
+    modelMoves = ['c1']
     expect(store.submitPartnerMove('b2')).toMatchObject({ status: 'accepted' })
     await settle()
 

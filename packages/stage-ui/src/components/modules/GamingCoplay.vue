@@ -20,6 +20,7 @@ const {
   partner,
   outcome,
   characterThinking,
+  characterStuck,
   log,
   gameName,
   board,
@@ -67,6 +68,8 @@ const statusText = computed(() => {
 
   if (status.value === 'over')
     return t(`${prefix}.stopped`)
+  if (turn.value === 'character' && characterStuck.value)
+    return t(`${prefix}.character-stuck`, { name: characterName.value })
   if (turn.value === 'character')
     return t(`${prefix}.character-turn`, { name: characterName.value })
   return partner.value?.origin === 'device'
@@ -172,13 +175,21 @@ const logTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minu
               {{ statusText }}
             </span>
           </div>
-          <Button
-            v-if="isPlaying"
-            color="red"
-            icon="i-solar:stop-circle-bold-duotone"
-            :label="t('settings.pages.modules.gaming-coplay.stop')"
-            @click="coplayStore.stopSession()"
-          />
+          <div :class="['flex items-center gap-2']">
+            <Button
+              v-if="isPlaying && characterStuck"
+              icon="i-solar:refresh-bold-duotone"
+              :label="t('settings.pages.modules.gaming-coplay.retry')"
+              @click="coplayStore.retryCharacterMove()"
+            />
+            <Button
+              v-if="isPlaying"
+              color="red"
+              icon="i-solar:stop-circle-bold-duotone"
+              :label="t('settings.pages.modules.gaming-coplay.stop')"
+              @click="coplayStore.stopSession()"
+            />
+          </div>
         </div>
 
         <CoplayBoard

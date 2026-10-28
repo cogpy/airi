@@ -115,7 +115,9 @@ describe('setupAutoUpdater', () => {
   it.each([
     { name: 'a check', status: { status: 'checking' }, expected: { status: 'checking' } },
     { name: 'no update', status: { status: 'up-to-date' }, expected: { status: 'not-available', info: { version: '0.9.0-beta.4' } } },
-    { name: 'a download', status: { status: 'downloading', percent: 42, update }, expected: { status: 'downloading', info: { version: '0.9.0-beta.6' }, progress: { percent: 42 } } },
+    { name: 'a download', status: { status: 'downloading', bytesPerSecond: 524_288, downloadedBytes: 4_200_000, percent: 42, totalBytes: 10_000_000, update }, expected: { status: 'downloading', info: { version: '0.9.0-beta.6' }, progress: { bytesPerSecond: 524_288, percent: 42, total: 10_000_000, transferred: 4_200_000 } } },
+    { name: 'a patch after a download', status: { status: 'preparing', percent: 70, update }, expected: { status: 'downloading', progress: { bytesPerSecond: 0, percent: 70 } } },
+    { name: 'a version that needs a manual install', status: { status: 'manual-install-required', update: { ...update, requires: 'install' } }, expected: { status: 'manual-install-required', info: { version: '0.9.0-beta.6' } } },
     { name: 'a ready update', status: { status: 'ready', update }, expected: { status: 'downloaded', info: { version: '0.9.0-beta.6', releaseDate: new Date(update.releaseId).toISOString() } } },
     { name: 'a failed download', status: { status: 'download-failed', error: { code: 'download-failed', message: 'Socket closed.' }, retryAt: '2026-10-26T00:00:00.000Z', update }, expected: { status: 'error' } },
     { name: 'a bad signature', status: { status: 'verification-failed', error: { code: 'invalid-signature', message: 'Bad signature.' } }, expected: { status: 'error', error: { message: 'Bad signature.' } } },
@@ -132,7 +134,7 @@ describe('setupAutoUpdater', () => {
 
   it.each([
     { name: 'the lane that the user chose', stored: 'nightly', env: undefined, expected: 'nightly' },
-    { name: 'AIRI_UPDATE_CHANNEL', stored: 'nightly', env: 'alpha', expected: 'alpha' },
+    { name: 'AIRI_UPDATE_CHANNEL', stored: 'nightly', env: 'dev', expected: 'dev' },
   ] as const)('follows $name', async ({ stored, env, expected }) => {
     if (env)
       vi.stubEnv('AIRI_UPDATE_CHANNEL', env)
@@ -158,6 +160,20 @@ describe('setupAutoUpdater', () => {
     expect(fake.updater.channel).toBe('ota-test')
   })
 
+  it.each([
+    { saved: 'latest', version: '0.13.1-dev.821.13eef81', expected: 'dev' },
+    { saved: 'beta', version: '0.14.0-rc.1', expected: 'canary' },
+  ])('leaves the removed channel $saved that the launcher saved, for the channel of $version', async ({ saved, version, expected }) => {
+    bundleState.version = version
+    const fake = createFakeUpdater()
+    fake.updater.channel = saved
+    const { setupAutoUpdater } = await import('./auto-updater')
+
+    setupAutoUpdater({ updater: fake.updater })
+
+    expect(fake.updater.channel).toBe(expected)
+  })
+
   it('switches the channel, saves the choice, and checks again when the user picks a lane', async () => {
     const fake = createFakeUpdater()
     const setStoredUpdateLane = vi.fn()
@@ -172,25 +188,70 @@ describe('setupAutoUpdater', () => {
     expect(service.getPreferredUpdateLane()).toBe('nightly')
   })
 
-  it('goes back to the lane of the build when the user picks auto', async () => {
+  it.each([
+    { version: '0.9.0-beta.4', expected: 'canary' },
+    { version: '0.13.1-nightly.12.13eef81', expected: 'nightly' },
+    { version: '0.13.1-dev.821.13eef81', expected: 'dev' },
+    { version: '0.13.0', expected: 'stable' },
+  ])('goes back to the channel of $version when the user picks auto', async ({ version, expected }) => {
+    bundleState.version = version
     const fake = createFakeUpdater()
+    fake.updater.channel = 'canary'
     const { setupAutoUpdater } = await import('./auto-updater')
-    const service = setupAutoUpdater({ updater: fake.updater, getStoredUpdateLane: () => 'nightly' })
+    const service = setupAutoUpdater({ updater: fake.updater, getStoredUpdateLane: () => 'dev' })
 
     await service.setPreferredUpdateLane(undefined)
 
-    expect(fake.updater.channel).toBe('beta')
+    expect(fake.updater.channel).toBe(expected)
   })
 
-  it('applies a ready update once when the install is requested again', async () => {
+  it('applies a ready update once while two clicks arrive at once', async () => {
     const fake = createFakeUpdater({ status: 'ready', update })
     const { setupAutoUpdater } = await import('./auto-updater')
     const service = setupAutoUpdater({ updater: fake.updater })
 
     await Promise.all([service.quitAndInstall(), service.quitAndInstall()])
-    await service.quitAndInstall()
 
     expect(fake.updater.applyUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  // A page-only update reloaded the windows in place and kept the app. The next update that needed a restart did
+  // nothing when clicked, because the service took the first apply for the last one.
+  it('applies the next update after an update reloaded the windows in place', async () => {
+    const fake = createFakeUpdater({ status: 'ready', update: { ...update, requires: 'reload' } })
+    const { setupAutoUpdater } = await import('./auto-updater')
+    const service = setupAutoUpdater({ updater: fake.updater })
+
+    await service.quitAndInstall()
+    fake.setStatus({ status: 'ready', update })
+    await service.quitAndInstall()
+
+    expect(fake.updater.applyUpdate).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports healthy once main is ready and the main window mounted its page, and again after a reload', async () => {
+    const fake = createFakeUpdater({ status: 'up-to-date' })
+    const { setupAutoUpdater } = await import('./auto-updater')
+    const service = setupAutoUpdater({ updater: fake.updater })
+
+    service.markMainPageMounted()
+    expect(fake.updater.markBundleHealthy).not.toHaveBeenCalled()
+    service.markMainReady()
+    expect(fake.updater.markBundleHealthy).toHaveBeenCalledTimes(1)
+    // A page-only update reloads the page, and it mounts again.
+    service.markMainPageMounted()
+    expect(fake.updater.markBundleHealthy).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report health while main has not started', async () => {
+    const fake = createFakeUpdater({ status: 'up-to-date' })
+    const { setupAutoUpdater } = await import('./auto-updater')
+    const service = setupAutoUpdater({ updater: fake.updater })
+
+    service.markMainPageMounted()
+    service.markMainPageMounted()
+
+    expect(fake.updater.markBundleHealthy).not.toHaveBeenCalled()
   })
 
   it('applies nothing while no update is ready', async () => {
@@ -230,6 +291,21 @@ describe('setupAutoUpdater', () => {
 
     expect(fake.updater.dismissRollback).toHaveBeenCalledTimes(1)
     expect(service.state.status).toBe('not-available')
+  })
+
+  // An install with its own user data directory, for example a test build, must not write into the log of another install.
+  it('writes the updater log in the user data directory and reports that path', async () => {
+    const { appendFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const fake = createFakeUpdater()
+    const { setupAutoUpdater } = await import('./auto-updater')
+    const service = setupAutoUpdater({ updater: fake.updater })
+    const logFile = join('/tmp/userData', 'logs', 'updater-log.txt')
+
+    fake.setStatus({ status: 'error', error: { code: 'network-error', message: 'Offline.' } })
+
+    await vi.waitFor(() => expect(appendFile).toHaveBeenCalledWith(logFile, expect.stringContaining('network-error')))
+    expect(service.state.diagnostics?.logFilePath).toBe(logFile)
   })
 
   it('does not touch the updater when the launcher turned it off', async () => {

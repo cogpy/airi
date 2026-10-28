@@ -110,6 +110,7 @@ notice:
 about:
   subtitle: Desktop ver.
   current-version: Current Version
+  build-origin: "Built {time} from {branch}{'@'}{commit}"
   common:
     cancel: Cancel
   links:
@@ -127,10 +128,11 @@ about:
       stable: Stable
       alpha: Alpha
       beta: Beta
-      nightly: Nightly
       canary: Canary
-      dev: Dev (every change on main)
+      nightly: Nightly
+      dev: Dev
     status:
+      manual-install-required: Version v{version} needs a new install. Download it and install it by hand.
       downloading: Downloading update...
       error-prefix: Error
       latest: Up to date (v{version}).
@@ -138,6 +140,7 @@ about:
         windows: Update ready to install silently (v{version}).
         restart: Update ready to install on restart (v{version}).
     actions:
+      open-download-page: Open download page
       download: Download Update
       download-short: Download
       confirm-download: Confirm Download

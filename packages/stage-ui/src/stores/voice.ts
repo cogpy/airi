@@ -31,6 +31,7 @@ import { useChatStore } from './chat'
 import { useChatSessionStore } from './chat/session-store'
 import { useAiriCardStore } from './modules/airi-card'
 import { startsInputOnSpeech, useHearingStore } from './modules/hearing'
+import { useSpeechStore } from './modules/speech'
 import { useParticipantsStore } from './participants'
 import { useSettingsAudioDevice } from './settings/audio-device'
 import { useSpeakerTrackerStore } from './speaker-tracker'
@@ -55,6 +56,7 @@ const VOICE_END_SILENCE = { pauseMs: 1200, graceMs: 3000 } as const
 export const useVoiceStore = defineStore('voice', () => {
   const devices = useSettingsAudioDevice()
   const hearing = useHearingStore()
+  const speechSettings = useSpeechStore()
   const chat = useChatStore()
   const sessions = useChatSessionStore()
   const voiceMessages = useVoiceMessagesStore()
@@ -188,6 +190,16 @@ export const useVoiceStore = defineStore('voice', () => {
   watch([state, transcript, frontDraftId, error, microphoneStream, microphoneEnabled, microphoneError, () => wakeWordDetection.preparation, () => wakeWordDetection.error], publishSnapshot)
   watch(drafts, publishSnapshot, { deep: true })
 
+  // The host cancels dictation as well as continuous input. Remote snapshots trigger only local runtime cleanup.
+  watch(() => hearing.enabled, (enabled) => {
+    error.value = undefined
+    if (enabled)
+      return
+    void stopListening()
+    presentedInput = undefined
+    publishSnapshot()
+  }, { flush: 'sync' })
+
   function beginInput(options: BeginSpeechInput) {
     error.value = undefined
     return controller.beginInput(options)
@@ -195,7 +207,7 @@ export const useVoiceStore = defineStore('voice', () => {
 
   /** Begins an input that a control ends. Returns nothing while another window holds a capture lease. */
   function beginManual(sessionId: string) {
-    if (captureLease.held)
+    if (!hearing.enabled || captureLease.held)
       return undefined
     return beginInput({ sessionId, interruptTurns: activeTurns.value.filter(turn => turn.sessionId === sessionId), start: { kind: 'after-silence' }, cause: 'control' })
   }
@@ -339,6 +351,17 @@ export const useVoiceStore = defineStore('voice', () => {
     const producers = new Map<string, SpeechStream>()
     const opened = new Set<string>()
     const stops = [
+      // Disabling speech stops local and remote producers. The response stays open for text generation and tools.
+      watch(() => speechSettings.enabled, (enabled) => {
+        if (enabled)
+          return
+        for (const { response, speech } of responses.values()) {
+          void response.playback.stop({ fadeMs: 0 }).catch(report)
+          speech?.cancel('Speech is disabled')
+        }
+        for (const speech of producers.values())
+          speech.cancel('Speech is disabled')
+      }, { flush: 'sync' }),
       voiceMessages.connect(),
       captureLease.connect(),
       // Automatic inputs stop at the `enabled` check of the voice activity plugin. Manual inputs do not, so end them here.

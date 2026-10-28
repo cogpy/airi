@@ -634,12 +634,23 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       deps.foregroundStream.reset()
   }
 
-  function ingestRuntimeContexts(sessionId: string) {
+  /**
+   * Ingests the runtime contexts for one send and returns the buckets it wrote.
+   *
+   * The registry is shared, and another session's send can replace a bucket
+   * while this send waits on hooks and persistence. The returned buckets keep
+   * this send's own contexts for its prompt.
+   */
+  function ingestRuntimeContexts(sessionId: string): Record<string, ContextMessage[]> {
+    const before = deps.context.snapshot()
     for (const provider of deps.runtimeContextProviders ?? []) {
       const contextMessage = provider(sessionId)
       if (contextMessage)
         deps.context.ingest(contextMessage)
     }
+    const after = deps.context.snapshot()
+    const idsOf = (messages: ContextMessage[] | undefined) => (messages ?? []).map(message => message.id).join('\n')
+    return Object.fromEntries(Object.entries(after).filter(([source, messages]) => idsOf(messages) !== idsOf(before[source])))
   }
 
   function getStablePromptTimestamp(message: ChatHistoryItem, fallbackCreatedAt: number) {
@@ -702,7 +713,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     // It is applied at message-assembly time (see below) as a system-prompt
     // date anchor + per-message [HH:MM] prefixes, which is more KV-cache
     // friendly and less prone to weak models echoing timestamps verbatim.
-    ingestRuntimeContexts(sessionId)
+    const ownRuntimeContexts = ingestRuntimeContexts(sessionId)
 
     const sendingCreatedAt = now()
 
@@ -1037,7 +1048,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
           context.turns.unshift({ id: 'system-supplement', type: 'system', authority: 'system', content: [{ type: 'text', text: systemPromptSupplement }] })
       }
 
-      const contextsSnapshot = deps.context.snapshot()
+      const contextsSnapshot = { ...deps.context.snapshot(), ...ownRuntimeContexts }
       const entries = Object.entries(contextsSnapshot).flatMap(([source, messages]) => messages.map(message => ({ source, text: message.text })))
       if (entries.length) {
         const lastMessage = context.turns.at(-1)

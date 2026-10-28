@@ -226,7 +226,6 @@ src/
 ├── libs/
 │   └── mineflayer/           # Mineflayer bot wrapper/adapters
 ├── skills/                   # Atomic bot capabilities
-├── plugins/                  # Mineflayer/bot plugins
 ├── utils/                    # Helpers
 ├── minecraft-bot-runtime.ts  # Bot lifecycle wrapper for reconnect/reconfigure
 └── main.ts                   # Bot entrypoint

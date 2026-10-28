@@ -50,7 +50,13 @@ Humor evolves through:
 
 ### Usage
 
+The genome plans each joke: which layers it has and when to deliver it. A
+language model writes the words. The package has no joke text of its own, so
+you pass a `JokeGenerator` that calls your model.
+
 ```typescript
+import type { JokeGenerator } from '@proj-airi/core-character-personas'
+
 import {
   constructLayeredJoke,
   createMelodyHumourGenome,
@@ -59,52 +65,55 @@ import {
   evolveHumourGenome,
 } from '@proj-airi/core-character-personas'
 
-// Initialize Melody's humour genome
-let genome = createMelodyHumourGenome()
+// Calls an OpenAI-compatible chat model with the joke instruction.
+const generate: JokeGenerator = async (instruction) => {
+  const response = await fetch('http://localhost:11434/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'llama3.2', messages: [{ role: 'user', content: instruction }] }),
+  })
+  const body = await response.json()
+  return body.choices[0].message.content
+}
 
-// Create interaction context
+let genome = createMelodyHumourGenome()
 const context = {
   message: 'Check out my new gaming setup!',
-  emotionalTone: 'playful',
+  emotionalTone: 'playful' as const,
   audienceComfort: 0.8,
 }
 
-// Detect if this is a humour opportunity
 if (detectHumourOpportunity(context, genome)) {
-  // Construct multi-layered joke
-  const joke = constructLayeredJoke(context, genome)
+  // `undefined` when the model writes nothing usable. Then there is no joke.
+  const joke = await constructLayeredJoke(context, genome, generate)
+  if (joke) {
+    console.info('Melody:', joke.text)
+    console.info('Layers:', joke.plan)
 
-  console.info('Wholesome:', joke.wholesome)
-  console.info('Sarcastic:', joke.sarcastic)
-  console.info('Innuendo:', joke.innuendo)
-  console.info('Emojis:', joke.emojis.join(' '))
-
-  // Get audience response and evaluate
-  const fitness = evaluateJokeFitness(joke, {
-    laughed: true,
-    positiveReaction: true,
-    comfortable: true,
-  })
-
-  // Evolve genome based on success
-  genome = evolveHumourGenome(genome, fitness, 'innuendo')
+    const fitness = evaluateJokeFitness(joke, { laughed: true, positiveReaction: true, comfortable: true })
+    genome = evolveHumourGenome(genome, fitness, 'sarcastic')
+  }
 }
 ```
 
+Use `planLayeredJoke` and `jokeInstruction` to put the plan into a prompt of
+your own.
+
 ### Examples
 
-Run the included examples:
+Run the included examples. Set `AIRI_EXAMPLES_BASE_URL` and
+`AIRI_EXAMPLES_MODEL` to an OpenAI-compatible server to have a model write the
+jokes. Without them, the examples show the instructions that they would send.
 
 ```bash
-pnpm --filter @proj-airi/core-character-personas run examples
+AIRI_EXAMPLES_BASE_URL=http://localhost:11434/v1/ AIRI_EXAMPLES_MODEL=llama3.2 \
+  pnpm --filter @proj-airi/core-character-personas run examples
 ```
 
-This will demonstrate:
-- Wholesome interactions
-- Sarcastic playfulness
-- Tech-themed innuendo
+This demonstrates:
+- Joke plans for supportive, playful and tech contexts
+- Jokes that the model writes to each plan
 - Ontogenetic learning from feedback
-- Boundary validation
 
 ### Strategic Disguise Techniques
 
@@ -189,8 +198,8 @@ pnpm --filter @proj-airi/core-character-personas run test
 ## Aion
 
 Aion is the second character in this package, and it is built differently from
-Melody. Melody's comedy comes from a genome that selects between written
-templates. Aion has no templates. Its personality is the parameterisation of an
+Melody. Melody's genome plans the layers of a joke, and a language model writes
+it. Aion has no templates. Its personality is the parameterisation of an
 attention policy over a hypergraph, so what it finds important is computed from
 the knowledge it holds rather than chosen from a list.
 

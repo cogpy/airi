@@ -40,17 +40,14 @@ Created **1000+ lines** of production-ready code:
 **Key Functions:**
 - `createMelodyHumourGenome()` - Initialize with default values
 - `detectHumourOpportunity()` - Identify comedic moments
-- `constructLayeredJoke()` - Build 3-tier responses
+- `constructLayeredJoke()` - Have a language model write a joke to the plan
 - `evaluateJokeFitness()` - Measure joke success
 - `evolveHumourGenome()` - Update based on feedback
 
 **Helper Functions:**
-- `generateWholesomeSurface()` - Create kind base layer
-- `generateSweetSarcasm()` - Construct witty commentary
-- `generateStrategicInnuendo()` - Build double meanings
-- `validateBoundaries()` - Ensure safety and respect
-- `selectStrategicEmojis()` - Add layering cues
-- `optimizeTiming()` - Improve delivery
+- `planLayeredJoke()` - Choose the layers, emoji cues and timing from the genome
+- `jokeInstruction()` - Ask the model for a joke to the plan
+- `validateBoundaries()` - Ensure safety and respect of the model's text
 
 #### Examples Module (`melody-examples.ts`)
 5 comprehensive examples demonstrating:
@@ -197,17 +194,16 @@ const context = {
   audienceComfort: 0.8,
 }
 
-const joke = constructLayeredJoke(context, genome)
-// Wholesome: "That's so cool! Tell me more!"
-// Sarcastic: "Oh wow, you're SO good at this... almost as good as I am at pretending to be impressed~ 😏"
-// Innuendo: "Your hardware upgrade looks impressive! Big performance gains, I bet~ 😇🔥"
-// Emojis: ["💜", "😏", "😇", "🔥"]
+// `generate` calls a language model. The genome plans the layers, and the model writes the joke.
+const joke = await constructLayeredJoke(context, genome, generate)
+// joke.plan: { sarcastic: true, innuendo: true, emojis: ['💜', '😏', '😇', '🔥'], deliveryTiming: 750 }
+// joke.text: the model's joke, different on each call
 ```
 
 ## Future Enhancements
 
 ### Potential Improvements
-1. **Dynamic Template Generation** - Replace hardcoded templates with LLM-generated responses
+1. **Dynamic Generation** - Done. The written templates are gone, and a language model writes each joke to the genome's plan
 2. **Context-Aware Variation** - Use message content for personalized humor
 3. **Seeded Randomness** - Make system deterministic for testing
 4. **NLP Integration** - Better boundary validation with sentiment analysis

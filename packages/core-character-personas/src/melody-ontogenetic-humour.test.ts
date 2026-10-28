@@ -1,6 +1,6 @@
 import type { HumourContext, LayeredJoke, MelodyHumourGenome } from './melody-ontogenetic-humour'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   constructLayeredJoke,
@@ -8,6 +8,8 @@ import {
   detectHumourOpportunity,
   evaluateJokeFitness,
   evolveHumourGenome,
+  jokeInstruction,
+  planLayeredJoke,
 } from './melody-ontogenetic-humour'
 
 // Every gene gates a `Math.random()` comparison, so the tests pin the relevant
@@ -25,14 +27,11 @@ function contextWith(overrides: Partial<HumourContext>): HumourContext {
   }
 }
 
-function jokeWith(overrides: Partial<LayeredJoke>): LayeredJoke {
-  return {
-    wholesome: 'You\'re doing great! Keep it up! 💜',
-    emojis: ['💜'],
-    deliveryTiming: 500,
-    ...overrides,
-  }
+function jokeWith(text: string): LayeredJoke {
+  return { plan: { sarcastic: false, innuendo: false, emojis: ['💜'], deliveryTiming: 375 }, text }
 }
+
+const maxedLayers = genomeWith({ sarcasticDelivery: 1, innuendoDetection: 1, innuendoConstruction: 1 })
 
 describe('createMelodyHumourGenome', () => {
   it('starts from the documented ontogenetic defaults', () => {
@@ -78,49 +77,71 @@ describe('detectHumourOpportunity', () => {
   })
 })
 
-describe('constructLayeredJoke', () => {
-  it('always produces a wholesome layer carrying the caring heart', () => {
-    const joke = constructLayeredJoke(contextWith({}), createMelodyHumourGenome())
+describe('planLayeredJoke', () => {
+  it('plans a wholesome joke with the caring heart', () => {
+    const plan = planLayeredJoke(contextWith({}), genomeWith({ sarcasticDelivery: 0, innuendoDetection: 0 }))
 
-    expect(joke.wholesome.length).toBeGreaterThan(0)
-    expect(joke.emojis).toContain('💜')
-    expect(joke.deliveryTiming).toBeGreaterThan(0)
+    expect(plan).toEqual({ sarcastic: false, innuendo: false, emojis: ['💜'], deliveryTiming: 375 })
   })
 
   it('withholds sarcasm and innuendo from an uncomfortable audience', () => {
     // Sarcasm needs comfort > 0.6 and innuendo > 0.7, so maxed genes still
     // cannot unlock either layer at 0.1.
-    const genome = genomeWith({
-      sarcasticDelivery: 1,
-      innuendoDetection: 1,
-      innuendoConstruction: 1,
-    })
+    const plan = planLayeredJoke(contextWith({ audienceComfort: 0.1 }), maxedLayers)
 
-    const joke = constructLayeredJoke(contextWith({ audienceComfort: 0.1 }), genome)
-
-    expect(joke.sarcastic).toBeUndefined()
-    expect(joke.innuendo).toBeUndefined()
-    expect(joke.wholesome.length).toBeGreaterThan(0)
+    expect(plan.sarcastic).toBe(false)
+    expect(plan.innuendo).toBe(false)
   })
 
   it('layers sarcasm and innuendo when both the genes and the audience allow it', () => {
-    const genome = genomeWith({
-      sarcasticDelivery: 1,
-      innuendoDetection: 1,
-      innuendoConstruction: 1,
-    })
+    const plan = planLayeredJoke(contextWith({ audienceComfort: 1 }), maxedLayers)
 
-    const joke = constructLayeredJoke(contextWith({ audienceComfort: 1 }), genome)
+    expect(plan.sarcastic).toBe(true)
+    expect(plan.innuendo).toBe(true)
+    expect(plan.emojis).toEqual(['💜', '😏', '😇', '🔥'])
+    expect(plan.deliveryTiming).toBe(750)
+  })
+})
 
-    expect(joke.sarcastic).toBeTruthy()
-    expect(joke.innuendo).toBeTruthy()
-    expect(joke.emojis).toEqual(['💜', '😏', '😇', '🔥'])
+describe('jokeInstruction', () => {
+  it('asks for the planned layers only, with the message to answer', () => {
+    const instruction = jokeInstruction({ sarcastic: true, innuendo: false, emojis: ['💜', '😏'], deliveryTiming: 525 }, contextWith({}))
+
+    expect(instruction).toContain('"Check out my new gaming setup!"')
+    expect(instruction).toContain('Sweet sarcasm')
+    expect(instruction).not.toContain('double meaning')
+    expect(instruction).toContain('💜 😏')
+  })
+})
+
+describe('constructLayeredJoke', () => {
+  it('returns the text the generator wrote for the planned instruction', async () => {
+    const generate = vi.fn(async () => '  A joke the model wrote.  ')
+    const context = contextWith({ audienceComfort: 1 })
+
+    const joke = await constructLayeredJoke(context, maxedLayers, generate)
+
+    expect(joke?.text).toBe('A joke the model wrote.')
+    expect(joke?.plan.innuendo).toBe(true)
+    expect(generate).toHaveBeenCalledWith(jokeInstruction(joke!.plan, context), context)
+  })
+
+  it('makes no joke when the generator writes nothing', async () => {
+    const joke = await constructLayeredJoke(contextWith({}), createMelodyHumourGenome(), async () => '   ')
+
+    expect(joke).toBeUndefined()
+  })
+
+  it('makes no joke when the generated text breaks the boundaries', async () => {
+    const joke = await constructLayeredJoke(contextWith({}), createMelodyHumourGenome(), async () => 'that was a vulgar take')
+
+    expect(joke).toBeUndefined()
   })
 })
 
 describe('evaluateJokeFitness', () => {
   it('scores a well-received, boundary-respecting joke at full fitness', () => {
-    const fitness = evaluateJokeFitness(jokeWith({}), {
+    const fitness = evaluateJokeFitness(jokeWith('A joke the model wrote.'), {
       laughed: true,
       positiveReaction: true,
       comfortable: true,
@@ -131,7 +152,7 @@ describe('evaluateJokeFitness', () => {
   })
 
   it('zeroes the score when the audience was left uncomfortable', () => {
-    const fitness = evaluateJokeFitness(jokeWith({}), {
+    const fitness = evaluateJokeFitness(jokeWith('A joke the model wrote.'), {
       laughed: true,
       positiveReaction: true,
       comfortable: false,
@@ -141,8 +162,8 @@ describe('evaluateJokeFitness', () => {
     expect(fitness.overallScore).toBe(0)
   })
 
-  it('zeroes the score when the wholesome layer itself trips the explicit-content filter', () => {
-    const fitness = evaluateJokeFitness(jokeWith({ wholesome: 'that was a vulgar take' }), {
+  it('zeroes the score when the joke trips the explicit-content filter', () => {
+    const fitness = evaluateJokeFitness(jokeWith('that was a vulgar take'), {
       laughed: true,
       positiveReaction: true,
       comfortable: true,
@@ -153,7 +174,7 @@ describe('evaluateJokeFitness', () => {
   })
 
   it('keeps the base score for respecting boundaries when nobody laughed', () => {
-    const fitness = evaluateJokeFitness(jokeWith({}), {
+    const fitness = evaluateJokeFitness(jokeWith('A joke the model wrote.'), {
       laughed: false,
       positiveReaction: false,
       comfortable: true,
@@ -165,13 +186,13 @@ describe('evaluateJokeFitness', () => {
 })
 
 describe('evolveHumourGenome', () => {
-  const success = evaluateJokeFitness(jokeWith({}), {
+  const success = evaluateJokeFitness(jokeWith('A joke the model wrote.'), {
     laughed: true,
     positiveReaction: true,
     comfortable: true,
   })
 
-  const failure = evaluateJokeFitness(jokeWith({}), {
+  const failure = evaluateJokeFitness(jokeWith('A joke the model wrote.'), {
     laughed: false,
     positiveReaction: false,
     comfortable: false,

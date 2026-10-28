@@ -18,6 +18,14 @@ export interface AiriRuntimePromptOptions {
    * nothing shows — leaves the prompt exactly as it was without this.
    */
   moodLine?: () => string | undefined
+  /**
+   * The sample reply that shows the model how to use emotion tokens.
+   *
+   * Called per request, so the sample follows the character that answers.
+   * Returning `undefined` or blank text uses the built-in sample. The model
+   * still writes every reply: the sample only shows the format.
+   */
+  emotionExample?: () => string | undefined
 }
 
 /**
@@ -34,8 +42,10 @@ export function useAiriRuntimePrompt(options: AiriRuntimePromptOptions = {}) {
     if (!RUNTIME_PROMPT_KEYS.every(key => te(key, locale.value)))
       return ''
 
+    // A locale whose emotion text has no `{example}` keeps its own sample until it is translated again.
+    const example = options.emotionExample?.()?.trim() || t('base.prompt.emotionExample')
     const sections = [
-      t('base.prompt.emotion'),
+      t('base.prompt.emotion', { example }),
       EMOTION_VALUES
         .map(emotion => `- ${emotion} (Emotion for feeling ${EMOTION_EmotionMotionName_value[emotion]})`)
         .join('\n'),

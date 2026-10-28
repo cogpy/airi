@@ -154,6 +154,21 @@ describe('airi card package import/export', () => {
     expect(airiFrom(imported).modules.coplay).toEqual({ enabled: true })
   })
 
+  it('keeps a text emotion example and drops one of another type', async () => {
+    const source = exportToJSON(createCard('preset-live2d-1'))
+    const modules = (source.data.extensions.airi as AiriExtension).modules as Record<string, unknown>
+    modules.prompt = { emotionExample: '<|ACT {"emotion":"happy"}|> Hi!', extra: 1 }
+
+    const imported = await importAiriCardPackage({ file: await packageFile(source), displayModelsStore: useDisplayModelsStore() })
+
+    expect(airiFrom(imported).modules.prompt).toEqual({ emotionExample: '<|ACT {"emotion":"happy"}|> Hi!' })
+
+    modules.prompt = { emotionExample: 42 }
+    const dropped = await importAiriCardPackage({ file: await packageFile(source), displayModelsStore: useDisplayModelsStore() })
+
+    expect(airiFrom(dropped).modules).not.toHaveProperty('prompt')
+  })
+
   it('imports nothing autonomous from a card that sets no behaviour', async () => {
     const imported = await importAiriCardPackage({ file: await packageFile(exportToJSON(createCard('preset-live2d-1'))), displayModelsStore: useDisplayModelsStore() })
 

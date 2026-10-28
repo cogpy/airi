@@ -39,6 +39,7 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
   const assistantTurns: unknown[] = []
   const stateChanges: unknown[] = []
   const settled: unknown[] = []
+  const contextProviderSessions: string[] = []
   const telemetry = {
     chatActivationStarted: [] as unknown[],
     chatActivationSucceeded: [] as unknown[],
@@ -94,6 +95,10 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
     getActiveSessionId: () => 'session-1',
     getActiveProvider,
     getSystemPromptSupplement: () => systemPromptSupplement,
+    runtimeContextProviders: [(sessionId) => {
+      contextProviderSessions.push(sessionId)
+      return undefined
+    }],
     now: () => nowValue,
     monotonicNow: () => monotonicNowValues.shift() ?? 1000,
     createId: () => ids.shift() ?? `generated-${nextId++}`,
@@ -131,6 +136,7 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
       },
     },
     assistantTurns,
+    contextProviderSessions,
     contextSnapshot,
     foregroundPatches,
     foregroundResets,
@@ -551,6 +557,15 @@ describe('createChatOrchestratorRuntime', () => {
     }
     expect(started).toEqual(['first', 'other', 'next'])
     expect(harness.runtime.getSending()).toBe(false)
+  })
+
+  it('gives each runtime context provider the session that sends', async () => {
+    const harness = createHarness()
+
+    await harness.runtime.ingest('first', { model: 'gpt-test', chatProvider: provider }, 'session-1')
+    await harness.runtime.ingest('other', { model: 'gpt-test', chatProvider: provider }, 'session-2')
+
+    expect(harness.contextProviderSessions).toEqual(['session-1', 'session-2'])
   })
 
   // ROOT CAUSE:

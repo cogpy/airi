@@ -119,9 +119,10 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
   const characterStore = useCharacterStore()
   const notebookStore = useCharacterNotebookStore()
   const { systemPrompt } = storeToRefs(characterStore)
-  const runtimePrompt = useAiriRuntimePrompt()
   const modsServerChannelStore = useModsServerChannelStore()
   const cardStore = useAiriCardStore()
+  // Spark notifications answer as the selected character, so they use its emotion sample.
+  const runtimePrompt = useAiriRuntimePrompt({ emotionExample: () => cardStore.activeCard?.extensions?.airi?.modules?.prompt?.emotionExample })
   const initiativeStore = useInitiativeStore()
 
   const processing = ref(false)

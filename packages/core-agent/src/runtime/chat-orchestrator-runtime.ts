@@ -366,8 +366,8 @@ export interface ChatOrchestratorRuntimeDeps {
    * With it, history carries no identity. Stored system messages are skipped, so a persona edit or switch reaches the next send of its own sessions only.
    */
   getSystemPrompt?: (sessionId: string) => string | undefined
-  /** Runtime context providers ingested immediately before prompt composition. */
-  runtimeContextProviders?: Array<() => ContextMessage | null | undefined>
+  /** Runtime context providers ingested immediately before prompt composition, given the sending session. */
+  runtimeContextProviders?: Array<(sessionId: string) => ContextMessage | null | undefined>
   /**
    * Tools whose calls show as content of the reply, by tool name. A reply keeps no slice for their calls, and the model
    * still sees the calls in the provider transcript.
@@ -634,9 +634,9 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       deps.foregroundStream.reset()
   }
 
-  function ingestRuntimeContexts() {
+  function ingestRuntimeContexts(sessionId: string) {
     for (const provider of deps.runtimeContextProviders ?? []) {
-      const contextMessage = provider()
+      const contextMessage = provider(sessionId)
       if (contextMessage)
         deps.context.ingest(contextMessage)
     }
@@ -702,7 +702,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     // It is applied at message-assembly time (see below) as a system-prompt
     // date anchor + per-message [HH:MM] prefixes, which is more KV-cache
     // friendly and less prone to weak models echoing timestamps verbatim.
-    ingestRuntimeContexts()
+    ingestRuntimeContexts(sessionId)
 
     const sendingCreatedAt = now()
 

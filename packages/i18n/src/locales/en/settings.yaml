@@ -536,6 +536,11 @@ pages:
         greetings: How your character should say "hello" ?
         systemprompt: Explain here to the AI LLM how it should answer when prompted.
         posthistoryinstructions: Place here anything the AI LLM should read after the messages history.
+        emotionexample: >-
+          A sample reply that shows the model how to use emotion tokens. The
+          model can repeat what a sample says, not only its format. Write it in
+          this character's voice, about a subject that does not come up in a
+          normal chat. Leave it empty to use the built-in sample.
         version: >-
           Card version, you should increase this if you are making changes from
           a previous card.
@@ -560,6 +565,9 @@ pages:
     no_results: No matching cards found
     personality: Personality
     posthistoryinstructions: Post-History Instructions
+    emotionexample: Emotion Sample
+    emotionexample_load: Load from file
+    emotionexample_reset: Use built-in sample
     recent: Recently Added
     scenario: Scenario
     search: Search cards...

@@ -11,6 +11,7 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { characterTurnPrompt, createGameMoveTool, findCoplayGame, gameContextMessage, rejectionText } from '../libs/coplay'
 import { useChatStore } from './chat'
 import { useChatContextStore } from './chat/context-store'
+import { useChatSessionStore } from './chat/session-store'
 import { useModsServerChannelStore } from './mods/api/channel-server'
 import { useAiriCardStore } from './modules/airi-card'
 import { useConsciousnessStore } from './modules/consciousness'
@@ -108,6 +109,7 @@ export const useCoplayStore = defineStore('coplay', () => {
   const participantsStore = useParticipantsStore()
   const { activeCard } = storeToRefs(useAiriCardStore())
   const chatStore = useChatStore()
+  const chatSession = useChatSessionStore()
   const chatContext = useChatContextStore()
   const consciousnessStore = useConsciousnessStore()
   const { activeProvider, activeModel, activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
@@ -305,8 +307,17 @@ export const useCoplayStore = defineStore('coplay', () => {
     requestedPly = ply
     characterStuck.value = false
 
+    // Every try of this turn goes to the conversation and model that were set
+    // when the turn started, even if the user switches chats in between.
+    const sessionId = chatSession.activeSessionId
+    const providerId = activeProvider.value
+    const model = activeModel.value
+    const temperature = activeTemperature.value
+    const topP = activeTopP.value
+
     let why: string | undefined
     for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+      let cancelled = false
       let lastRejection: string | undefined
       let failure: string | undefined
       const tool = createGameMoveTool(current, (move) => {
@@ -326,8 +337,6 @@ export const useCoplayStore = defineStore('coplay', () => {
       const prompt = characterTurnPrompt(current, selfSeat(current), partnerName())
       characterThinking.value = true
       try {
-        const providerId = activeProvider.value
-        const model = activeModel.value
         if (!providerId || !model) {
           failure = 'no chat model is configured'
         }
@@ -336,13 +345,16 @@ export const useCoplayStore = defineStore('coplay', () => {
           await chatStore.ingest(why ? `${prompt}\nYour last try gave no legal move: ${why}. Choose one of the legal moves now.` : prompt, {
             model,
             chatProvider,
-            temperature: activeTemperature.value,
-            topP: activeTopP.value,
+            temperature,
+            topP,
             tools: [tool],
-          })
+          }, sessionId)
+          // A cancelled reply, for example when the user talks over her, settles without an error.
+          cancelled = chatSession.getSessionMessages(sessionId).findLast(message => message.role === 'assistant')?.interrupted === true
         }
       }
       catch (error) {
+        cancelled = error instanceof DOMException && error.name === 'AbortError'
         failure = errorMessageFrom(error) ?? 'the model call failed'
       }
       finally {
@@ -351,9 +363,10 @@ export const useCoplayStore = defineStore('coplay', () => {
 
       if (!isLive(current) || current.ply() !== ply)
         return
-      why = failure ?? (lastRejection ? `her last move was ${lastRejection}` : 'she named no move')
-      // Without a model, another call cannot do better.
-      if (failure === 'no chat model is configured')
+      why = cancelled ? 'her reply was cancelled' : failure ?? (lastRejection ? `her last move was ${lastRejection}` : 'she named no move')
+      // Without a model, another call cannot do better. After a cancel, the
+      // user stopped her, so only "Ask again" starts a new call.
+      if (cancelled || failure === 'no chat model is configured')
         break
     }
 

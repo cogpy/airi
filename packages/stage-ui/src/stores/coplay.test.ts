@@ -2,7 +2,7 @@ import type { Tool } from '@xsai/shared-chat'
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { reactive, ref } from 'vue'
 
 import { useChatContextStore } from './chat/context-store'
 import { useCoplayStore } from './coplay'
@@ -13,7 +13,7 @@ import { DEVICE_PARTICIPANT, useParticipantsStore } from './participants'
  * tool, in order, or nothing when it skips the tool.
  */
 let modelMoves: string[] = []
-const ingest = vi.fn(async (_text: string, options: { tools?: Tool[] }) => {
+const ingest = vi.fn(async (_text: string, options: { tools?: Tool[] }, _sessionId?: string) => {
   const tool = options.tools?.find(candidate => candidate.function.name === 'game_move')
   for (const move of modelMoves)
     await tool?.execute({ move }, { messages: [], toolCallId: `call-${move}` })
@@ -24,6 +24,20 @@ const chatProvider = { generation: vi.fn() }
 
 vi.mock('./chat', () => ({
   useChatStore: () => ({ ingest }),
+}))
+
+const sessionState = reactive({ activeSessionId: 'session-1', messages: [] as Array<{ role: string, interrupted?: true }> })
+
+vi.mock('./chat/session-store', () => ({
+  useChatSessionStore: () => ({
+    get activeSessionId() {
+      return sessionState.activeSessionId
+    },
+    set activeSessionId(value: string) {
+      sessionState.activeSessionId = value
+    },
+    getSessionMessages: () => sessionState.messages,
+  }),
 }))
 
 vi.mock('./mods/api/channel-server', () => ({
@@ -62,6 +76,8 @@ describe('coplay store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     modelMoves = []
+    sessionState.activeSessionId = 'session-1'
+    sessionState.messages = []
     ingest.mockClear()
     send.mockClear()
     coplay.value = { enabled: true }
@@ -81,7 +97,7 @@ describe('coplay store', () => {
     await settle()
 
     expect(ingest).toHaveBeenCalledTimes(1)
-    expect(ingest).toHaveBeenCalledWith(expect.stringContaining('It is your move.'), expect.objectContaining({ model: 'test-model', chatProvider }))
+    expect(ingest).toHaveBeenCalledWith(expect.stringContaining('It is your move.'), expect.objectContaining({ model: 'test-model', chatProvider }), 'session-1')
     expect(store.log.map(entry => entry.kind)).toEqual(['started', 'move'])
     expect(store.view).toContain('2  . X .')
   })
@@ -163,6 +179,65 @@ describe('coplay store', () => {
     expect(store.board?.cells[4]).toMatchObject({ mark: 'X' })
   })
 
+  // https://github.com/cogpy/airi/pull/31#discussion_r4404183437
+  //
+  // ROOT CAUSE:
+  //
+  // The retry loop asked the model again after any call that gave no move,
+  // including a call the user cancelled by talking over her. The retry
+  // restarted her speech right after the interruption.
+  //
+  // We fixed this by stopping the retries when her reply was cancelled.
+  it('stops asking the model again after her reply is cancelled', async () => {
+    const store = useCoplayStore()
+    ingest.mockImplementationOnce(async () => {
+      throw new DOMException('Interrupted by voice', 'AbortError')
+    })
+
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    expect(ingest).toHaveBeenCalledTimes(1)
+    expect(store.log.at(-1)).toMatchObject({ kind: 'waiting', text: 'She did not move (her reply was cancelled). The game waits for her.' })
+    expect(store.characterStuck).toBe(true)
+  })
+
+  it('stops asking again when her reply settles as interrupted', async () => {
+    const store = useCoplayStore()
+    ingest.mockImplementationOnce(async () => {
+      sessionState.messages = [{ role: 'assistant', interrupted: true }]
+    })
+
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    expect(ingest).toHaveBeenCalledTimes(1)
+    expect(store.log.at(-1)?.text).toContain('her reply was cancelled')
+  })
+
+  // https://github.com/cogpy/airi/pull/31#discussion_r4406540177
+  //
+  // ROOT CAUSE:
+  //
+  // Each try read the active session again, so a chat switch during a try
+  // sent the next try into the newly selected conversation.
+  //
+  // We fixed this by capturing the session when her turn starts.
+  it('sends every try of a turn to the conversation where the turn started', async () => {
+    sessionState.activeSessionId = 'session-start'
+    const store = useCoplayStore()
+    ingest.mockImplementationOnce(async () => {
+      sessionState.activeSessionId = 'session-other'
+    })
+    modelMoves = ['b2']
+
+    await store.startSession({ partner: devicePartner })
+    await settle()
+
+    expect(ingest).toHaveBeenCalledTimes(2)
+    expect(ingest.mock.calls.map(call => call[2])).toEqual(['session-start', 'session-start'])
+  })
+
   it('says which illegal move she kept naming when the game waits on her', async () => {
     const store = useCoplayStore()
     await store.startSession({ partner: devicePartner, characterMovesFirst: false })
@@ -202,6 +277,8 @@ describe('coplay store with an agent partner', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     modelMoves = []
+    sessionState.activeSessionId = 'session-1'
+    sessionState.messages = []
     ingest.mockClear()
     send.mockClear()
     coplay.value = { enabled: true }

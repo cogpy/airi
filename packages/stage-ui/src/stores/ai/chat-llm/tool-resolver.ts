@@ -7,7 +7,7 @@ import type { DescribeToolImage } from './tool-images'
 import { createSparkCommandTool } from '@proj-airi/core-agent/agents/spark-command'
 import { uniqBy } from 'es-toolkit'
 
-import { createWebSearchTools, debug, mcp } from '../../../tools'
+import { createWebSearchTools, mcp } from '../../../tools'
 import { useModsServerChannelStore } from '../../mods/api/channel-server'
 import { useWebSearchStore } from '../../modules/web-search'
 import { withCallSummary } from './tool-call-summary'
@@ -29,12 +29,6 @@ export interface ResolveLlmToolsOptions {
    * @default mcp()
    */
   builtInTools?: ToolSource
-  /**
-   * Debug tools exposed to the LLM.
-   *
-   * @default debug()
-   */
-  debugTools?: ToolSource
   /**
    * Spark command tools. Supplying this also avoids creating the mods server
    * channel store.
@@ -154,13 +148,11 @@ export async function resolveLlmTools(options: ResolveLlmToolsOptions = {}): Pro
   const activeTools = await resolveActiveTools(options.activeTools)
   const [
     builtInTools,
-    debugTools,
     sparkCommandTools,
     webSearchTools,
     customTools,
   ] = await Promise.all([
     resolveToolSource(options.builtInTools ?? mcp),
-    resolveToolSource(options.debugTools ?? debug),
     resolveSparkCommandTools(options.sparkCommandTools),
     resolveWebSearchTools(options.webSearchTools),
     resolveCustomTools(options.customTools),
@@ -169,7 +161,6 @@ export async function resolveLlmTools(options: ResolveLlmToolsOptions = {}): Pro
   const tools = uniqBy(
     [
       ...builtInTools,
-      ...debugTools,
       ...sparkCommandTools,
       ...webSearchTools,
       ...customTools,

@@ -47,6 +47,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   error: [error: Error]
+  hit: [hitAreas: string[]]
 }>()
 
 const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
@@ -191,6 +192,7 @@ defineExpose({
         :screen-ambient-light-strength="screenAmbientLightStrength"
         :screen-ambient-light-squint="screenAmbientLightSquint"
         @error="emit('error', $event)"
+        @hit="emit('hit', $event)"
       />
       <Live2DPresenceBubble
         v-if="app"

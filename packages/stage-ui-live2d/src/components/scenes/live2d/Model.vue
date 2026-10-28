@@ -106,6 +106,8 @@ const props = withDefaults(defineProps<{
 const emits = defineEmits<{
   (e: 'modelLoaded'): void
   (e: 'error', error: Error): void
+  /** The user tapped hit areas of the model. The model plays no motion of its own for it. */
+  (e: 'hit', hitAreas: string[]): void
 }>()
 
 const componentState = defineModel<'pending' | 'loading' | 'mounted'>('state', { default: 'pending' })
@@ -377,9 +379,9 @@ async function performModelLoad() {
 
     // --- Interaction
 
-    model.value.on('hit', (hitAreas) => {
-      if (model.value && hitAreas.includes('body'))
-        model.value.motion('tap_body')
+    model.value.on('hit', (hitAreas: string[]) => {
+      if (hitAreas.length)
+        emits('hit', hitAreas)
     })
 
     // --- Motion

@@ -296,7 +296,8 @@ LATEST ${target === 'assistant' ? 'COMPANION RESPONSE' : 'USER INPUT'}:
 
             case 'inline': {
               const imageUrl = result.imageUrl || result.base64
-              const content = `![${analysis.title || 'Generated Image'}](${imageUrl})`
+              // The title comes from her model. Without one the image has no caption, not a fixed one.
+              const content = `![${analysis.title ?? ''}](${imageUrl})`
               chatSessionStore.appendSessionMessage(targetSessionId, {
                 role: 'assistant',
                 content,

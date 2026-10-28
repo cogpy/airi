@@ -9,8 +9,8 @@ export function buildConsciousContextView(ctx: ReflexContextState): ConsciousCon
   const pos = ctx.self.location
   const roundedPos = `(${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)})`
   const followState = ctx.autonomy.followPlayer
-    ? ` Auto-follow target ${ctx.autonomy.followPlayer} (${ctx.autonomy.followActive ? 'active' : 'paused'})`
-    : ' Auto-follow disabled'
+    ? ` Follow target ${ctx.autonomy.followPlayer} (follow distance ${ctx.autonomy.followDistance}, alerts when out of range)`
+    : ' No follow target'
   const selfSummary = `Position ${roundedPos} Health ${ctx.self.health}/20 Food ${ctx.self.food}/20 and I'm holding ${ctx.self.holding ?? 'nothing'}.${followState}`
 
   const players = ctx.environment.nearbyPlayers

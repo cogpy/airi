@@ -220,7 +220,7 @@ const NO_ACTION_BUDGET_ALERT_SOURCE_ID = 'brain:no_action_budget'
 
 /**
  * Priority tiers for event scheduling (lower = higher priority).
- * Player chat and AIRI commands always take precedence over stale system feedback.
+ * Player chat, AIRI commands, and urgent reflex alerts always take precedence over stale system feedback.
  */
 const EVENT_PRIORITY_URGENT_PERCEPTION = 0
 const EVENT_PRIORITY_PERCEPTION = 1
@@ -262,10 +262,20 @@ function augmentDecisionError(message: string): string {
   return message
 }
 
+/**
+ * Whether a perception signal is an urgent reflex alert, for example "you are standing in lava".
+ *
+ * Reflexes never act on the body. The model must handle these alerts promptly, so they get the
+ * highest event priority and pass through an active `giveUp`.
+ */
+function isUrgentReflexAlert(signal: PerceptionSignal): boolean {
+  return signal.type === 'reflex_alert' && signal.metadata?.urgency === 'urgent'
+}
+
 function getEventPriority(event: BotEvent): number {
   if (event.type === 'perception') {
     const signal = event.payload as PerceptionSignal
-    if (signal.type === 'chat_message' || signal.type === 'airi_command')
+    if (signal.type === 'chat_message' || signal.type === 'airi_command' || isUrgentReflexAlert(signal))
       return EVENT_PRIORITY_URGENT_PERCEPTION
     return EVENT_PRIORITY_PERCEPTION
   }
@@ -2221,6 +2231,11 @@ export class Brain {
       if (signal.type === 'chat_message') {
         parts.push(`[EVENT] ${signal.description}`)
       }
+      else if (signal.type === 'reflex_alert') {
+        parts.push(isUrgentReflexAlert(signal)
+          ? `[URGENT] ${signal.description} Nothing acts for you automatically. Decide what to do now.`
+          : `[EVENT] Observation: ${signal.description}`)
+      }
       else {
         parts.push(`[EVENT] Perception Signal: ${signal.description}`)
       }
@@ -2300,6 +2315,9 @@ export class Brain {
       return true
 
     const signal = event.payload as PerceptionSignal
+    if (isUrgentReflexAlert(signal))
+      return false
+
     return !this.canResumeFromGiveUp(signal)
   }
 

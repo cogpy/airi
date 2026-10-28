@@ -71,8 +71,8 @@ graph TB
 
     subgraph "Layer B: Reflex (Subconscious)"
         RM[Reflex Manager]
-        FSM[State Machine]
-        RM --> FSM
+        RR[Reflex Runtime]
+        RM --> RR
     end
 
     subgraph "Layer C: Conscious (Reasoning)"
@@ -92,7 +92,7 @@ graph TB
 
     EM -->|High Priority| RM
     EM -->|All Events| ORC
-    RM -.->|Inhibition Signal| ORC
+    RM -->|Reflex Alerts| ORC
     ORC -->|Execution Request| TE
 
     style EM fill:#e1f5ff
@@ -123,11 +123,22 @@ The perception layer acts as the sensory input hub, collecting raw Mineflayer si
 
 **Location**: `src/cognitive/reflex/`
 
-The reflex layer handles immediate, instinctive reactions. It operates on a finite state machine (FSM) pattern for predictable, fast responses.
+The reflex layer detects situations that need a fast decision. A reflex only perceives. It never moves, fights, eats, or turns the head for the bot. When its condition triggers, it raises an alert. The alert reaches the conscious layer as a `reflex_alert` perception signal, and the model chooses the action with its normal tools.
 
 **Components**:
-- **Reflex Manager** (`reflex-manager.ts`): Coordinates reflex behaviors
-- **Inhibition**: Reflexes can inhibit Conscious layer processing to prevent redundant responses.
+- **Reflex Manager** (`reflex-manager.ts`): Registers the reflex behaviors and sends their alerts to the brain.
+- **Reflex Runtime** (`runtime.ts`): Refreshes the reflex context from the bot, checks each behavior, and applies cooldowns.
+- **Behaviors** (`behaviors/*`):
+
+| Behavior | Triggers when | Urgency |
+| --- | --- | --- |
+| `hazard-alert` | The bot is in lava or is drowning. The alert gives the nearest safe ground. | urgent |
+| `attack-alert` | A hostile mob hit the bot. Quiet while the bot already fights that mob. | urgent |
+| `hunger-alert` | Food is 6/20 or less. The alert lists the ready and raw food. | urgent |
+| `follow-distance-alert` | The player set with `followPlayer` is out of range while the bot is idle. | urgent |
+| `idle-observation` | The bot is idle and a nearby player moves or wants attention. | ambient |
+
+The brain handles an urgent alert at the highest event priority, also while `giveUp` is active. Nothing acts if the model is slow.
 
 ### Layer C: Conscious
 
@@ -186,11 +197,11 @@ src/
 │   │   │   ├── loader.ts
 │   │   │   └── matcher.ts
 │   │   └── pipeline.ts
-│   ├── reflex/                # Fast, rule-based reactions
+│   ├── reflex/                # Fast situation detection, alerts for the brain
 │   │   ├── reflex-manager.ts
 │   │   ├── runtime.ts
 │   │   ├── context.ts
-│   │   └── behaviors/idle-gaze.ts
+│   │   └── behaviors/*        # hazard, attack, hunger, follow-distance, idle observation
 │   ├── conscious/             # LLM-powered reasoning
 │   │   ├── brain.ts           # Core reasoning loop/orchestration
 │   │   ├── js-planner.ts      # JS planning sandbox
@@ -225,7 +236,7 @@ src/
 
 1. **Separation of Concerns**: Each layer has a distinct responsibility
 2. **Event-Driven**: Loose coupling via centralized event system
-3. **Inhibition Control**: Reflexes prevent unnecessary LLM calls
+3. **Model Decides**: Every character response and action comes from the model. Reflexes and skills only report facts
 4. **Extensibility**: Easy to add new reflexes or conscious behaviors
 5. **Cognitive Realism**: Mimics human-like perception → reaction → deliberation
 
@@ -236,8 +247,7 @@ src/
   - 🎯 Salience detection (filter noise, prioritize important events)
 
 - **Reflex Layer**:
-  - 🏃 Dodge hostile mobs
-  - 🛡️ Emergency combat responses
+  - 🏃 Alerts for more hazards, for example fall danger or fire
 
 - **Conscious Layer**:
   - 💭 Emotional state management

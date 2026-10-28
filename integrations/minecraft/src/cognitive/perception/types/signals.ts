@@ -8,6 +8,7 @@ export type PerceptionSignalType
     | 'system_message' // e.g. death messages, join/leave
     | 'airi_command' // instruction from AIRI via spark:command
     | 'airi_context' // context update from AIRI via context:update
+    | 'reflex_alert' // situation that a reflex detected, for the model to act on
 
 export interface PerceptionSignal {
   type: PerceptionSignalType

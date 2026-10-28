@@ -1,4 +1,6 @@
-import type { Action } from '../../libs/mineflayer'
+import type { Action, Mineflayer } from '../../libs/mineflayer'
+import type { ReflexManager } from '../reflex/reflex-manager'
+import type { MineflayerWithAgents } from '../types'
 
 import { Vec3 } from 'vec3'
 import { z } from 'zod'
@@ -21,6 +23,16 @@ function toCoord(pos: { x: number, y: number, z: number }) {
 
 function cloneVec3(pos: { x: number, y: number, z: number }): Vec3 {
   return new Vec3(pos.x, pos.y, pos.z)
+}
+
+function hasReflexManager(mineflayer: Mineflayer): mineflayer is MineflayerWithAgents {
+  return 'reflexManager' in mineflayer && mineflayer.reflexManager != null
+}
+
+function reflexManagerOf(mineflayer: Mineflayer): ReflexManager {
+  if (!hasReflexManager(mineflayer))
+    throw new Error('Reflex follow manager is unavailable')
+  return mineflayer.reflexManager
 }
 
 export const actionsList: Action[] = [
@@ -105,7 +117,7 @@ export const actionsList: Action[] = [
   },
   {
     name: 'followPlayer',
-    description: 'Set idle auto-follow target handled by reflex runtime. While idle, the bot will keep following this player until cleared.',
+    description: 'Choose a player to follow. This does not move you: while you are idle, you get an urgent event when this player is farther than follow_dist, and you decide whether to go to them (for example goToPlayer). The target stays until cleared.',
     execution: 'sync',
     readonly: true,
     schema: z.object({
@@ -113,27 +125,19 @@ export const actionsList: Action[] = [
       follow_dist: z.number().describe('The distance to follow from.').min(0),
     }),
     perform: mineflayer => (player_name: string, follow_dist: number) => {
-      const reflexManager = (mineflayer as any).reflexManager
-      if (!reflexManager || typeof reflexManager.setFollowTarget !== 'function')
-        throw new Error('Reflex follow manager is unavailable')
-
-      reflexManager.setFollowTarget(player_name, follow_dist)
-      return `Auto-follow enabled for player [${player_name}] at distance ${follow_dist}`
+      reflexManagerOf(mineflayer).setFollowTarget(player_name, follow_dist)
+      return `Follow target set to player [${player_name}] at distance ${follow_dist}. You get an urgent event when they move out of range.`
     },
   },
   {
     name: 'clearFollowTarget',
-    description: 'Disable idle auto-follow. Use this before independent exploration or when you no longer want to shadow a player.',
+    description: 'Clear the follow target, so you no longer get follow-distance events. Use this before independent exploration or when you no longer want to shadow a player.',
     execution: 'sync',
     readonly: true,
     schema: z.object({}),
     perform: mineflayer => () => {
-      const reflexManager = (mineflayer as any).reflexManager
-      if (!reflexManager || typeof reflexManager.clearFollowTarget !== 'function')
-        throw new Error('Reflex follow manager is unavailable')
-
-      reflexManager.clearFollowTarget()
-      return 'Auto-follow disabled'
+      reflexManagerOf(mineflayer).clearFollowTarget()
+      return 'Follow target cleared'
     },
   },
   {
@@ -254,10 +258,8 @@ export const actionsList: Action[] = [
     name: 'collectBlocks',
     description: 'Automatically collect the nearest blocks of a given type.',
     execution: 'async',
-    // NOTICE: detach auto-follow before mining. The idle auto-follow reflex drives the same
-    // mineflayer pathfinder as digging; if left attached it periodically re-points the bot at the
-    // followed player, which both cancels navigation to the ore ("Path was stopped") and aborts the
-    // in-progress bot.dig ("Digging aborted"), producing the stutter of repeated half-digs.
+    // Clear the follow target before mining, so follow-distance alerts do not interrupt the dig
+    // with re-plans while the bot works away from the followed player.
     followControl: 'detach',
     schema: z.object({
       type: z.string().describe('The block type to collect.'),
@@ -275,8 +277,7 @@ export const actionsList: Action[] = [
     name: 'mineBlockAt',
     description: 'Mine (break) a block at a specific position. Do NOT use this for regular resource collection. Use collectBlocks instead.',
     execution: 'async',
-    // NOTICE: detach auto-follow before mining (same reason as collectBlocks) so the follow reflex
-    // cannot interrupt bot.dig mid-break.
+    // Clear the follow target before mining (same reason as collectBlocks).
     followControl: 'detach',
     schema: z.object({
       x: z.number().describe('The x coordinate.'),

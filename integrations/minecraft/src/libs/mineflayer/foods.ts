@@ -3,7 +3,7 @@ import type { Item } from 'prismarine-item'
 
 /**
  * Raw foods that smelt into a strictly higher-saturation cooked variant. Eating these raw is
- * wasteful, so the auto-eat reflex leaves them alone and the conscious brain cooks them first.
+ * wasteful, so the hunger alert lists them apart from ready-to-eat food, and the model can cook them first.
  *
  * NOTICE: a fixed table rather than a minecraft-data smelting-recipe lookup. The cookable-food set
  * is small and stable across versions, every cooked variant here has strictly higher food/saturation
@@ -51,8 +51,7 @@ export function isCookableToHigherSaturation(itemName: string): boolean {
  * Pick the best food the bot can eat right now WITHOUT cooking.
  *
  * Use when:
- * - The auto-eat reflex needs an instantly-edible item (0 token), or the low-health perception event
- *   needs to know whether the reflex can handle recovery on its own.
+ * - A caller needs the best item to eat now without cooking.
  *
  * Expects:
  * - `bot` is a live mineflayer Bot whose inventory items carry runtime `foodPoints`.

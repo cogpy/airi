@@ -13,6 +13,7 @@ export interface AttackerEntity {
   name?: string
   username?: string
   id?: number | string
+  position?: { x: number, y: number, z: number }
 }
 
 // NOTICE: module-level singleton, mirroring the other per-event trackers. One bot per process.

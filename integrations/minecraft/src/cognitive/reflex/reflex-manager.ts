@@ -5,21 +5,48 @@ import type { EventBus, TracedEvent } from '../event-bus'
 import type { PerceptionSignal } from '../perception/types/signals'
 import type { MineflayerWithAgents } from '../types'
 import type { ReflexContextState } from './context'
+import type { ReflexRuntimeAlert } from './runtime'
 
 import { computed, effect, signal } from 'alien-signals'
 
 import { DebugService } from '../../debug'
-import { autoEatBehavior } from './behaviors/auto-eat'
-import { defendBehavior } from './behaviors/defend'
-import { escapeHazardBehavior } from './behaviors/escape-hazard'
-import { idleGazeBehavior } from './behaviors/idle-gaze'
+import { attackAlertBehavior } from './behaviors/attack-alert'
+import { followDistanceAlertBehavior } from './behaviors/follow-distance-alert'
+import { hazardAlertBehavior } from './behaviors/hazard-alert'
+import { hungerAlertBehavior } from './behaviors/hunger-alert'
+import { idleObservationBehavior } from './behaviors/idle-observation'
 import { ReflexRuntime } from './runtime'
+
+/**
+ * Converts a reflex alert to the perception signal that the conscious brain reads.
+ *
+ * Before:
+ * - `{ behaviorId: 'hazard-alert', kind: 'in_lava', urgency: 'urgent', description: 'You are standing in lava...' }`
+ *
+ * After:
+ * - `{ type: 'reflex_alert', sourceId: 'reflex:hazard-alert', metadata: { kind: 'in_lava', urgency: 'urgent', ... } }`
+ */
+export function reflexAlertToSignal(alert: ReflexRuntimeAlert, now: number): PerceptionSignal {
+  return {
+    type: 'reflex_alert',
+    description: alert.description,
+    sourceId: `reflex:${alert.behaviorId}`,
+    confidence: 1,
+    timestamp: now,
+    metadata: {
+      ...alert.metadata,
+      kind: alert.kind,
+      urgency: alert.urgency,
+      behaviorId: alert.behaviorId,
+    },
+  }
+}
 
 /**
  * Whether a perception signal should wake the conscious brain.
  *
- * - `entity_attention` (movement/punch attention) is handled entirely by reflex behaviors → never
- *   forwarded.
+ * - `entity_attention` (movement/punch attention) feeds the idle-observation reflex, which raises its
+ *   own `reflex_alert` when it is worth a model turn → never forwarded directly.
  * - While the bot is actively attacking (`isAttacking`), routine `damage` signals are suppressed so
  *   the brain does not re-plan on every incoming hit and `stop` its own attack — the combat-thrashing
  *   that got it killed against a kiting pillager. Critical health still reaches the brain via the
@@ -54,19 +81,22 @@ export class ReflexManager {
   ) {
     this.runtime = new ReflexRuntime({
       logger: this.deps.logger,
+      onAlert: alert => this.forwardAlert(alert),
     })
 
-    this.runtime.registerBehavior(escapeHazardBehavior)
-    this.runtime.registerBehavior(defendBehavior)
-    this.runtime.registerBehavior(autoEatBehavior)
-    this.runtime.registerBehavior(idleGazeBehavior)
+    // Reflexes only perceive. Each one raises an alert for the conscious brain, and the model
+    // chooses every action through its normal action tools.
+    this.runtime.registerBehavior(hazardAlertBehavior)
+    this.runtime.registerBehavior(attackAlertBehavior)
+    this.runtime.registerBehavior(hungerAlertBehavior)
+    this.runtime.registerBehavior(followDistanceAlertBehavior)
+    this.runtime.registerBehavior(idleObservationBehavior)
 
     effect(() => {
-      const bot = this.botSignal()
-      if (!bot)
+      if (!this.botSignal())
         return
 
-      this.runtime.transitionMode(this.isWorking() ? 'work' : 'idle', bot)
+      this.runtime.transitionMode(this.isWorking() ? 'work' : 'idle')
     })
 
     effect(() => {
@@ -84,7 +114,6 @@ export class ReflexManager {
   public init(bot: MineflayerWithAgents): void {
     this.bot = bot
     this.botSignal(bot)
-    this.runtime.setActiveBot(bot)
     // Subscribe to all signals produced by the perception rules
     this.unsubscribe = this.deps.eventBus.subscribe('signal:*', (event) => {
       this.onSignal(event as TracedEvent<PerceptionSignal>)
@@ -114,8 +143,7 @@ export class ReflexManager {
   }
 
   public destroy(): void {
-    if (this.bot)
-      this.runtime.transitionMode('idle', this.bot)
+    this.runtime.transitionMode('idle')
 
     if (this.unsubscribe) {
       this.unsubscribe()
@@ -126,7 +154,6 @@ export class ReflexManager {
       this.unsubscribeTaskExecutor = null
     }
     this.inFlightActionsCount(0)
-    this.runtime.setActiveBot(null)
     this.botSignal(null)
     this.bot = null
   }
@@ -148,14 +175,14 @@ export class ReflexManager {
   }
 
   public clearFollowTarget(): void {
-    this.runtime.clearAutoFollowTarget(this.bot)
+    this.runtime.clearAutoFollowTarget()
   }
 
   public refreshFromBotState(): void {
     if (!this.bot)
       return
 
-    this.runtime.tick(this.bot, 0)
+    this.runtime.tick(this.bot)
   }
 
   private onSignal(event: TracedEvent<PerceptionSignal>): void {
@@ -201,8 +228,8 @@ export class ReflexManager {
     // For now we rely on signal metadata or separate chat event.
     // Assuming 'signal:social:chat' or similar might exist later.
 
-    // Trigger behavior selection
-    this.runtime.tick(bot, 0)
+    // Re-check the reflex conditions. Triggered reflexes raise alerts for the brain.
+    this.runtime.tick(bot)
 
     // Forward signals to conscious layer (Brain) ONLY when Reflex decides.
     if (this.shouldForwardToConscious(signal)) {
@@ -212,6 +239,15 @@ export class ReflexManager {
         source: { component: 'reflex', id: 'reflexManager' },
       })
     }
+  }
+
+  private forwardAlert(alert: ReflexRuntimeAlert): void {
+    this.deps.logger.withFields({ behaviorId: alert.behaviorId, kind: alert.kind, urgency: alert.urgency }).log('ReflexManager: alert for the conscious brain')
+    this.deps.eventBus.emit({
+      type: 'conscious:signal:reflex_alert',
+      payload: reflexAlertToSignal(alert, Date.now()),
+      source: { component: 'reflex', id: alert.behaviorId },
+    })
   }
 
   private shouldForwardToConscious(signal: PerceptionSignal): boolean {

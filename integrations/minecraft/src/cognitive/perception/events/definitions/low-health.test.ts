@@ -22,24 +22,18 @@ describe('low_health perception event', () => {
     expect(filter(ctx(4))).toBe(true) // dropped critical again -> fires
   })
 
-  it('stays quiet when the bot has ready-to-eat food (the reflex handles it)', () => {
+  // Nothing eats for the bot automatically, so critical health always reaches the brain, with or
+  // without ready food, in combat or not. The model decides how to recover.
+  it('fires at critical health also when the bot has ready-to-eat food', () => {
     filter(ctx(20)) // arm
-    // critical, but bread is ready -> auto-eat reflex covers it, no brain wake, latch stays armed
-    expect(filter(ctx(6, [bread]))).toBe(false)
-    // raw-only food cannot be eaten by the reflex -> escalate to the brain to cook
+    expect(filter(ctx(6, [bread]))).toBe(true)
+    filter(ctx(20)) // recover -> re-arm
     expect(filter(ctx(6, [rawBeef]))).toBe(true)
   })
 
-  // https://github.com/moeru-ai/airi/pull/1915 (Codex P1)
-  it('escalates at critical health WITH ready food while mid-fight (auto-eat is suppressed in combat)', () => {
-    // ROOT CAUSE:
-    // During a defend engagement reflexEngaged disables auto-eat, and damage signals are suppressed
-    // while attacking, so a critical bot holding ready food was never woken to retreat/eat — it kept
-    // fighting at <=6 health. bot.pvp.target marks active combat; escalate even with ready food then.
+  it('fires at critical health mid-fight', () => {
     filter(ctx(20)) // arm
-    expect(filter(ctx(6, [bread], { id: 1 }))).toBe(true) // critical + ready food + in combat -> wake brain
-    filter(ctx(20)) // recover -> re-arm
-    expect(filter(ctx(6, [bread]))).toBe(false) // same but NOT in combat -> reflex eats it, stay quiet
+    expect(filter(ctx(6, [bread], { id: 1 }))).toBe(true)
   })
 
   it('extracts the current health for the signal', () => {

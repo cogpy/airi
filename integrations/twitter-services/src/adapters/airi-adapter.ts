@@ -1,6 +1,9 @@
 import type { Context } from '../core/browser/context'
 import type { Tweet } from '../core/services/tweet'
 import type { TwitterServices } from '../types/services'
+import type { XAction } from './x-spark-actions'
+
+import { randomUUID } from 'node:crypto'
 
 import * as fs from 'node:fs/promises'
 
@@ -8,16 +11,16 @@ import * as fs from 'node:fs/promises'
  * Airi Adapter
  * Adapts the X service as an Airi module
  */
-import { Client } from '@proj-airi/server-sdk'
+import { errorMessageFrom } from '@moeru/std'
+import { Client, ContextUpdateStrategy } from '@proj-airi/server-sdk'
 
 import { getDefaultConfig } from '../config/types'
 import { initBrowser, useContext, useSessionFileAsync } from '../core/browser/context'
 import { useTwitterTimelineServices } from '../core/services/timeline'
 import { useTwitterTweetServices } from '../core/services/tweet'
 import { useTwitterUserServices } from '../core/services/user'
-import { parseTwitterCommand } from '../parsers/command-parser'
-import { errorToMessage } from '../utils/error'
 import { logger } from '../utils/logger'
+import { findXActionInSparkCommand, X_ACTION_LANE, xCapabilityContextText } from './x-spark-actions'
 
 export interface AiriAdapterConfig {
   url?: string
@@ -55,7 +58,9 @@ export class AiriAdapter {
         'module:authenticated',
         'module:announce',
         'ui:configure',
-        'input:text',
+        'spark:command',
+        'spark:emit',
+        'context:update',
       ],
     })
 
@@ -112,17 +117,21 @@ export class AiriAdapter {
       }
     })
 
-    // Handle input from AIRI system
-    this.client.onEvent('input:text', async (event) => {
-      logger.main.log('Received input from AIRI system:', event.data.text)
-      // Process Twitter-related commands
-      await this.handleInput(event.data.text)
+    // The adapter does not act on `input:text`. User text goes to the character (the model).
+    // The character requests X actions with `spark:command`, and the adapter does only those actions.
+    this.client.onEvent('spark:command', async (event) => {
+      const action = findXActionInSparkCommand(event.data)
+      if (!action)
+        return
+
+      await this.handleXAction(event.data.commandId, action)
     })
 
     // Handle authentication
     this.client.onEvent('module:authenticated', async (event) => {
       if (event.data.authenticated) {
         logger.main.log('X module authenticated with AIRI server')
+        this.publishCapabilities()
       }
       else {
         logger.main.warn('X module authentication failed')
@@ -130,155 +139,113 @@ export class AiriAdapter {
     })
   }
 
-  private async handlePostTweet(content: string): Promise<void> {
-    if (content) {
-      await this.twitterServices.tweet.postTweet(content)
-      logger.main.log('Posted tweet:', content)
-    }
-    else {
-      throw new Error('Tweet text is empty. Please provide text to post.')
-    }
-  }
-
-  private async handleSearchTweets(content: string): Promise<boolean> {
-    if (content) {
-      const tweets = await this.twitterServices.tweet.searchTweets(content)
-      logger.main.log(`Found ${tweets.length} tweets for query: ${content}`)
-      // Return results to the user
-      this.client.send({
-        type: 'input:text',
-        data: {
-          text: `Found ${tweets.length} tweets for '${content}':
-${tweets.slice(0, 5).map((t: Tweet) => `- ${t.text.substring(0, 100)}...`).join('\n')}`,
-        },
-      })
-      return true
-    }
-    else {
-      throw new Error('Search query is empty. Please provide a query to search.')
-    }
-  }
-
-  private async handleLikeTweet(content: string): Promise<void> {
-    if (content) {
-      await this.twitterServices.tweet.likeTweet(content)
-      logger.main.log(`Liked tweet: ${content}`)
-    }
-    else {
-      throw new Error('Tweet ID is empty. Please provide a tweet ID to like.')
-    }
-  }
-
-  private async handleRetweet(content: string): Promise<void> {
-    if (content) {
-      await this.twitterServices.tweet.retweet(content)
-      logger.main.log(`Retweeted: ${content}`)
-    }
-    else {
-      throw new Error('Tweet ID is empty. Please provide a tweet ID to retweet.')
-    }
-  }
-
-  private async handleGetUser(content: string): Promise<boolean> {
-    if (content) {
-      const userProfile = await this.twitterServices.user.getUserProfile(content)
-      logger.main.log(`Retrieved profile for user: @${content}`)
-      // Return user info to the user
-      this.client.send({
-        type: 'input:text',
-        data: {
-          text: `User Profile for @${userProfile.username}:
-Display Name: ${userProfile.displayName}
-Bio: ${userProfile.bio || 'N/A'}
-Followers: ${userProfile.followersCount || 0}
-Following: ${userProfile.followingCount || 0}`,
-        },
-      })
-      return true
-    }
-    else {
-      throw new Error('Username is empty. Please provide a username to retrieve.')
-    }
-  }
-
-  private async handleGetTimeline(count: number): Promise<boolean> {
-    const timelineOptions = { count }
-    const tweets = await this.twitterServices.timeline.getTimeline(timelineOptions)
-    logger.main.log(`Retrieved ${tweets.length} tweets from timeline`)
-    // Return timeline to the user
+  /**
+   * Tells the character which X actions she can request.
+   */
+  private publishCapabilities(): void {
     this.client.send({
-      type: 'input:text',
+      type: 'context:update',
       data: {
-        text: `Latest ${tweets.length} tweets from your timeline:
-${tweets.map((t: Tweet) => `- ${t.author.displayName}: ${t.text.substring(0, 80)}...`).join('\n')}`,
+        id: randomUUID(),
+        contextId: 'x:capabilities',
+        lane: X_ACTION_LANE,
+        strategy: ContextUpdateStrategy.ReplaceSelf,
+        text: xCapabilityContextText,
       },
     })
-    return true
   }
 
-  private async handleInput(input: string): Promise<void> {
-    let responseSent = false
+  /**
+   * Sends the result of an X action back to the character as context.
+   *
+   * The text is data for the model. The model decides what to say about it.
+   */
+  private publishResult(commandId: string, text: string): void {
+    this.client.send({
+      type: 'context:update',
+      data: {
+        id: randomUUID(),
+        contextId: `x:result:${commandId}`,
+        lane: X_ACTION_LANE,
+        strategy: ContextUpdateStrategy.AppendSelf,
+        text,
+      },
+    })
+  }
+
+  private sendEmit(commandId: string, state: 'queued' | 'done' | 'dropped', note: string): void {
+    this.client.send({
+      type: 'spark:emit',
+      data: {
+        id: randomUUID(),
+        eventId: commandId,
+        state,
+        note,
+        destinations: ['proj-airi:stage-*'],
+      },
+    })
+  }
+
+  /**
+   * Runs one X action that the character requested.
+   *
+   * All tweet text comes from the action, which the model wrote.
+   */
+  private async handleXAction(commandId: string, action: XAction): Promise<void> {
+    this.sendEmit(commandId, 'queued', `X action ${action.action} received`)
+
     try {
-      // Parse and handle X commands
-      logger.main.log('Processing X command:', input)
-
-      // Parse the command using the dedicated parsing function
-      const parsedCommand = parseTwitterCommand(input)
-
-      if (!parsedCommand) {
-        throw new Error(`Unknown X command: ${input}. Supported commands: "post tweet: <text>", "search tweets: <query>", "like tweet: <tweetId>", "retweet: <tweetId>", "get user: <username>", "get timeline [count: N]"`)
-      }
-
-      // Execute the appropriate command handler based on the parsed command
-      switch (parsedCommand.command) {
-        case 'post tweet':
-          await this.handlePostTweet(parsedCommand.content)
-          break
-
-        case 'search tweets':
-          responseSent = await this.handleSearchTweets(parsedCommand.content)
-          break
-
-        case 'like tweet':
-          await this.handleLikeTweet(parsedCommand.content)
-          break
-
-        case 'retweet':
-          await this.handleRetweet(parsedCommand.content)
-          break
-
-        case 'get user':
-          responseSent = await this.handleGetUser(parsedCommand.content)
-          break
-
-        case 'get timeline':
-          responseSent = await this.handleGetTimeline(parsedCommand.count || 10)
-          break
-
-        default:
-          // This should not happen if parseTwitterCommand is working correctly
-          throw new Error(`Unknown X command: ${input}`)
-      }
-
-      // Only send the original processing response if we haven't already sent a specific response
-      if (!responseSent) {
-        this.client.send({
-          type: 'input:text',
-          data: {
-            text: `Processed X command: ${input}`,
-          },
-        })
-      }
+      const result = await this.runXAction(action)
+      logger.main.log(`X action ${action.action} done`)
+      this.sendEmit(commandId, 'done', `X action ${action.action} done`)
+      this.publishResult(commandId, result)
     }
     catch (error: unknown) {
-      const errorMessage = errorToMessage(error)
-      logger.main.errorWithError('Error handling input:', error)
-      this.client.send({
-        type: 'input:text',
-        data: {
-          text: `Error processing X command: ${errorMessage}`,
-        },
-      })
+      const message = errorMessageFrom(error) ?? 'Unknown error'
+      logger.main.errorWithError(`X action ${action.action} failed:`, error)
+      this.sendEmit(commandId, 'dropped', message)
+      this.publishResult(commandId, `Your X action "${action.action}" failed: ${message}`)
+    }
+  }
+
+  private async runXAction(action: XAction): Promise<string> {
+    switch (action.action) {
+      case 'post': {
+        await this.twitterServices.tweet.postTweet(action.text)
+        return `You posted this tweet on X: ${action.text}`
+      }
+      case 'like': {
+        await this.twitterServices.tweet.likeTweet(action.tweetId)
+        return `You liked the tweet ${action.tweetId} on X.`
+      }
+      case 'retweet': {
+        await this.twitterServices.tweet.retweet(action.tweetId)
+        return `You retweeted the tweet ${action.tweetId} on X.`
+      }
+      case 'search': {
+        const tweets = await this.twitterServices.tweet.searchTweets(action.query)
+        return [
+          `X search results for "${action.query}" (${tweets.length} tweets):`,
+          ...tweets.slice(0, 5).map((t: Tweet) => `- [${t.id}] @${t.author.username}: ${t.text.substring(0, 200)}`),
+        ].join('\n')
+      }
+      case 'user': {
+        const profile = await this.twitterServices.user.getUserProfile(action.username)
+        return [
+          `X profile of @${profile.username}:`,
+          `Display name: ${profile.displayName}`,
+          `Bio: ${profile.bio ?? '(none)'}`,
+          `Followers: ${profile.followersCount ?? 'unknown'}`,
+          `Following: ${profile.followingCount ?? 'unknown'}`,
+        ].join('\n')
+      }
+      case 'timeline': {
+        const tweets = await this.twitterServices.timeline.getTimeline({ count: action.count ?? 10 })
+        return [
+          `Your X timeline (${tweets.length} tweets):`,
+          ...tweets.map((t: Tweet) => `- [${t.id}] @${t.author.username}: ${t.text.substring(0, 200)}`),
+        ].join('\n')
+      }
     }
   }
 

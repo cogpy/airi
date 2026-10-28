@@ -3966,6 +3966,9 @@ importers:
       playwright:
         specifier: 'catalog:'
         version: 1.62.1
+      valibot:
+        specifier: 'catalog:'
+        version: 1.5.0(typescript@6.0.3)
       zod:
         specifier: 'catalog:'
         version: 4.4.3

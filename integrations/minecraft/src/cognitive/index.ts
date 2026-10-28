@@ -4,7 +4,7 @@ import type { CognitiveEngineOptions, MineflayerWithAgents } from './types'
 import { config } from '../composables/config'
 import { DebugService } from '../debug'
 import { McpReplServer } from '../debug/mcp-repl-server'
-import { ChatMessageHandler } from '../libs/mineflayer'
+import { ChatMessageHandler, describeCommandForModel } from '../libs/mineflayer'
 import { createAgentContainer } from './container'
 
 export function CognitiveEngine(options: CognitiveEngineOptions): MineflayerPlugin {
@@ -25,6 +25,7 @@ export function CognitiveEngine(options: CognitiveEngineOptions): MineflayerPlug
       const airiBridge = container.resolve('airiBridge')
       const minecraftContextService = container.resolve('minecraftContextService')
       const debugService = DebugService.getInstance()
+      const logger = container.resolve('logger')
 
       airiBridge.init()
       minecraftContextService.init()
@@ -109,16 +110,22 @@ export function CognitiveEngine(options: CognitiveEngineOptions): MineflayerPlug
 
           if (message.trim().toLowerCase() === '!pause') {
             const paused = brain.togglePaused()
-            bot.bot.chat(`[debug] Cognitive engine ${paused ? 'paused' : 'resumed'} (by ${username}).`)
+            // `!pause` is an operator tool. Its acknowledgement goes to the logger, never to game chat under her name.
+            logger.withFields({ username, paused }).log(`Cognitive engine ${paused ? 'paused' : 'resumed'}`)
             return
           }
+
+          // A `#` command line gets the command list as context, so the model writes any reply to it.
+          const commandNote = describeCommandForModel(message, bot.getCommandNames())
 
           // Bridge chat directly into EventBus as a signal so Reflex can react to it.
           eventBus.emit({
             type: 'signal:chat_message',
             payload: Object.freeze({
               type: 'chat_message',
-              description: `Chat from ${username}: "${message}"`,
+              description: commandNote
+                ? `Chat from ${username}: "${message}" (${commandNote})`
+                : `Chat from ${username}: "${message}"`,
               sourceId: username,
               confidence: 1.0,
               timestamp: Date.now(),

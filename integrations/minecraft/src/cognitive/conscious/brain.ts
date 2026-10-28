@@ -379,13 +379,11 @@ export class Brain {
         this.givenUp = true
         this.giveUpReason = typeof action.params?.reason === 'string' ? action.params.reason : undefined
 
-        try {
-          const reason = this.giveUpReason ? `: ${this.giveUpReason}` : ''
-          bot.bot.chat(`[debug] Gave up${reason}. Waiting for player input.`)
-        }
-        catch (err) {
-          this.deps.logger.withError(err as Error).warn('Brain: Failed to announce giveUp to chat')
-        }
+        // Operator diagnostics go to the logger, not to game chat under her name.
+        // The model already sees this state: the giveUp tool result, and the [STATE] line of later turns.
+        // If she wants to tell players, the model calls chat in the same turn.
+        const reason = this.giveUpReason ? `: ${this.giveUpReason}` : ''
+        this.deps.logger.log('INFO', `Brain: Gave up${reason}. Waiting for player input.`)
       }
 
       if (action.tool === 'chat' && action.params?.feedback === true) {
@@ -846,20 +844,17 @@ export class Brain {
     return `${returnPart}||${logsPart}`
   }
 
-  private emitNoActionBudgetDebugChat(
-    bot: MineflayerWithAgents,
-    reason: 'no_action_budget_exhausted' | 'no_action_stagnated',
-  ): void {
+  /**
+   * Logs why a no-action follow-up was blocked.
+   *
+   * This is an operator diagnostic, so it goes to the logger and never to game chat under her name.
+   * The model gets the same situation as the `system_alert` event that the caller enqueues.
+   */
+  private logNoActionBudgetBlocked(reason: 'no_action_budget_exhausted' | 'no_action_stagnated'): void {
     const message = reason === 'no_action_budget_exhausted'
-      ? `[debug] no-action follow-up budget exhausted (remaining=0).`
-      : `[debug] no-action follow-up blocked due to stagnant eval loop.`
-
-    try {
-      bot.bot.chat(message)
-    }
-    catch (err) {
-      this.deps.logger.withError(err as Error).warn('Brain: Failed to send no-action budget debug chat')
-    }
+      ? 'Brain: No-action follow-up budget exhausted (remaining=0).'
+      : 'Brain: No-action follow-up blocked due to stagnant eval loop.'
+    this.deps.logger.log('INFO', message)
   }
 
   private isErrorLlmLogEntry(entry: LlmLogEntry): boolean {
@@ -1505,7 +1500,7 @@ export class Brain {
       }
 
       this.debugService.log('DEBUG', `No-action follow-up blocked: ${reason}`)
-      this.emitNoActionBudgetDebugChat(bot, reason)
+      this.logNoActionBudgetBlocked(reason)
 
       const followupEvent: BotEvent = {
         type: 'system_alert',

@@ -1,6 +1,7 @@
 import type { Action } from '../../libs/mineflayer'
 import type { Mineflayer } from '../../libs/mineflayer/core'
 
+import { collectSkillProgress, withSkillProgress } from '../../skills/progress'
 import { actionsList } from './llm-actions'
 
 /**
@@ -49,8 +50,10 @@ export class ActionRegistry {
     // Extract parameter values in the order defined by the schema
     const paramValues = Object.keys((schema as any).shape || {}).map(key => parsedParams[key])
 
-    const result = await actionFn(...paramValues)
-    return result ?? `Action ${step.tool} completed`
+    // Skills report sub-step facts (for example "Crafted 4 oak planks.") through the progress
+    // collector instead of game chat. They go back to the model as part of the tool result.
+    const { result, progress } = await collectSkillProgress(async () => actionFn(...paramValues))
+    return withSkillProgress(result ?? `Action ${step.tool} completed`, progress)
   }
 
   /**

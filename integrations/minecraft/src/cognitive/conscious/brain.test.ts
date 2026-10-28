@@ -278,7 +278,8 @@ inv;
       source: { type: 'system', id: 'brain:no_action_budget' },
       payload: { reason: 'no_action_budget_exhausted' },
     })
-    expect(bot.bot.chat).toHaveBeenCalledTimes(1)
+    // The block is an operator diagnostic: it goes to the logger and never to game chat under her name.
+    expect(bot.bot.chat).not.toHaveBeenCalled()
   })
 
   it('resets no-action budget when player chat arrives', async () => {
@@ -324,6 +325,22 @@ inv;
       max: 8,
     })
     expect(deps.llmAgent.callLLM).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs a giveUp instead of sending a debug line to game chat', async () => {
+    const deps: any = createDeps('await skip()')
+    deps.minecraftContextService = { bindBot: vi.fn() }
+    const brain: any = new Brain(deps)
+    const bot = { bot: { chat: vi.fn() } }
+    brain.init(bot as any)
+
+    const onCompleted = deps.taskExecutor.on.mock.calls.find((call: any[]) => call[0] === 'action:completed')?.[1]
+    await onCompleted({ action: { tool: 'giveUp', params: { reason: 'stuck' } }, result: 'Gave up' })
+
+    expect(brain.givenUp).toBe(true)
+    expect(brain.giveUpReason).toBe('stuck')
+    expect(bot.bot.chat).not.toHaveBeenCalled()
+    expect(deps.logger.log).toHaveBeenCalledWith('INFO', 'Brain: Gave up: stuck. Waiting for player input.')
   })
 
   it('keeps suppressing non-chat and non-AIRI perceptions while giveUp is active', async () => {

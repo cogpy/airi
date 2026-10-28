@@ -5,6 +5,7 @@ import { useLogger } from '../../utils/logger'
 import { McData } from '../../utils/mcdata'
 import { craftRecipe } from '../crafting'
 import { moveAway } from '../movement'
+import { reportSkillProgress } from '../progress'
 import { collectBlock } from './collect-block'
 import { gatherWood } from './gather-wood'
 import { getItemCount } from './inventory'
@@ -85,7 +86,7 @@ export async function ensurePlanks(mineflayer: Mineflayer, neededAmount: number)
 
       if (crafted) {
         planksCount = getItemCount(mineflayer, 'planks')
-        mineflayer.bot.chat(`I have crafted ${logsToCraft * PLANKS_PER_LOG} ${logType} planks.`)
+        reportSkillProgress(`Crafted ${logsToCraft * PLANKS_PER_LOG} ${logType} planks.`)
         anyCrafted = true
       }
       else {
@@ -143,7 +144,7 @@ export async function ensureSticks(mineflayer: Mineflayer, neededAmount: number)
         }
         await mineflayer.bot.craft(recipe, Math.ceil((neededAmount - sticksCount) / 4)) // Crafting usually gives 4 sticks
         sticksCount = getItemCount(mineflayer, 'stick')
-        mineflayer.bot.chat(`I have made sticks.`)
+        reportSkillProgress(`Crafted sticks (now ${sticksCount}).`)
       }
       catch (err) {
         logger.withError(err).error('Bot: Failed to craft sticks.')
@@ -362,7 +363,7 @@ async function ensureTool(mineflayer: Mineflayer, toolType: ToolType, quantity: 
         const crafted = await craftRecipe(mineflayer, toolRecipe, 1)
         if (crafted) {
           toolCount++
-          mineflayer.bot.chat(`I have crafted a ${material} ${toolType}.`)
+          reportSkillProgress(`Crafted a ${material} ${toolType}.`)
           if (toolCount >= quantity)
             return true
         }

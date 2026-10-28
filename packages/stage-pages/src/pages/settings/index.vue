@@ -7,8 +7,6 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { settingsSearchProviders } from '../../settings-search-providers'
-
 const router = useRouter()
 const { t } = useI18n()
 const { lastClickedIndex, setLastClickedIndex } = useRippleGridState()
@@ -27,7 +25,7 @@ const settings = computed(() => {
 })
 
 const searchQuery = ref('')
-const searchResults = useSettingsSearch(searchQuery, settingsSearchProviders)
+const searchResults = useSettingsSearch(searchQuery)
 const searching = computed(() => searchQuery.value.trim() !== '')
 const { items: needsAttention, dismiss: dismissNeedsAttention } = useSettingsNeedsAttention()
 </script>
@@ -47,7 +45,7 @@ const { items: needsAttention, dismiss: dismissNeedsAttention } = useSettingsNee
       <SettingsSearchResults v-else :results="searchResults" :query="searchQuery" />
     </div>
     <div v-else pb-12>
-      <!-- Providers whose last check failed. It is secondary, so it scrolls with the list. -->
+      <!-- Settings that keep a feature in use from working. It is secondary, so it scrolls with the list. -->
       <SettingsNeedsAttention
         :items="needsAttention"
         :class="['mb-4']"

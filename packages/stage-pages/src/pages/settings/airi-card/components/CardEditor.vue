@@ -8,6 +8,7 @@ import type { Ref } from 'vue'
 import { errorMessageFrom } from '@moeru/std'
 import { isCustomProvidersDisabled } from '@proj-airi/stage-shared'
 import { useAnalytics } from '@proj-airi/stage-ui/composables'
+import { useSettingsSearchReveal } from '@proj-airi/stage-ui/composables/use-settings-search'
 import { DEFAULT_ARTISTRY_WIDGET_INSTRUCTION } from '@proj-airi/stage-ui/constants/prompts/artistry-instruction'
 import { applyAiriCardEditorModules, getAiriCardEditorModuleSettings, safeParseAiriCardDraft } from '@proj-airi/stage-ui/services/airi-card-editor'
 import { resolveModuleSelection } from '@proj-airi/stage-ui/services/airi-card-modules'
@@ -21,7 +22,7 @@ import { ComboboxSelect } from '@proj-airi/ui/components/form'
 import { useFileDialog } from '@vueuse/core'
 import { isEqual } from 'es-toolkit'
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, toRaw, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 
@@ -398,6 +399,10 @@ watch(activeSection, async (section) => {
 }, { immediate: true, flush: 'post' })
 
 onMounted(() => revealActiveSection(activeSection.value))
+
+// A link that names a setting, such as the voice from the settings home, scrolls to its row and highlights it, as a
+// settings search result does. The editor has its own scroll container, outside the settings layout.
+useSettingsSearchReveal(useTemplateRef<HTMLElement>('section-scroll'))
 
 onUnmounted(() => window.clearTimeout(revealTimer))
 
@@ -879,7 +884,7 @@ function handleBack() {
           </div>
         </div>
 
-        <div :class="['min-h-0 flex-1 overflow-y-auto']">
+        <div ref="section-scroll" :class="['min-h-0 flex-1 overflow-y-auto']">
           <div :class="['mx-auto w-full max-w-6xl', 'px-4 py-5 lg:px-8 lg:py-8']">
             <!-- Error banner -->
             <div

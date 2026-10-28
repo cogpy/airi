@@ -10,8 +10,6 @@ import process from 'node:process'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname, join, normalize } from 'node:path'
 
-import semver from 'semver'
-
 import { activeBundle, updater as ergosphereUpdater } from '@ergosphere-it/electron/main'
 import { useLogg } from '@guiiai/logg'
 import { defineInvokeHandler } from '@moeru/eventa'
@@ -26,17 +24,16 @@ import {
   electronGetUpdaterPreferences,
   electronSetUpdaterPreferences,
 } from '../../../shared/eventa'
+import { channelOfVersion, updateChannels } from '../../../shared/update-channels'
 
 const UPDATE_CHANNEL_ENV_KEY = 'AIRI_UPDATE_CHANNEL'
 
-function getCacheRoot() {
-  // NOTICE: Electron resolves the cache directory per platform/app, but the
-  // shipped type definitions here do not expose `cache`, so we cast the key.
-  return app.getPath('cache' as Parameters<typeof app.getPath>[0])
-}
-
+/**
+ * The updater log is next to the session logs of `app/file-logger.ts`, in the user data directory. So an install with
+ * its own user data directory, for example a test build, writes its own log.
+ */
 function updaterLogFile() {
-  return join(getCacheRoot(), 'stage-tamagotchi-updater', 'updater-log.txt')
+  return join(app.getPath('userData'), 'logs', 'updater-log.txt')
 }
 
 async function logToFile(level: 'INFO' | 'WARN' | 'ERROR', message: string) {
@@ -48,35 +45,15 @@ async function logToFile(level: 'INFO' | 'WARN' | 'ERROR', message: string) {
 export type UpdateLane = ElectronUpdaterChannel
 
 function normalizeLane(value: string | undefined): UpdateLane | undefined {
-  if (!value)
-    return undefined
-
-  switch (value.toLowerCase()) {
-    case 'stable':
-    case 'latest':
-    case 'alpha':
-    case 'beta':
-    case 'nightly':
-    case 'canary':
-    case 'dev':
-      return value.toLowerCase() as UpdateLane
-    default:
-      return undefined
-  }
-}
-
-function laneFromVersion(version: string): UpdateLane {
-  const prerelease = semver.prerelease(version)?.[0]?.toString().toLowerCase()
-  return normalizeLane(prerelease) ?? 'stable'
+  const lane = value?.toLowerCase()
+  return updateChannels.find(channel => channel === lane)
 }
 
 /**
  * The lane that the user or the environment chose: `AIRI_UPDATE_CHANNEL`, then the channel that the user chose.
- * Without one, the app follows the channel of its build, which `ergo.config.ts` derives from the version, so a beta
- * build follows `beta`.
+ * Without one, the app follows the channel of its version, see `channelOfVersion`, so a nightly build follows `nightly`.
  *
- * Each lane is a channel of the ergosphere-it release store with the same name. `latest` is the channel that every
- * release is promoted to. `dev` gets the bundle of each push to main, from `.github/workflows/release-tamagotchi.yml`.
+ * Each lane is a channel of the ergosphere-it release store with the same name.
  */
 export function getChosenUpdateLane(storedLane: UpdateLane | undefined): UpdateLane | undefined {
   return normalizeLane(process.env[UPDATE_CHANNEL_ENV_KEY]?.trim()) ?? storedLane
@@ -140,12 +117,19 @@ export function stateFromStatus(status: UpdaterStatus): AutoUpdaterState {
       return { status: 'disabled' }
     case 'up-to-date':
       return { status: 'not-available', info: infoOf(activeBundle) }
+    case 'manual-install-required':
+      return { status: 'manual-install-required', info: infoOf(status.update) }
     case 'downloading':
-    case 'preparing':
       return {
         status: 'downloading',
         info: infoOf(status.update),
-        // NOTICE: the ergosphere-it updater reports a percentage only, without bytes.
+        progress: { percent: status.percent, bytesPerSecond: status.bytesPerSecond, transferred: status.downloadedBytes, total: status.totalBytes },
+      }
+    case 'preparing':
+      // Work after a download, for example a Sparkle patch, has a percentage and no bytes.
+      return {
+        status: 'downloading',
+        info: infoOf(status.update),
         progress: { percent: status.percent, bytesPerSecond: 0, transferred: 0, total: 0 },
       }
     case 'ready':
@@ -167,6 +151,10 @@ export interface AutoUpdater {
   checkForUpdates: () => Promise<void>
   downloadUpdate: () => Promise<void>
   quitAndInstall: () => Promise<void>
+  /** Main started every module. With the page of the main window, the running bundle reports healthy. */
+  markMainReady: () => void
+  /** The main window mounted its page, also after a page-only update reloaded it. */
+  markMainPageMounted: () => void
   getPreferredUpdateLane: () => UpdateLane | undefined
   setPreferredUpdateLane: (lane: UpdateLane | undefined) => Promise<void>
   subscribe: (callback: (state: AutoUpdaterState) => void) => () => void
@@ -219,6 +207,8 @@ function createDisabledAutoUpdater(options: AutoUpdaterOptions): AutoUpdater {
     async checkForUpdates() {},
     async downloadUpdate() {},
     async quitAndInstall() {},
+    markMainReady() {},
+    markMainPageMounted() {},
     getPreferredUpdateLane() {
       return storedPreferredLane
     },
@@ -293,11 +283,22 @@ export function setupAutoUpdater(options: AutoUpdaterOptions = {}): AutoUpdater 
     log.withError(error).error(reason)
   }
 
-  const chosenLane = getChosenUpdateLane(storedPreferredLane)
-  if (updater.status.status !== 'disabled' && chosenLane)
-    follow(chosenLane)
+  if (updater.status.status !== 'disabled') {
+    // NOTICE:
+    // Up to v0.13.0, the launcher saved `latest`, `alpha`, or `beta`, which the store never had. Each check got a 404.
+    // `src/main/configs/global.ts` maps the choice of the user. This maps the channel that the launcher saved.
+    // Remove it after the next stable release, with the mapping in `global.ts`.
+    const savedRemovedChannel = ['latest', 'alpha', 'beta'].includes(updater.channel)
+    const lane = getChosenUpdateLane(storedPreferredLane) ?? (savedRemovedChannel ? channelOfVersion(activeBundle.version) : undefined)
+    if (lane)
+      follow(lane)
+  }
 
   updater.onEvent((event: LauncherEvent) => {
+    // A download reports progress many times a second. Its start and its end are statuses of their own.
+    if (event.type === 'status' && event.status.status === 'downloading')
+      return
+
     void logToFile(event.type === 'boot-failed' || event.type === 'rollback' ? 'ERROR' : 'INFO', JSON.stringify(event))
   })
 
@@ -314,9 +315,19 @@ export function setupAutoUpdater(options: AutoUpdaterOptions = {}): AutoUpdater 
     broadcast(stateFromStatus(status))
   })
 
-  // `applyUpdate` starts a reload, a restart, or an installer. It stays true, because the app goes away after it
-  // starts.
-  let applyStarted = false
+  // A second click while the update applies waits for the same apply. A reload keeps the app, so a later update can
+  // apply again.
+  let applying: Promise<void> | undefined
+
+  // The launcher keeps a new bundle only when it reports healthy, and rolls it back otherwise. The bundle works when
+  // main started every module and the main window finished loading its stage. After a page-only update, the reloaded
+  // page reports again.
+  let mainReady = false
+  let pageMounted = false
+  function reportHealthWhenReady() {
+    if (mainReady && pageMounted && updater.status.status !== 'disabled')
+      updater.markBundleHealthy()
+  }
 
   return {
     get state() {
@@ -332,17 +343,23 @@ export function setupAutoUpdater(options: AutoUpdaterOptions = {}): AutoUpdater 
       // The updater downloads an update by itself after a check finds it.
     },
     async quitAndInstall() {
-      if (applyStarted || updater.status.status !== 'ready')
+      if (!applying && updater.status.status !== 'ready')
         return
 
-      applyStarted = true
-      try {
-        await updater.applyUpdate()
-      }
-      catch (error) {
-        applyStarted = false
-        broadcastUpdaterError(error, 'applyUpdate() failed')
-      }
+      applying ??= updater.applyUpdate()
+        .catch(error => broadcastUpdaterError(error, 'applyUpdate() failed'))
+        .finally(() => {
+          applying = undefined
+        })
+      await applying
+    },
+    markMainReady() {
+      mainReady = true
+      reportHealthWhenReady()
+    },
+    markMainPageMounted() {
+      pageMounted = true
+      reportHealthWhenReady()
     },
     getPreferredUpdateLane() {
       return storedPreferredLane
@@ -353,8 +370,7 @@ export function setupAutoUpdater(options: AutoUpdaterOptions = {}): AutoUpdater 
 
       storedPreferredLane = lane
       options.setStoredUpdateLane?.(lane)
-      // Auto goes back to the lane of the running version, as `ergo.config.ts` derives the channel of a build.
-      const next = getChosenUpdateLane(lane) ?? laneFromVersion(activeBundle.version)
+      const next = getChosenUpdateLane(lane) ?? channelOfVersion(activeBundle.version)
       if (updater.status.status !== 'disabled' && follow(next))
         await updater.checkForUpdates().catch(error => broadcastUpdaterError(error, 'checkForUpdates() failed'))
     },

@@ -271,7 +271,7 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
 
   async function handleSparkNotifyWithReaction(
     event: WebSocketEventOf<'spark:notify'>,
-    options?: SparkNotifyResponseControl & { fallbackText?: string },
+    options?: SparkNotifyResponseControl,
   ) {
     await handleIncomingSparkNotify(event, options)
 
@@ -281,7 +281,7 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
       ?.message
       ?.trim()
 
-    return reaction || options?.fallbackText || ''
+    return reaction || ''
   }
 
   function enqueueDueTasks(now: number) {

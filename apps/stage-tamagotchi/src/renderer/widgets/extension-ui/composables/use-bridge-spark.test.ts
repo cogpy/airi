@@ -15,6 +15,7 @@ describe('publishWidgetSparkNotifyReaction', () => {
    * expect(emit).toHaveBeenCalledWith(widgetsIframeBroadcastEvent, expect.objectContaining({ payload: expect.objectContaining({ text: 'Nice tactic.' }) }))
    */
   it('dispatches spark notify requests and broadcasts commentary responses to the iframe', async () => {
+    // An older iframe still sends `fallbackResponseText`. The host never uses it: every reaction comes from the model.
     const dispatchSparkNotifyReaction = vi.fn(async () => 'Nice tactic.')
     const emit = vi.fn()
 
@@ -49,7 +50,6 @@ describe('publishWidgetSparkNotifyReaction', () => {
       kind: 'ping',
       urgency: 'immediate',
       forceTextResponse: true,
-      fallbackResponseText: 'Fallback text.',
       headline: 'AIRI move',
       note: 'Explain the chess move.',
       destinations: ['character'],
@@ -99,9 +99,9 @@ describe('publishWidgetSparkNotifyReaction', () => {
 
   /**
    * @example
-   * expect(dispatchSparkNotifyReaction).toHaveBeenCalledWith(expect.objectContaining({ fallbackResponseText: '' }))
+   * expect(emit).toHaveBeenCalledWith(widgetsIframeBroadcastEvent, expect.objectContaining({ payload: { requestId: 'req-quick', text: '' } }))
    */
-  it('allows empty fallback response text for optional commentary phases', async () => {
+  it('answers with empty text when the model gives no reaction', async () => {
     const dispatchSparkNotifyReaction = vi.fn(async () => '')
     const emit = vi.fn()
 
@@ -112,7 +112,6 @@ describe('publishWidgetSparkNotifyReaction', () => {
       },
       payload: {
         requestId: 'req-quick',
-        fallbackResponseText: '',
         sparkNotify: {
           headline: 'Quick move',
           forceTextResponse: true,
@@ -125,8 +124,10 @@ describe('publishWidgetSparkNotifyReaction', () => {
 
     expect(result).toBe(true)
     expect(dispatchSparkNotifyReaction).toHaveBeenCalledWith(expect.objectContaining({
-      fallbackResponseText: '',
       headline: 'Quick move',
+    }))
+    expect(emit).toHaveBeenCalledWith(widgetsIframeBroadcastEvent, expect.objectContaining({
+      payload: { requestId: 'req-quick', text: '' },
     }))
   })
 
@@ -151,7 +152,6 @@ describe('publishWidgetSparkNotifyReaction', () => {
       },
       payload: {
         requestId: 'req-call',
-        fallbackResponseText: 'fallback',
         calls: [
           {
             name: 'chess.play',
@@ -179,7 +179,6 @@ describe('publishWidgetSparkNotifyReaction', () => {
     expect(dispatchSparkNotifyReaction).not.toHaveBeenCalled()
     expect(dispatchSparkNotifyPerformance).toHaveBeenCalledWith(expect.objectContaining({
       headline: 'A move is ready',
-      fallbackResponseText: 'fallback',
       timeoutMs: 15000,
       calls: [
         {

@@ -311,7 +311,6 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
 
     try {
       return await characterOrchestratorStore.handleSparkNotifyWithReaction(event, {
-        fallbackText: options.fallbackResponseText,
         forceResponse: options.forceResponse,
         forceTextResponse: options.forceTextResponse,
         forceSparkCommandResponse: options.forceSparkCommandResponse,
@@ -319,8 +318,9 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
       })
     }
     catch (error) {
-      console.warn('[context-bridge] spark:notify handling failed; using fallback', error)
-      return options.fallbackResponseText
+      // The character says nothing when the model fails: no written line stands in for her.
+      console.warn('[context-bridge] spark:notify handling failed; returning no reaction', error)
+      return ''
     }
   }
 
@@ -337,13 +337,13 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
     return await new Promise<string>((resolve) => {
       const timeout = setTimeout(() => {
         sparkNotifyBridgeWaiters.delete(requestId)
-        resolve(options.fallbackResponseText)
+        resolve('')
       }, 5000)
 
       sparkNotifyBridgeWaiters.set(requestId, {
         resolve: ({ reaction }) => {
           clearTimeout(timeout)
-          resolve(reaction || options.fallbackResponseText)
+          resolve(reaction)
         },
         timeout,
       })
@@ -378,7 +378,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
     const calledPromise = new Promise<SparkNotifyPerformanceResult>((resolve) => {
       const disposers = calls.map(call => turn.on(call.manifest, async (payload) => {
         await call.handler(payload)
-        const reaction = await (reactionPromise ?? Promise.resolve(latestReaction || options.fallbackResponseText))
+        const reaction = await (reactionPromise ?? Promise.resolve(latestReaction))
         resolve({
           type: 'called',
           name: call.manifest.name,
@@ -402,15 +402,15 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
         return reaction
       })
       .catch(() => {
-        latestReaction = options.fallbackResponseText
-        return options.fallbackResponseText
+        latestReaction = ''
+        return ''
       })
 
     const turnDonePromise = turn.done.then(async (result): Promise<SparkNotifyPerformanceResult> => {
-      const reaction = await (reactionPromise ?? Promise.resolve(latestReaction || options.fallbackResponseText))
+      const reaction = await (reactionPromise ?? Promise.resolve(latestReaction))
       return {
         type: result.type === 'cancelled' ? 'cancelled' : 'completed',
-        reaction: reaction || options.fallbackResponseText,
+        reaction,
       }
     })
 
@@ -438,7 +438,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
     return await new Promise<SparkNotifyPerformanceResult>((resolve) => {
       const timeout = setTimeout(() => {
         sparkNotifyBridgeWaiters.delete(requestId)
-        resolve(createFallbackPerformanceResult(options, 'timeout'))
+        resolve({ type: 'timeout', reaction: '' })
       }, Math.max(1, options.timeoutMs ?? 5000))
 
       sparkNotifyBridgeWaiters.set(requestId, {
@@ -448,7 +448,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
             await findPerformanceCall(options, performance.name)?.handler(performance.payload)
           }
 
-          resolve(performance ?? createFallbackPerformanceResult(options, 'completed', reaction))
+          resolve(performance ?? { type: 'completed', reaction })
         },
         timeout,
       })
@@ -465,17 +465,6 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
         },
       })
     })
-  }
-
-  function createFallbackPerformanceResult(
-    options: SparkNotifyReactionOptions,
-    type: Extract<SparkNotifyPerformanceResult['type'], 'completed' | 'timeout'>,
-    reaction?: string,
-  ): SparkNotifyPerformanceResult {
-    return {
-      type,
-      reaction: reaction || options.fallbackResponseText,
-    }
   }
 
   function findPerformanceCall(options: SparkNotifyReactionOptions, name: string) {

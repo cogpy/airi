@@ -11,10 +11,13 @@ const MAX_PREVIEW_LINE_LENGTH = 200
  * The settings pages play this line through a speech provider. The model
  * writes it, so the preview is something the character says, not fixed text.
  */
-export function speechPreviewConversation(options: { characterName?: string, language: string }): Conversation {
+export function speechPreviewConversation(options: { characterName?: string, identity?: string, language: string }): Conversation {
   const speaker = options.characterName ? `${options.characterName}, the character` : 'the character'
+  const identity = options.identity?.trim()
   return {
     turns: [
+      // The card's identity prompt sets her voice, as it does in chat.
+      ...(identity ? [{ type: 'system' as const, id: 'speech-preview-identity', authority: 'system' as const, content: [{ type: 'text' as const, text: identity }] }] : []),
       {
         type: 'system',
         id: 'speech-preview-instructions',

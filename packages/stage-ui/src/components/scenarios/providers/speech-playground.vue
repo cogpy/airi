@@ -42,8 +42,10 @@ const testText = ref('')
 const chatModelSet = computed(() => Boolean(activeProvider.value && activeModel.value))
 
 async function writeTestLine() {
+  const before = testText.value
   const line = await writeLine()
-  if (line)
+  // Text the user typed while the model wrote stays.
+  if (line && testText.value === before)
     testText.value = line
 }
 

@@ -12,6 +12,15 @@ describe('speechPreviewConversation', () => {
   })
 })
 
+it('puts the card identity first when there is one', () => {
+  const [identity, instructions] = speechPreviewConversation({ identity: 'You are ReLU, a calm robot.', language: 'en' }).turns
+  const textOf = (turn: typeof identity) => turn?.type === 'system' ? turn.content.map(part => part.type === 'text' ? part.text : '').join('') : ''
+
+  expect(textOf(identity)).toBe('You are ReLU, a calm robot.')
+  expect(textOf(instructions)).toContain('Reply with the line only.')
+  expect(speechPreviewConversation({ identity: '  ', language: 'en' }).turns).toHaveLength(2)
+})
+
 describe('parseSpeechPreviewLine', () => {
   it('keeps the first line without its quotes', () => {
     expect(parseSpeechPreviewLine('"Hi, can you hear me?"\nmore')).toBe('Hi, can you hear me?')

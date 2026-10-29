@@ -23,7 +23,8 @@ const PREVIEW_LINE_TIMEOUT_MS = 30_000
 export function useSpeechPreviewLine() {
   const { generateText } = useTextGeneration()
   const { activeProvider, activeModel } = storeToRefs(useConsciousnessStore())
-  const { activeCard } = storeToRefs(useAiriCardStore())
+  const cardStore = useAiriCardStore()
+  const { activeCard, activeCardId } = storeToRefs(cardStore)
   const { locale } = useI18n()
   const writing = ref(false)
   const error = ref<string>()
@@ -35,7 +36,7 @@ export function useSpeechPreviewLine() {
     error.value = undefined
     try {
       const reply = await generateText({ providerId: activeProvider.value, model: activeModel.value })(
-        speechPreviewConversation({ characterName: activeCard.value?.name, language: locale.value }),
+        speechPreviewConversation({ characterName: activeCard.value?.name, identity: cardStore.getSystemPrompt(activeCardId.value), language: locale.value }),
         AbortSignal.timeout(PREVIEW_LINE_TIMEOUT_MS),
       )
       return parseSpeechPreviewLine(reply)

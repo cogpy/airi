@@ -73,8 +73,10 @@ const { writeLine, writing: writingLine, error: writeLineError } = useSpeechPrev
 const testText = ref('')
 
 async function writeTestLine() {
+  const before = testText.value
   const line = await writeLine()
-  if (line)
+  // Text the user typed while the model wrote stays.
+  if (line && testText.value === before)
     testText.value = line
 }
 

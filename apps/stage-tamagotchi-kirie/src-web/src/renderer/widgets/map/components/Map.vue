@@ -26,30 +26,17 @@ const props = withDefaults(defineProps<{
   title: undefined,
   eta: '--',
   distance: '--',
-  mode: 'Transit',
-  status: 'Smooth ride',
-  originLabel: 'You',
-  destinationLabel: 'Airport',
+  mode: undefined,
+  status: undefined,
+  originLabel: '--',
+  destinationLabel: undefined,
   accent: '#38bdf8',
 })
 
+// Marker positions on the map surface when the model gives no coordinates.
+// The widget shows no route, stops, or place names that the model did not give.
 const fallbackOrigin: MapPoint = { x: 22, y: 72 }
 const fallbackDestination: MapPoint = { x: 78, y: 26 }
-const fallbackRoute: MapPoint[] = [
-  { x: 22, y: 72 },
-  { x: 32, y: 64 },
-  { x: 44, y: 58 },
-  { x: 52, y: 50 },
-  { x: 60, y: 42 },
-  { x: 70, y: 34 },
-  { x: 78, y: 26 },
-]
-
-const fallbackStops: MapPoint[] = [
-  { x: 32, y: 64, label: 'Midtown' },
-  { x: 52, y: 50, label: 'Central' },
-  { x: 70, y: 34, label: 'Skyline' },
-]
 
 function clamp(value: number) {
   return Math.min(100, Math.max(0, value))
@@ -63,13 +50,13 @@ function clampPoint(point: MapPoint): MapPoint {
   }
 }
 
-const heading = computed(() => props.title ?? `To ${props.destinationLabel ?? 'Airport'}`)
+const heading = computed(() => props.title ?? (props.destinationLabel ? `To ${props.destinationLabel}` : ''))
 
 const resolvedOrigin = computed(() => clampPoint(props.origin ?? fallbackOrigin))
 const resolvedDestination = computed(() => clampPoint(props.destination ?? fallbackDestination))
 
 const routePoints = computed(() => {
-  const points = (props.route?.length ? props.route : fallbackRoute).map(clampPoint)
+  const points = (props.route ?? []).map(clampPoint)
   if (!points.length)
     return [resolvedOrigin.value, resolvedDestination.value]
 
@@ -83,7 +70,7 @@ const routePoints = computed(() => {
   return points
 })
 
-const stopPoints = computed(() => (props.stops?.length ? props.stops : fallbackStops).map(clampPoint))
+const stopPoints = computed(() => (props.stops ?? []).map(clampPoint))
 
 const routePath = computed(() => routePoints.value
   .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
@@ -122,11 +109,11 @@ function pointStyle(point: MapPoint) {
             <span :class="['truncate']">{{ heading }}</span>
           </div>
           <div :class="['mt-1', 'flex', 'items-center', 'gap-2', 'text-xs', 'text-neutral-300/80']">
-            <span :class="['inline-flex', 'items-center', 'gap-1', 'rounded-full', 'bg-white/10', 'px-2', 'py-0.5']">
+            <span v-if="props.mode" :class="['inline-flex', 'items-center', 'gap-1', 'rounded-full', 'bg-white/10', 'px-2', 'py-0.5']">
               <span :class="['i-lucide-route', 'text-[0.7rem]']" />
               <span>{{ props.mode }}</span>
             </span>
-            <span :class="['truncate']">{{ props.status }}</span>
+            <span v-if="props.status" :class="['truncate']">{{ props.status }}</span>
           </div>
         </div>
         <div :class="['text-right']">
@@ -199,7 +186,7 @@ function pointStyle(point: MapPoint) {
             Destination
           </div>
           <div :class="['mt-1', 'truncate', 'font-semibold']">
-            {{ props.destinationLabel }}
+            {{ props.destinationLabel ?? '--' }}
           </div>
         </div>
         <div :class="['rounded-xl', 'bg-white/8', 'px-3', 'py-2', 'text-neutral-200', 'shadow-[inset_0_0_0_1px_rgba(148,163,184,0.15)]']">

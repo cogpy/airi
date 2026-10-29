@@ -264,7 +264,7 @@ LATEST ${target === 'assistant' ? 'COMPANION RESPONSE' : 'USER INPUT'}:
             blob = await response.blob()
           }
 
-          const entryId = await backgroundStore.addBackground('journal', blob, analysis.title || 'Autonomous Scene', analysis.prompt, cardId)
+          const entryId = await backgroundStore.addBackground('journal', blob, analysis.title ?? '', analysis.prompt, cardId)
           artistLog('Generation complete and added to journal.', { entryId })
 
           // 5. Route based on spawnMode
@@ -317,7 +317,7 @@ LATEST ${target === 'assistant' ? 'COMPANION RESPONSE' : 'USER INPUT'}:
                     entryId,
                     imageUrl: result.imageUrl || result.base64,
                     prompt: analysis.prompt,
-                    title: analysis.title || 'Autonomous Scene',
+                    title: analysis.title ?? '',
                     _skipIngestion: true,
                   },
                   size: 'm',
@@ -354,7 +354,7 @@ LATEST ${target === 'assistant' ? 'COMPANION RESPONSE' : 'USER INPUT'}:
                     entryId,
                     imageUrl: result.imageUrl || result.base64,
                     prompt: analysis.prompt,
-                    title: analysis.title || 'Autonomous Scene',
+                    title: analysis.title ?? '',
                     _skipIngestion: true,
                   },
                   size: 'm',

@@ -88,7 +88,8 @@ async function executeCreateImageJournalEntry(params: { prompt?: string, title?:
     globals: globalArtistryConfig.globals,
   }
 
-  const title = params.title || `Generation ${new Date().toLocaleString()}`
+  // Only the model's own title names the entry. Without one the entry has no title.
+  const title = params.title?.trim() ?? ''
 
   // Resolve mode: explicit param > character fallback > global default (inline)
   const spawnMode = cardArtistry?.spawnMode

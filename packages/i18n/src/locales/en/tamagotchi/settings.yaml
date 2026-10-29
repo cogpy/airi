@@ -18,6 +18,7 @@ microphone-permission:
     reset: Reset decision
 spotlight:
   errors:
+    title: Spotlight error
     unknown: Unknown error
     prefix: 'Something went wrong: {message}'
     shortcutRegistrationFailed: 'Something went wrong: failed to register Spotlight shortcut.'

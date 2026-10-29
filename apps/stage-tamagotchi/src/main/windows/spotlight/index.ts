@@ -74,9 +74,14 @@ export function setupSpotlightWindowManager(params: {
     }
   }
 
-  function showNotification(body: string, onClick?: () => void) {
+  /**
+   * Shows a desktop notification. A reply from the character is titled with her name.
+   * A system error gets its own title, so it never reads as something she said.
+   */
+  function showNotification(body: string, options: { error?: boolean, onClick?: () => void } = {}) {
+    const { error, onClick } = options
     const notification = new Notification({
-      title: 'AIRI',
+      title: error ? params.i18n.t('tamagotchi.spotlight.errors.title') : 'AIRI',
       body,
       ...(onClick && !isMacOS ? { timeoutType: 'never' as const } : {}),
     })
@@ -132,7 +137,10 @@ export function setupSpotlightWindowManager(params: {
       if (!payload || !isFromSpotlightWindow(options?.raw.ipcMainEvent.sender.id))
         return
 
-      showNotification(payload.body, () => void openChatWindowFromNotification())
+      showNotification(payload.body, {
+        error: payload.error,
+        onClick: payload.error ? undefined : () => void openChatWindowFromNotification(),
+      })
     })
 
     await load(window, withHashRoute(baseUrl(getRendererRoot()), '/spotlight', {
@@ -203,7 +211,7 @@ export function setupSpotlightWindowManager(params: {
 
   if (!shortcutResult.ok) {
     log.warn(`Failed to register Spotlight shortcut: ${shortcutResult.reason}`)
-    showNotification(params.i18n.t('tamagotchi.spotlight.errors.shortcutRegistrationFailed'))
+    showNotification(params.i18n.t('tamagotchi.spotlight.errors.shortcutRegistrationFailed'), { error: true })
   }
 
   return {

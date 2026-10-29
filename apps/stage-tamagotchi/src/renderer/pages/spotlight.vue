@@ -65,6 +65,7 @@ async function handleSend() {
   }
   catch (error) {
     await showResultNotification({
+      error: true,
       body: t('tamagotchi.spotlight.errors.prefix', {
         message: errorMessageFrom(error) ?? t('tamagotchi.spotlight.errors.unknown'),
       }),

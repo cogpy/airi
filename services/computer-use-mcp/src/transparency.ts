@@ -268,17 +268,17 @@ export function explainNextStep(advisories: StrategyAdvisory[], task?: ActiveTas
     .map((a) => {
       switch (a.kind) {
         case 'focus_app_first':
-          return `First, I need to focus the correct application. ${a.reason}`
+          return `Advice: focus the correct application first. ${a.reason}`
         case 'take_screenshot_first':
-          return `First, I need to take a screenshot to assess the current state. ${a.reason}`
+          return `Advice: take a screenshot first to assess the current state. ${a.reason}`
         case 'use_terminal_instead':
-          return `I'll use a terminal command instead of a screenshot — it's faster and more reliable.`
+          return `Advice: a terminal command is faster and more reliable than a screenshot here.`
         case 'read_error_first':
-          return `I need to review the previous error before proceeding. ${a.reason}`
+          return `Advice: review the previous error before proceeding. ${a.reason}`
         case 'retry_after_error':
           return `Retrying after a recoverable error. ${a.reason}`
         case 'approval_rejected_replan':
-          return `The previous action was rejected. I'm adjusting my plan. ${a.reason}`
+          return `The previous action was rejected. Advice: adjust the plan. ${a.reason}`
         case 'abort_task':
           return `Stopping the current task due to too many failures. ${a.reason}`
         case 'wait_and_retry':

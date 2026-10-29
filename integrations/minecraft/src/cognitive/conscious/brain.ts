@@ -272,6 +272,11 @@ function isUrgentReflexAlert(signal: PerceptionSignal): boolean {
   return signal.type === 'reflex_alert' && signal.metadata?.urgency === 'urgent'
 }
 
+/** Critical health. No plugin recovers her, so her model must hear it even during giveUp. */
+function isCriticalHealth(signal: PerceptionSignal): boolean {
+  return signal.metadata?.action === 'low_health'
+}
+
 function getEventPriority(event: BotEvent): number {
   if (event.type === 'perception') {
     const signal = event.payload as PerceptionSignal
@@ -2315,7 +2320,7 @@ export class Brain {
       return true
 
     const signal = event.payload as PerceptionSignal
-    if (isUrgentReflexAlert(signal))
+    if (isUrgentReflexAlert(signal) || isCriticalHealth(signal))
       return false
 
     return !this.canResumeFromGiveUp(signal)

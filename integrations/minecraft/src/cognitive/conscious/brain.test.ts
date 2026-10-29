@@ -371,6 +371,30 @@ inv;
     expect(brain.givenUp).toBe(true)
   })
 
+  // https://github.com/cogpy/airi/pull/31#discussion_r4407408775
+  //
+  // ROOT CAUSE:
+  //
+  // The giveUp gate let through only urgent reflex alerts, chat and AIRI
+  // commands. Critical health arrives as `saliency_high` with action
+  // `low_health`, so it stayed muted while nothing else recovered her.
+  //
+  // We fixed this by letting critical health through the gate.
+  it('handles critical health while giveUp is active, without leaving giveUp', async () => {
+    const deps: any = createDeps('await skip()')
+    const brain: any = new Brain(deps)
+    brain.givenUp = true
+    brain.giveUpReason = 'stuck'
+    const event = createNonResumingPerceptionEvent()
+    event.payload.description = 'Health critical (6/20).'
+    event.payload.metadata = { action: 'low_health', health: '6' }
+
+    await brain.processEvent({} as any, event)
+
+    expect(deps.llmAgent.callLLM).toHaveBeenCalledTimes(1)
+    expect(brain.givenUp).toBe(true)
+  })
+
   it('suppresses an ambient reflex observation while giveUp is active', async () => {
     const deps: any = createDeps('await skip()')
     const brain: any = new Brain(deps)

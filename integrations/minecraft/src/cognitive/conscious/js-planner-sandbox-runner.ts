@@ -5,6 +5,8 @@ import type {
   WorkerToParentMessage,
 } from './js-planner-sandbox-protocol'
 
+import process from 'node:process'
+
 import { fork } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -31,6 +33,15 @@ function ancestorPath(path: string, levels: number): string {
 }
 
 const PNPM_MODULE_STORE_PATH = realpathSync(ancestorPath(ISOLATED_VM_ENTRY_PATH, 4))
+
+// NOTICE:
+// The worker is a .ts file. Node 22 needs --experimental-transform-types to load it.
+// Node 26 strips types by default and rejects that flag as "bad option", so the worker exited at once.
+// Source: CI on Node 26.13.0, "node: bad option: --experimental-transform-types".
+// Remove when the oldest supported Node strips types by default.
+const TYPE_TRANSFORM_FLAGS = process.allowedNodeEnvironmentFlags.has('--experimental-transform-types')
+  ? ['--experimental-transform-types']
+  : []
 
 function cloneStructured<T>(value: T): T {
   if (typeof value === 'undefined')
@@ -78,7 +89,7 @@ export async function executeSandboxWorker(
         '--allow-fs-read=/etc/alpine-release',
         '--disable-proto=throw',
         '--frozen-intrinsics',
-        '--experimental-transform-types',
+        ...TYPE_TRANSFORM_FLAGS,
         '--no-warnings',
       ],
       serialization: 'advanced',

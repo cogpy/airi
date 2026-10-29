@@ -1,6 +1,7 @@
 import { REST, Routes, SlashCommandBuilder } from 'discord.js'
 
 export * from './ping'
+export * from './reply'
 export * from './summon'
 
 export async function registerCommands(token: string, clientId: string) {

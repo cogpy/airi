@@ -8,9 +8,9 @@ Text messages and voice transcriptions both bind to `discord:channel:<id>`. With
 
 ## Slash commands
 
-The bot has `/ping` and `/summon`. The bot posts no fixed text. It acknowledges each command at once, then tells the model what happened (for example, the gateway latency or the voice channel that it joined). The bot posts the reply that the model writes.
+The bot has `/ping` and `/summon`. The bot posts no fixed text. It acknowledges each command at once, then sends what happened to the stage as a chat input (for example, the gateway latency or the voice channel that it joined). The active character card on the stage answers it, the same way it answers a mention in that channel. The bot posts that answer as the command reply.
 
-The model is the OpenAI-compatible provider in `OPENAI_API_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL`. A locally served model works. If the model fails, the bot deletes the pending reply and posts nothing.
+If the stage does not answer within 14 minutes, the bot deletes the pending reply and posts nothing.
 
 ## Getting started
 
@@ -46,10 +46,6 @@ Fill-in the following credentials as configurations:
 ```shell
 DISCORD_TOKEN=''
 DISCORD_BOT_CLIENT_ID=''
-
-OPENAI_MODEL=''
-OPENAI_API_KEY=''
-OPENAI_API_BASE_URL=''
 
 ELEVENLABS_API_KEY=''
 ELEVENLABS_API_BASE_URL=''

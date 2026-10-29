@@ -1,21 +1,20 @@
+import type { Discord } from '@proj-airi/server-shared/types'
 import type { CacheType, ChatInputCommandInteraction } from 'discord.js'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handlePing } from './ping'
-import { replyWithModel } from './reply'
-
-const generateTextMock = vi.hoisted(() => vi.fn())
-
-vi.mock('@xsai/generate-text', () => ({
-  generateText: generateTextMock,
-}))
+import { CommandReplies } from './reply'
 
 interface FakeInteraction {
+  id: string
   commandName: string
+  channelId: string
+  guildId: string | null
+  guild: { name: string } | null
   deferred: boolean
   replied: boolean
-  user: { displayName: string }
+  user: { id: string, displayName: string, username: string }
   client: { ws: { ping: number } }
   deferReply: ReturnType<typeof vi.fn>
   editReply: ReturnType<typeof vi.fn>
@@ -24,12 +23,16 @@ interface FakeInteraction {
   reply: ReturnType<typeof vi.fn>
 }
 
-function createInteraction(): FakeInteraction {
+function createInteraction(id = 'interaction-1'): FakeInteraction {
   const interaction: FakeInteraction = {
+    id,
     commandName: 'ping',
+    channelId: 'channel-7',
+    guildId: 'guild-3',
+    guild: { name: 'Moe Lab' },
     deferred: false,
     replied: false,
-    user: { displayName: 'Neko' },
+    user: { id: 'user-9', displayName: 'Neko', username: 'neko' },
     client: { ws: { ping: 42 } },
     deferReply: vi.fn(async () => {
       interaction.deferred = true
@@ -47,70 +50,88 @@ function asInteraction(interaction: FakeInteraction) {
   return interaction as unknown as ChatInputCommandInteraction<CacheType>
 }
 
-describe('replyWithModel', () => {
+describe('commandReplies', () => {
+  let sent: Array<{ outcome: string, discord: Discord }>
+  let replies: CommandReplies
+
   beforeEach(() => {
-    generateTextMock.mockReset()
+    vi.useFakeTimers()
+    sent = []
+    replies = new CommandReplies((outcome, discord) => sent.push({ outcome, discord }), 1000)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   // ROOT CAUSE:
   //
-  // `/ping` replied with the fixed string 'Pong!' from her bot account, without the model.
-  it('posts the text that the model writes from the /ping outcome', async () => {
-    generateTextMock.mockResolvedValue({ text: '<think>hmm</think>I am here, 42 ms away!' })
+  // `/ping` replied with the fixed string 'Pong!'. A later fix let a separate model write the reply,
+  // but that model had no character card, so the reply did not speak as the active character.
+  it('sends the /ping outcome to the stage character with the interaction id', async () => {
     const interaction = createInteraction()
 
-    await handlePing(asInteraction(interaction))
+    await handlePing(asInteraction(interaction), replies)
 
     expect(interaction.deferReply).toHaveBeenCalledOnce()
-    expect(interaction.deferReply.mock.invocationCallOrder[0]).toBeLessThan(generateTextMock.mock.invocationCallOrder[0])
-    const [request] = generateTextMock.mock.calls[0]
-    expect(request.messages.at(-1).content).toContain('/ping')
-    expect(request.messages.at(-1).content).toContain('42 ms')
+    expect(sent).toHaveLength(1)
+    expect(sent[0].outcome).toContain('/ping')
+    expect(sent[0].outcome).toContain('42 ms')
+    expect(sent[0].discord.channelId).toBe('channel-7')
+    expect(sent[0].discord.guildName).toBe('Moe Lab')
+    expect(sent[0].discord.interactionId).toBe('interaction-1')
+    expect(interaction.editReply).not.toHaveBeenCalled()
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
+  it('posts the character answer as the command reply', async () => {
+    const interaction = createInteraction()
+    await replies.reply(asInteraction(interaction), 'The user ran /summon.')
+
+    const delivered = await replies.deliver('interaction-1', 'I am here, 42 ms away!')
+
+    expect(delivered).toBe(true)
     expect(interaction.editReply).toHaveBeenCalledWith('I am here, 42 ms away!')
-    expect(interaction.reply).not.toHaveBeenCalled()
   })
 
-  it('posts nothing when the model fails', async () => {
-    generateTextMock.mockRejectedValue(new Error('provider down'))
+  it('leaves an answer for another interaction to the channel', async () => {
     const interaction = createInteraction()
+    await replies.reply(asInteraction(interaction), 'The user ran /summon.')
 
-    await replyWithModel(asInteraction(interaction), 'The user ran /summon.')
+    const delivered = await replies.deliver('interaction-2', 'Hello there.')
 
+    expect(delivered).toBe(false)
     expect(interaction.editReply).not.toHaveBeenCalled()
-    expect(interaction.followUp).not.toHaveBeenCalled()
-    expect(interaction.reply).not.toHaveBeenCalled()
-    expect(interaction.deleteReply).toHaveBeenCalledOnce()
   })
 
-  it('posts nothing when the model returns empty text', async () => {
-    generateTextMock.mockResolvedValue({ text: '   ' })
+  it('posts nothing and deletes the pending reply when the stage does not answer', async () => {
     const interaction = createInteraction()
+    await replies.reply(asInteraction(interaction), 'The user ran /summon.')
 
-    await replyWithModel(asInteraction(interaction), 'The user ran /summon.')
+    await vi.advanceTimersByTimeAsync(1000)
 
+    expect(interaction.deleteReply).toHaveBeenCalledOnce()
     expect(interaction.editReply).not.toHaveBeenCalled()
-    expect(interaction.deleteReply).toHaveBeenCalledOnce()
+    expect(await replies.deliver('interaction-1', 'Too late.')).toBe(false)
   })
 
-  it('splits a long model reply into follow-up messages', async () => {
-    const longText = `${'a'.repeat(1500)} ${'b'.repeat(1500)}`
-    generateTextMock.mockResolvedValue({ text: longText })
+  it('splits a long answer into follow-up messages', async () => {
     const interaction = createInteraction()
+    await replies.reply(asInteraction(interaction), 'The user ran /summon.')
 
-    await replyWithModel(asInteraction(interaction), 'The user ran /summon.')
+    await replies.deliver('interaction-1', `${'a'.repeat(1500)} ${'b'.repeat(1500)}`)
 
     expect(interaction.editReply).toHaveBeenCalledWith('a'.repeat(1500))
     expect(interaction.followUp).toHaveBeenCalledWith('b'.repeat(1500))
   })
 
   it('does not defer again when the command is already deferred', async () => {
-    generateTextMock.mockResolvedValue({ text: 'Joined!' })
     const interaction = createInteraction()
     interaction.deferred = true
 
-    await replyWithModel(asInteraction(interaction), 'You joined the voice channel "General".')
+    await replies.reply(asInteraction(interaction), 'You joined the voice channel "General".')
 
     expect(interaction.deferReply).not.toHaveBeenCalled()
-    expect(interaction.editReply).toHaveBeenCalledWith('Joined!')
+    expect(sent).toHaveLength(1)
   })
 })

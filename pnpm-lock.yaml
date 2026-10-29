@@ -3645,9 +3645,6 @@ importers:
       '@xsai/generate-speech':
         specifier: 'catalog:'
         version: 0.5.1
-      '@xsai/generate-text':
-        specifier: 'catalog:'
-        version: 0.5.1
       '@xsai/generate-transcription':
         specifier: 'catalog:'
         version: 0.5.1

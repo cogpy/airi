@@ -29,7 +29,6 @@
     "@snazzah/davey": "catalog:",
     "@xsai-ext/providers": "catalog:",
     "@xsai/generate-speech": "catalog:",
-    "@xsai/generate-text": "catalog:",
     "@xsai/generate-transcription": "catalog:",
     "@xsai/shared-chat": "catalog:",
     "discord.js": "catalog:",

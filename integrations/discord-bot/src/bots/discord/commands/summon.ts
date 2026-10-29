@@ -12,6 +12,8 @@ import type {
   GuildMember,
 } from 'discord.js'
 
+import type { CommandReplies } from './reply'
+
 import { Buffer } from 'node:buffer'
 import { EventEmitter } from 'node:events'
 import { pipeline } from 'node:stream'
@@ -34,7 +36,7 @@ import { openaiTranscribe } from '../../../pipelines/tts'
 import { convertOpusToWav } from '../../../utils/audio'
 import { AudioMonitor } from '../../../utils/audio-monitor'
 import { OpusDecoder } from '../../../utils/opus'
-import { deferCommandReply, replyWithModel } from './reply'
+import { deferCommandReply } from './reply'
 
 function isValidTranscription(text: string): boolean {
   if (!text || text.includes('[BLANK_AUDIO]'))
@@ -89,7 +91,7 @@ export class VoiceManager extends EventEmitter {
     speakingEnd: (userId: string) => void
   }> = new Map()
 
-  constructor(client: DiscordClient, airiClient: AiriClient) {
+  constructor(client: DiscordClient, airiClient: AiriClient, private readonly replies: CommandReplies) {
     super()
     this.client = client
     this.airiClient = airiClient
@@ -558,7 +560,7 @@ export class VoiceManager extends EventEmitter {
 
       const currVoiceChannel = (interaction.member as GuildMember).voice.channel
       if (!currVoiceChannel) {
-        await replyWithModel(interaction, `The user ${userName} ran /summon to call you into their voice channel. `
+        await this.replies.reply(interaction, `The user ${userName} ran /summon to call you into their voice channel. `
         + 'The user is not in a voice channel, so you cannot join. The user must join a voice channel first.')
         return
       }
@@ -568,12 +570,12 @@ export class VoiceManager extends EventEmitter {
       }
       catch (error) {
         this.logger.withError(error).log('Error joining voice channel')
-        await replyWithModel(interaction, `The user ${userName} ran /summon. You tried to join the voice channel "${currVoiceChannel.name}", `
+        await this.replies.reply(interaction, `The user ${userName} ran /summon. You tried to join the voice channel "${currVoiceChannel.name}", `
         + `but it failed: ${errorMessageFrom(error) ?? 'no error message'}.`)
         return
       }
 
-      await replyWithModel(interaction, `The user ${userName} ran /summon. You joined the voice channel "${currVoiceChannel.name}". `
+      await this.replies.reply(interaction, `The user ${userName} ran /summon. You joined the voice channel "${currVoiceChannel.name}". `
       + 'You can now hear and talk to the people in it.')
     }
     catch (error) {
@@ -588,7 +590,7 @@ export class VoiceManager extends EventEmitter {
 
       const connection = interaction.guildId ? this.getVoiceConnection(interaction.guildId) : undefined
       if (!connection) {
-        await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. `
+        await this.replies.reply(interaction, `The user ${userName} asked you to leave the voice channel. `
         + 'You are not in a voice channel in this server, so there is nothing to leave.')
         return
       }
@@ -598,12 +600,12 @@ export class VoiceManager extends EventEmitter {
       }
       catch (error) {
         this.logger.withError(error).log('Error leaving voice channel')
-        await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. `
+        await this.replies.reply(interaction, `The user ${userName} asked you to leave the voice channel. `
         + `You tried to leave, but it failed: ${errorMessageFrom(error) ?? 'no error message'}.`)
         return
       }
 
-      await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. You left it.`)
+      await this.replies.reply(interaction, `The user ${userName} asked you to leave the voice channel. You left it.`)
     }
     catch (error) {
       this.logger.withError(error).log('Error handling the leave command')

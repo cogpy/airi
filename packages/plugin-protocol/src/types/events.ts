@@ -14,6 +14,11 @@ export interface Discord {
   guildId?: string
   guildName?: string
   channelId?: string
+  /**
+   * Slash command interaction that this input answers.
+   * The reply event carries it back, so the bot edits the command's pending reply.
+   */
+  interactionId?: string
 }
 
 export interface PluginIdentity {

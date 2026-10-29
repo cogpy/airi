@@ -233,7 +233,6 @@ const MAX_CONVERSATION_HISTORY_MESSAGES = 200
 const NO_ACTION_FOLLOWUP_BUDGET_DEFAULT = 3
 const NO_ACTION_FOLLOWUP_BUDGET_MAX = 8
 const NO_ACTION_STAGNATION_REPEAT_LIMIT = 2
-const DEFAULT_LLM_ATTEMPT_TIMEOUT_MS = 60_000
 const ERROR_BURST_GUARD_SOURCE_ID = 'brain:error_burst_guard'
 const ERROR_BURST_THRESHOLD = 3
 const ERROR_BURST_WINDOW_TURNS = 5
@@ -561,8 +560,8 @@ export class Brain {
     try {
       return await this.deps.llmAgent.callLLM({
         messages,
+        // No time limit: a slow, locally served model still gets to answer. A pause aborts the call.
         abortSignal: abortController.signal,
-        timeoutMs: DEFAULT_LLM_ATTEMPT_TIMEOUT_MS,
       })
     }
     finally {

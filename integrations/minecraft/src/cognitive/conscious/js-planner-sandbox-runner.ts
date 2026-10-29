@@ -70,6 +70,12 @@ export async function executeSandboxWorker(
         '--allow-addons',
         `--allow-fs-read=${SANDBOX_SOURCE_DIRECTORY}`,
         `--allow-fs-read=${PNPM_MODULE_STORE_PATH}`,
+        // NOTICE:
+        // isolated-vm loads node-gyp-build, which calls fs.existsSync('/etc/alpine-release') to detect Alpine.
+        // Under --permission, Node 22 throws on that call where newer Node returns false, so the sandbox fails to start.
+        // Source: node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/node-gyp-build.js (isAlpine).
+        // Remove when the supported Node versions all return false from existsSync for a denied path.
+        '--allow-fs-read=/etc/alpine-release',
         '--disable-proto=throw',
         '--frozen-intrinsics',
         '--experimental-transform-types',

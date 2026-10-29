@@ -304,8 +304,9 @@ function renderTopDown(bot: Bot, options: Required<MapOptions>): MapResult {
 
   // Build the grid: each cell is [symbol, elevation_delta]
   const size = r * 2 + 1
-  const grid: string[][] = Array.from({ length: size }).fill(Array.from({ length: size }).fill(' '))
-  const elevations: (number | null)[][] = Array.from({ length: size }).fill(Array.from({ length: size }).fill(null))
+  // Each row needs its own array. A shared row makes every write land in all rows.
+  const grid: string[][] = Array.from({ length: size }, () => Array.from<string>({ length: size }).fill(' '))
+  const elevations: (number | null)[][] = Array.from({ length: size }, () => Array.from<number | null>({ length: size }).fill(null))
   const usedCategories = new Set<BlockCategory>()
 
   for (let dz = -r; dz <= r; dz++) {
@@ -454,7 +455,7 @@ function renderCrossSection(bot: Bot, options: Required<MapOptions>): MapResult 
   const yTop = cy + r
   const yBottom = cy - r
 
-  const grid: string[][] = Array.from({ length: height }).fill(Array.from({ length: width }).fill(' '))
+  const grid: string[][] = Array.from({ length: height }, () => Array.from<string>({ length: width }).fill(' '))
   const usedCategories = new Set<BlockCategory>()
 
   for (let dy = -r; dy <= r; dy++) {

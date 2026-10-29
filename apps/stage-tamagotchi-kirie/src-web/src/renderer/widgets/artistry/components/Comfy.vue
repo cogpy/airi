@@ -158,7 +158,7 @@ async function handleClose() {
             </div>
             <div class="max-w-xs w-full px-6 space-y-2">
               <div class="truncate text-center text-sm text-white/90 font-medium tracking-widest uppercase">
-                {{ actionLabel || 'Thinking...' }}
+                {{ actionLabel || 'Generating image' }}
               </div>
               <div class="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                 <div
@@ -175,7 +175,7 @@ async function handleClose() {
               <div class="mb-1 flex items-center justify-between px-1">
                 <div class="flex items-center gap-1.5 text-[9px] text-white/50 font-mono">
                   <span class="size-1.5 animate-pulse rounded-full bg-yellow-400" />
-                  <span class="tracking-widest uppercase opacity-80">{{ actionLabel || 'Manifesting...' }}</span>
+                  <span class="tracking-widest uppercase opacity-80">{{ actionLabel || 'Generating image' }}</span>
                 </div>
                 <div class="text-[9px] text-yellow-400/80 font-bold font-mono">
                   {{ Math.round(progress) }}%

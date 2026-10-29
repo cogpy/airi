@@ -119,7 +119,7 @@ export const useBackgroundStore = defineStore('background-entries', () => {
               id: newId,
               type: 'journal',
               characterId: val.characterId,
-              title: val.title || 'Migrated Journal Image',
+              title: val.title ?? '',
               blob: val.blob,
               prompt: val.prompt,
               createdAt: val.createdAt || Date.now(),
@@ -288,7 +288,8 @@ export const useBackgroundStore = defineStore('background-entries', () => {
       id,
       type,
       characterId: resolvedCharacterId,
-      title: title.trim() || 'Untitled Background',
+      // A user upload without a name gets an app label. A journal or selfie image keeps only the model's title.
+      title: title.trim() || (type === 'scene' ? 'Untitled Background' : ''),
       blob,
       prompt,
       remixId,

@@ -258,7 +258,7 @@ export class RuleEngine {
     }
 
     if (nowMs < detectorState.lastUpdateMs) {
-      this.recordDetectorDecision(Object.freeze({
+      const snapshot: DetectorDecisionSnapshot = Object.freeze({
         ruleName: rule.name,
         mode: rule.detector.mode,
         groupKey,
@@ -267,7 +267,9 @@ export class RuleEngine {
         windowMs: rule.detector.windowMs,
         eventTs: nowMs,
         decision: 'ignored_out_of_order',
-      }))
+      })
+      this.recordDetectorDecision(snapshot)
+      this.deps.logger.withFields({ ...snapshot }).warn('RuleEngine: ignored out-of-order event')
       return
     }
 
@@ -283,7 +285,7 @@ export class RuleEngine {
     // Update state
     this.detectors.set(stateKey, newDetectorState)
 
-    this.recordDetectorDecision(Object.freeze({
+    const snapshot: DetectorDecisionSnapshot = Object.freeze({
       ruleName: rule.name,
       mode: rule.detector.mode,
       groupKey,
@@ -292,10 +294,12 @@ export class RuleEngine {
       windowMs: rule.detector.windowMs,
       eventTs: nowMs,
       decision: fired ? 'fired' : 'matched_not_fired',
-    }))
+    })
+    this.recordDetectorDecision(snapshot)
 
-    // If fired, emit signal
+    // If fired, emit signal. Only fired decisions are logged, so a busy rule does not flood the log.
     if (fired) {
+      this.deps.logger.withFields({ ...snapshot }).log('RuleEngine: detector fired')
       this.emitSignal(rule, event)
     }
   }

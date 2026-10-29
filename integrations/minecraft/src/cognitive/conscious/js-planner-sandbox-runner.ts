@@ -5,6 +5,8 @@ import type {
   WorkerToParentMessage,
 } from './js-planner-sandbox-protocol'
 
+import process from 'node:process'
+
 import { fork } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -31,6 +33,15 @@ function ancestorPath(path: string, levels: number): string {
 }
 
 const PNPM_MODULE_STORE_PATH = realpathSync(ancestorPath(ISOLATED_VM_ENTRY_PATH, 4))
+
+// NOTICE:
+// The worker is a .ts file. Node 22 needs --experimental-transform-types to load it.
+// Node 26 strips types by default and rejects that flag as "bad option", so the worker exited at once.
+// Source: CI on Node 26.13.0, "node: bad option: --experimental-transform-types".
+// Remove when the oldest supported Node strips types by default.
+const TYPE_TRANSFORM_FLAGS = process.allowedNodeEnvironmentFlags.has('--experimental-transform-types')
+  ? ['--experimental-transform-types']
+  : []
 
 function cloneStructured<T>(value: T): T {
   if (typeof value === 'undefined')
@@ -70,9 +81,15 @@ export async function executeSandboxWorker(
         '--allow-addons',
         `--allow-fs-read=${SANDBOX_SOURCE_DIRECTORY}`,
         `--allow-fs-read=${PNPM_MODULE_STORE_PATH}`,
+        // NOTICE:
+        // isolated-vm loads node-gyp-build, which calls fs.existsSync('/etc/alpine-release') to detect Alpine.
+        // Under --permission, Node 22 throws on that call where newer Node returns false, so the sandbox fails to start.
+        // Source: node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/node-gyp-build.js (isAlpine).
+        // Remove when the supported Node versions all return false from existsSync for a denied path.
+        '--allow-fs-read=/etc/alpine-release',
         '--disable-proto=throw',
         '--frozen-intrinsics',
-        '--experimental-transform-types',
+        ...TYPE_TRANSFORM_FLAGS,
         '--no-warnings',
       ],
       serialization: 'advanced',

@@ -7,7 +7,7 @@ import { useLogg } from '@guiiai/logg'
 import { Client as ServerChannel } from '@proj-airi/server-sdk'
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 
-import { handlePing, registerCommands, VoiceManager } from '../bots/discord/commands'
+import { CommandReplies, handlePing, registerCommands, VoiceManager } from '../bots/discord/commands'
 import { splitDiscordMessage } from '../utils/split-message'
 
 const log = useLogg('DiscordAdapter').useGlobalConfig()
@@ -57,6 +57,7 @@ export class DiscordAdapter {
   private discordClient: Client
   private discordToken: string
   private voiceManager: VoiceManager
+  private commandReplies: CommandReplies
   private isReconnecting = false
 
   constructor(config: DiscordAdapterConfig) {
@@ -88,7 +89,21 @@ export class DiscordAdapter {
       url: config.airiUrl,
     })
 
-    this.voiceManager = new VoiceManager(this.discordClient, this.airiClient)
+    // Slash commands are answered by the stage character, like a mention in the same channel.
+    this.commandReplies = new CommandReplies((outcome, discord) => {
+      this.airiClient.send({
+        type: 'input:text',
+        data: {
+          text: outcome,
+          overrides: {
+            messagePrefix: '(Discord slash command event): ',
+            binding: `discord:channel:${discord.channelId}`,
+          },
+          discord,
+        },
+      })
+    })
+    this.voiceManager = new VoiceManager(this.discordClient, this.airiClient, this.commandReplies)
 
     this.setupEventHandlers()
   }
@@ -161,6 +176,9 @@ export class DiscordAdapter {
       try {
         const message = (event.data as { message?: { content: string } }).message
         const discordContext = event.data['gen-ai:chat']?.input?.data.discord
+
+        if (message?.content && discordContext?.interactionId && await this.commandReplies.deliver(discordContext.interactionId, message.content))
+          return
 
         if (message?.content && discordContext?.channelId) {
           const channel = await this.discordClient.channels.fetch(discordContext.channelId)
@@ -252,7 +270,7 @@ export class DiscordAdapter {
 
       switch (interaction.commandName) {
         case 'ping':
-          await handlePing(interaction)
+          await handlePing(interaction, this.commandReplies)
           break
         case 'summon':
           await this.voiceManager.handleJoinChannelCommand(interaction)

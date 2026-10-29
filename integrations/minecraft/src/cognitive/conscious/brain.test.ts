@@ -806,9 +806,11 @@ describe('brain control action queue', () => {
     })
 
     const brain: any = new Brain(deps)
+    // The action never resolves, so any bound shows that the turn does not wait for it.
+    // The bound leaves room for starting the sandbox process, which takes about 400 ms on a slow machine.
     const outcome = await Promise.race([
       brain.processEvent({} as any, createPerceptionEvent()).then(() => 'done'),
-      new Promise(resolve => setTimeout(resolve, 250, 'timeout')),
+      new Promise(resolve => setTimeout(resolve, 2000, 'timeout')),
     ])
 
     expect(outcome).toBe('done')

@@ -63,6 +63,8 @@ describe('speech provider configuration persistence', () => {
     const testVoice = screen.getByRole('button', { name: 'Test Voice', exact: true })
     await expect.element(testVoice).toBeDisabled()
     await page.getByPlaceholder('sk-...').fill('issue-2449-test-key')
+    // No chat model is set here, so the preview line stays empty until the user types one.
+    await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(testVoice, { timeout: 1500 }).toBeEnabled()
     await expect.element(screen.getByText('Please enter an API key to test the voice.')).not.toBeInTheDocument()
     expect(useProviderConfigStore(pinia).getProviderConfig(providerId)?.apiKey).toBe('issue-2449-test-key')
@@ -93,6 +95,8 @@ describe('speech provider configuration persistence', () => {
       },
     }))
     const screen = await renderPage()
+    // No chat model is set here, so the preview line stays empty until the user types one.
+    await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(screen.getByRole('button', { name: 'Test Voice', exact: true })).toBeEnabled()
     expect(useProviderConfigStore(pinia).getProviderConfig(providerId)?.apiKey).toBe('issue-2449-test-key')
   })
@@ -104,6 +108,8 @@ describe('speech provider configuration persistence', () => {
     const testVoice = screen.getByRole('button', { name: 'Test Voice', exact: true })
     await expect.element(testVoice).toBeDisabled()
     await page.getByPlaceholder('API Key').fill('issue-2449-comet-key')
+    // No chat model is set here, so the preview line stays empty until the user types one.
+    await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(testVoice, { timeout: 1500 }).toBeEnabled()
   })
 

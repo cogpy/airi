@@ -66,28 +66,20 @@ const textJournalMarkdown = computed(() => {
   if (!isTextJournalCreate.value)
     return ''
 
-  const title = parsedArgs.value?.title?.trim() || 'Journal Entry'
+  // Only the model's own title is shown. A missing title adds no heading.
+  const title = parsedArgs.value?.title?.trim()
   const content = parsedArgs.value?.content?.trim() || ''
-  return `# ${title}\n\n${content}`
+  return title ? `# ${title}\n\n${content}` : content
 })
 
 const imageJournalMarkdown = computed(() => {
   if (!isImageJournalCreate.value)
     return ''
 
-  const title = parsedArgs.value?.title?.trim() || 'Untitled Image'
+  // Only the model's own title and prompt are shown. The status badge shows the mode.
+  const title = parsedArgs.value?.title?.trim()
   const prompt = parsedArgs.value?.prompt?.trim() || ''
-  const mode = parsedArgs.value?.mode || 'inline'
-
-  let footer = ''
-  if (mode === 'bg')
-    footer = '\n\n> **Scene Shift**: Setting this as the active background...'
-  else if (mode === 'widget')
-    footer = '\n\n> **Canvas Created**: Spawning an artistry widget for you...'
-  else
-    footer = '\n\n> **Sharing**: Sending a quick sketch to our chat history...'
-
-  return `### ${title}\n\n*${prompt}*${footer}`
+  return title ? `### ${title}\n\n*${prompt}*` : `*${prompt}*`
 })
 
 const imageJournalResult = computed(() => {
@@ -125,7 +117,7 @@ const imageStatusBadgeClass = computed(() => {
 
 function openGeneratedImagePreview() {
   openImagePreview({
-    title: parsedArgs.value?.title || 'Generated Image',
+    title: parsedArgs.value?.title?.trim() ?? '',
     url: generatedImageUrl.value,
   })
 }
@@ -161,7 +153,7 @@ function openGeneratedImagePreview() {
       <div class="mb-2 flex items-center gap-2">
         <div class="i-solar:notebook-bookmark-bold-duotone text-base text-emerald-500" />
         <div class="rounded-full bg-emerald-500/12 px-2.5 py-1 text-xs text-emerald-700 dark:text-emerald-300">
-          Saved to long-term memory
+          {{ state === 'done' ? 'Saved to long-term memory' : 'Saving to long-term memory' }}
         </div>
       </div>
       <MarkdownRenderer :content="textJournalMarkdown" />

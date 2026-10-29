@@ -2061,8 +2061,8 @@ describe('chat store contract', () => {
     expect(ingestContextMessageMock).toHaveBeenCalledTimes(2)
     expect(ingestContextMessageMock).toHaveBeenNthCalledWith(1, runtimePromptContext)
     expect(ingestContextMessageMock).toHaveBeenNthCalledWith(2, minecraftContext)
-    expect(ingestContextMessageMock.mock.invocationCallOrder[1]).toBeLessThan(
-      getContextsSnapshotMock.mock.invocationCallOrder.at(-1)!,
+    expect(ingestContextMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      getContextsSnapshotMock.mock.invocationCallOrder[0],
     )
     if (composedMessages[1].type !== 'user')
       throw new Error('Expected user turn')

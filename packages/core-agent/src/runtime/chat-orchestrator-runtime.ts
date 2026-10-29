@@ -642,15 +642,18 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
    * this send's own contexts for its prompt.
    */
   function ingestRuntimeContexts(sessionId: string): Record<string, ContextMessage[]> {
-    const before = deps.context.snapshot()
+    const ingestedIds = new Set<string>()
     for (const provider of deps.runtimeContextProviders ?? []) {
       const contextMessage = provider(sessionId)
-      if (contextMessage)
+      if (contextMessage) {
         deps.context.ingest(contextMessage)
+        ingestedIds.add(contextMessage.id)
+      }
     }
-    const after = deps.context.snapshot()
-    const idsOf = (messages: ContextMessage[] | undefined) => (messages ?? []).map(message => message.id).join('\n')
-    return Object.fromEntries(Object.entries(after).filter(([source, messages]) => idsOf(messages) !== idsOf(before[source])))
+    if (ingestedIds.size === 0)
+      return {}
+    const snapshot = deps.context.snapshot()
+    return Object.fromEntries(Object.entries(snapshot).filter(([, messages]) => messages.some(message => ingestedIds.has(message.id))))
   }
 
   function getStablePromptTimestamp(message: ChatHistoryItem, fallbackCreatedAt: number) {

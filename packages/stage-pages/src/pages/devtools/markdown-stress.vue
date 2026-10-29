@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n'
 
 const stressStore = useMarkdownStressStore()
 const { t } = useI18n()
-const { capturing, events, isMock, lastRun, payloadPreview, scheduleDelayMs, runState } = storeToRefs(stressStore)
+const { capturing, canRunOnline, events, lastRun, payloadPreview, scheduleDelayMs, runState } = storeToRefs(stressStore)
 
 const previewText = computed(() => payloadPreview.value ?? '')
 const lastRunSummary = computed(() => {
@@ -29,10 +29,6 @@ function toggleCapture() {
     stressStore.stopCapture()
   else
     stressStore.startCapture()
-}
-
-function toggleMode() {
-  stressStore.toggleMockMode()
 }
 </script>
 
@@ -57,7 +53,7 @@ function toggleMode() {
           class="w-full sm:w-auto"
           icon="i-solar:play-circle-bold-duotone"
           :text="runState === 'running' ? 'Abort run' : runState === 'scheduled' ? 'Unschedule' : 'Replay'"
-          :disabled="!isMock && !stressStore.canRunOnline"
+          :disabled="!canRunOnline"
           @click="stressStore.scheduleRun()"
         >
           {{ runState === 'running' ? 'Abort now' : runState === 'scheduled' ? 'Cancel replay' : 'Replay to provider' }}
@@ -78,14 +74,6 @@ function toggleMode() {
           @click="stressStore.exportCsv()"
         >
           Export last run
-        </ButtonBar>
-        <ButtonBar
-          class="w-full sm:w-auto"
-          :icon="isMock ? 'i-solar:simplerockets-bold-duotone' : 'i-solar:cloud-bold-duotone'"
-          :text="isMock ? 'Mode: Mock' : 'Mode: Live'"
-          @click="toggleMode"
-        >
-          {{ isMock ? 'Switch to live provider' : 'Switch to mock stream' }}
         </ButtonBar>
       </div>
 

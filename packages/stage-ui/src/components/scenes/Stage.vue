@@ -32,9 +32,10 @@ import StageAvatarModelMissing from './stage-avatar-model-missing.vue'
 import StageRenderError from './stage-render-error.vue'
 
 // import { useDuckDb } from '../../composables/use-duck-db'
-import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
+import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value } from '../../constants/emotions'
 import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
 import { syncedRoles, usePiniaSynced } from '../../libs/pinia/synced-context'
+import { createTouchGate, touchNotice } from '../../libs/stage-touch/touch-notice'
 import { getSpeechBusContext, speechOutputGetPlaybackState, speechOutputPlaybackStateChangedEvent } from '../../services/speech/bus'
 import { useLlmStreamingControlStore } from '../../stores/ai/chat-llm/streaming-control'
 import { useAudioContext, useSpeakingStore } from '../../stores/audio'
@@ -161,27 +162,7 @@ const { audioContext } = useAudioContext()
 const currentAudioSource = ref<AudioBufferSourceNode>()
 const speechOutputControlStore = useSpeechOutputControlStore()
 const { speechMuted, speechVolume } = storeToRefs(speechOutputControlStore)
-const lastVrmInteractionAt = new Map<VrmInteractionTarget, number>()
-const VRM_INTERACTION_COOLDOWN_MS = 450
-
-function getVrmInteractionExpression(target: VrmInteractionTarget) {
-  if (target === 'head')
-    return 'happy'
-  if (target === 'leftFoot' || target === 'rightFoot')
-    return 'relaxed'
-  return 'surprised'
-}
-
-function onVRMInteract(target: VrmInteractionTarget) {
-  const now = Date.now()
-  const lastTriggeredAt = lastVrmInteractionAt.get(target) ?? 0
-  if (now - lastTriggeredAt < VRM_INTERACTION_COOLDOWN_MS)
-    return
-  lastVrmInteractionAt.set(target, now)
-  vrmViewerRef.value?.setExpression(getVrmInteractionExpression(target), 1)
-}
-
-const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatStore()
+const { notifyConversation, onBeforeMessageComposed, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = useChatStore()
 // This context registers the hooks that speak a reply, so chat actions must run here.
 const releaseSpeechPlayerRole = usePiniaSynced().addRole(syncedRoles.speechPlayer)
 const chatHookCleanups: Array<() => void> = []
@@ -288,6 +269,28 @@ const chatPresence = computed<PresenceBubbleState>(() => chatSending.value ? pre
 const presenceBubble = computed<PresenceBubbleState>(() => presenceOverride.value ?? chatPresence.value)
 const speechStore = useSpeechStore()
 const chatSession = useChatSessionStore()
+
+const touchGate = createTouchGate()
+
+/**
+ * A touch on her model goes to the model as a notice in the active
+ * conversation. She reacts through what she writes: the stage plays no fixed
+ * expression or motion for a touch.
+ */
+function onStageTouch(part: string) {
+  const sessionId = chatSession.activeSessionId
+  if (!sessionId || !touchGate(chatSending.value))
+    return
+  void notifyConversation(sessionId, { source: 'stage-touch', text: touchNotice(part) })
+}
+
+function onVRMInteract(target: VrmInteractionTarget) {
+  onStageTouch(target)
+}
+
+function onLive2DHit(hitAreas: string[]) {
+  onStageTouch(hitAreas[0] ?? '')
+}
 const backgroundStore = useBackgroundStore()
 const { activeBackgroundUrl } = storeToRefs(backgroundStore)
 
@@ -580,11 +583,6 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   await setupLipSync()
 }))
 
-chatHookCleanups.push(onBeforeSend(async (_message, context) => {
-  if (holdsVoice(context))
-    currentMotion.value = { group: EmotionThinkMotionName }
-}))
-
 chatHookCleanups.push(onTokenLiteral(async (literal, context) => {
   if (holdsVoice(context) && !speechMuted.value)
     await voice.getSpeech(context)?.write(literal)
@@ -735,6 +733,7 @@ defineExpose({
         :live2d-max-fps="live2dMaxFps"
         :live2d-render-scale="live2dRenderScale"
         @error="handleStageRenderError"
+        @hit="onLive2DHit"
       />
       <ThreeScene
         v-if="stageModelRenderer === 'vrm' && showStage"

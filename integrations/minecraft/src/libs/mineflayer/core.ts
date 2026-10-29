@@ -148,6 +148,11 @@ export class Mineflayer extends EventEmitter<EventHandlers> {
     this.commands.set(commandName, cb)
   }
 
+  /** Names of the registered `#` commands, without the `#` prefix. */
+  public getCommandNames(): string[] {
+    return Array.from(this.commands.keys())
+  }
+
   public onTick(event: TickEvents, cb: TickEventsHandler<TickEvents>) {
     this.ticker.on(event, cb)
   }
@@ -412,16 +417,9 @@ export class Mineflayer extends EventEmitter<EventHandlers> {
         return
       }
 
-      // Built-in commands
-      switch (cleanCommand) {
-        case 'help': {
-          const commandList = Array.from(this.commands.keys()).concat(['help'])
-          this.bot.chat(`Available commands: ${commandList.map(cmd => `#${cmd}`).join(', ')}`)
-          break
-        }
-        default:
-          this.bot.chat(`Unknown command: ${cleanCommand}`)
-      }
+      // The command system never replies in game chat under her name. The chat line also reaches
+      // the brain, with the command list from `getCommandNames()`, and the model writes any reply.
+      this.logger.withFields({ sender, command: cleanCommand }).log('Command has no handler')
     })
   }
 }

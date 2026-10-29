@@ -2,63 +2,39 @@ import type { Logg } from '@guiiai/logg'
 
 import type { MineflayerWithAgents } from '../types'
 import type { ReflexModeId } from './modes'
-import type { ReflexBehavior } from './types/behavior'
+import type { ReflexAlert, ReflexBehavior } from './types/behavior'
 
-import pathfinderModel from 'mineflayer-pathfinder'
-
-import { errorMessageFrom } from '@moeru/std'
-import { computed, effect, signal } from 'alien-signals'
+import { signal } from 'alien-signals'
 
 import { ReflexContext } from './context'
 import { selectMode } from './modes'
 
-/**
- * Deadlock breaker for the active-behavior slot lock.
- *
- * While an async reflex behavior's promise is in flight its slot stays locked, so a long
- * survival action (e.g. the ~1.5s auto-eat equip+consume) cannot be preempted mid-animation
- * by another reflex re-equipping (which would cancel `bot.consume()`) and drop the survival
- * bite in exactly the low-health combat case auto-eat exists to handle. Normal completion
- * releases the slot earlier via the promise's `.finally`; this cap only bounds a behavior
- * whose promise never settles, so reflex selection can resume instead of locking forever.
- */
-const BEHAVIOR_RUN_DEADLOCK_MS = 10_000
+/** A reflex alert together with the id of the behavior that raised it. */
+export interface ReflexRuntimeAlert extends ReflexAlert {
+  behaviorId: string
+}
 
+/**
+ * Perception runtime for reflex behaviors.
+ *
+ * Each tick refreshes the reflex context from the bot and asks every behavior whether its situation
+ * is present. A behavior that triggers raises a {@link ReflexAlert} through `onAlert`. The runtime
+ * never moves, equips, eats, or fights for the bot. The conscious brain (the model) decides every
+ * action.
+ */
 export class ReflexRuntime {
-  private readonly followMovementsByBot = new WeakMap<object, InstanceType<typeof pathfinderModel.Movements>>()
   private readonly context = new ReflexContext()
   private readonly behaviors: ReflexBehavior[] = []
   private readonly runHistory = new Map<string, { lastRunAt: number }>()
   private readonly mode = signal<ReflexModeId>('idle')
   private readonly activeBehaviorId = signal<string | null>(null)
-  private readonly activeBot = signal<MineflayerWithAgents | null>(null)
-  private readonly followPlayer = computed(() => this.context.autonomy().followPlayer)
-  private readonly followDistance = computed(() => this.context.autonomy().followDistance)
-  private readonly reflexEngaged = computed(() => this.context.autonomy().reflexEngaged)
-  private readonly followTargetVisible = signal(false)
-  private activeBehaviorUntil: number | null = null
-  private activeAutoFollowPlayer: string | null = null
 
   public constructor(
     private readonly deps: {
       logger: Logg
+      onAlert?: (alert: ReflexRuntimeAlert) => void
     },
-  ) {
-    effect(() => {
-      const bot = this.activeBot()
-      if (!bot)
-        return
-
-      this.reconcileAutoFollow(
-        bot,
-        this.followPlayer(),
-        this.followDistance(),
-        this.mode(),
-        this.followTargetVisible(),
-        this.reflexEngaged(),
-      )
-    })
-  }
+  ) {}
 
   public getContext(): ReflexContext {
     return this.context
@@ -68,58 +44,37 @@ export class ReflexRuntime {
     return this.mode()
   }
 
-  public setActiveBot(bot: MineflayerWithAgents | null): void {
-    if (!bot)
-      this.followTargetVisible(false)
-    this.activeBot(bot)
-  }
-
+  /**
+   * Sets the player that the model chose to follow.
+   *
+   * The runtime does not move the bot. The follow-distance reflex raises an alert when this player
+   * moves out of range, and the model decides whether to go after them.
+   */
   public setAutoFollowTarget(playerName: string, followDistance = 2): void {
-    const bot = this.activeBot()
-    if (bot)
-      this.followTargetVisible(Boolean(bot.bot.players[playerName]?.entity))
-
     this.context.updateAutonomy({
       followPlayer: playerName,
       followDistance: Math.max(0, followDistance),
-      followLastError: null,
     })
   }
 
-  public clearAutoFollowTarget(bot: MineflayerWithAgents | null): void {
-    this.followTargetVisible(false)
-    this.stopAutoFollow(bot)
+  public clearAutoFollowTarget(): void {
     this.context.updateAutonomy({
       followPlayer: null,
       followDistance: 2,
-      followActive: false,
-      followLastError: null,
     })
   }
 
   /**
-   * Single entrypoint for mode changes. Runs onExit/onEnter side effects
-   * only when the mode actually changes. Pass bot when available so mode handlers can perform
-   * movement/interrupt cleanup.
+   * Single entrypoint for mode changes. Modes only filter which reflex behaviors can raise alerts.
    */
-  public transitionMode(mode: ReflexModeId, bot: MineflayerWithAgents | null): void {
+  public transitionMode(mode: ReflexModeId): void {
     if (mode === this.mode())
       return
 
-    const prev = this.mode()
-    this.onExitMode(prev, bot)
     this.mode(mode)
-    this.onEnterMode(mode, bot)
   }
 
-  private onEnterMode(mode: ReflexModeId, _bot: MineflayerWithAgents | null): void {
-    if (mode === 'work' || mode === 'wander' || mode === 'alert')
-      this.stopAutoFollow(_bot)
-  }
-
-  private onExitMode(_mode: ReflexModeId, _bot: MineflayerWithAgents | null): void {
-  }
-
+  /** Id of the behavior that raised the latest alert, for the debug dashboard. */
   public getActiveBehaviorId(): string | null {
     return this.activeBehaviorId()
   }
@@ -128,16 +83,20 @@ export class ReflexRuntime {
     this.behaviors.push(behavior)
   }
 
-  public tick(bot: MineflayerWithAgents, deltaMs: number): string | null {
+  /**
+   * Refreshes the context and raises the alerts of all triggered behaviors.
+   *
+   * Returns:
+   * - The ids of the behaviors that raised an alert in this tick, highest score first.
+   */
+  public tick(bot: MineflayerWithAgents): string[] {
     const now = Date.now()
 
-    this.setActiveBot(bot)
-    this.updateFollowTargetVisibility(bot)
     this.context.updateNow(now)
 
     const entity = bot.bot.entity
     if (!entity)
-      return null
+      return []
 
     // TODO: future refactor: update ReflexContext via world_update/self_update events instead of polling Mineflayer state.
     this.context.updateSelf({
@@ -192,24 +151,24 @@ export class ReflexRuntime {
 
     // Allow explicit modes like 'work' / 'wander' to remain until changed by caller.
     // Otherwise, compute from context automatically.
-    // TODO: consider letting 'alert' preempt work/wander so survival can override tasks.
     if (this.mode() !== 'work' && this.mode() !== 'wander') {
       const nextMode = selectMode(this.context.getSnapshot())
-      this.transitionMode(nextMode, bot)
+      this.transitionMode(nextMode)
     }
-
-    if (this.activeBehaviorUntil && now < this.activeBehaviorUntil)
-      return null
-
-    this.activeBehaviorId(null)
-    this.activeBehaviorUntil = null
 
     const ctx = this.context.getSnapshot()
     const api = { bot, context: this.context }
 
-    let best: { behavior: ReflexBehavior, score: number } | null = null
+    // Every eligible behavior raises its alert, highest score first. A reflex never acts on the
+    // body, so two alerts cannot conflict. The model reads all of them and chooses what to do.
+    const eligible: Array<{ behavior: ReflexBehavior, score: number }> = []
     for (const behavior of this.behaviors) {
       if (!behavior.modes.includes(this.mode()))
+        continue
+
+      const history = this.runHistory.get(behavior.id)
+      const cooldownMs = behavior.cooldownMs ?? 0
+      if (history && cooldownMs > 0 && now - history.lastRunAt < cooldownMs)
         continue
 
       if (!behavior.when(ctx, api))
@@ -219,164 +178,28 @@ export class ReflexRuntime {
       if (score <= 0)
         continue
 
-      const history = this.runHistory.get(behavior.id)
-      const cooldownMs = behavior.cooldownMs ?? 0
-      if (history && cooldownMs > 0 && now - history.lastRunAt < cooldownMs)
-        continue
-
-      if (!best || score > best.score)
-        best = { behavior, score }
+      eligible.push({ behavior, score })
     }
 
-    if (!best)
-      return null
+    eligible.sort((a, b) => b.score - a.score)
 
-    this.activeBehaviorId(best.behavior.id)
-    this.runHistory.set(best.behavior.id, { lastRunAt: now })
+    const alerted: string[] = []
+    for (const { behavior } of eligible) {
+      try {
+        const alert = behavior.observe(api)
+        if (!alert)
+          continue
 
-    try {
-      const maybePromise = best.behavior.run(api)
-      if (maybePromise && typeof (maybePromise as any).then === 'function') {
-        // Lock the slot for the whole async run (released early by `.finally` below), bounded
-        // only by the deadlock breaker. This was a 50ms cap, which released the slot mid-run
-        // and let another reflex preempt a long survival action (e.g. auto-eat). See #1915.
-        this.activeBehaviorUntil = now + Math.max(deltaMs, BEHAVIOR_RUN_DEADLOCK_MS)
-        void (maybePromise as Promise<void>).finally(() => {
-          // Behavior ends naturally; next tick can run a new one.
-          this.activeBehaviorUntil = null
-          this.activeBehaviorId(null)
-        })
+        this.runHistory.set(behavior.id, { lastRunAt: now })
+        this.activeBehaviorId(behavior.id)
+        this.deps.onAlert?.({ ...alert, behaviorId: behavior.id })
+        alerted.push(behavior.id)
       }
-      else {
-        // Synchronous behavior ends immediately.
-        this.activeBehaviorId(null)
+      catch (err) {
+        this.deps.logger.withError(err as Error).error('ReflexRuntime: behavior observation failed')
       }
-
-      return best.behavior.id
-    }
-    catch (err) {
-      this.deps.logger.withError(err as Error).error('ReflexRuntime: behavior failed')
-      this.activeBehaviorId(null)
-      this.activeBehaviorUntil = null
-      return null
-    }
-  }
-
-  private reconcileAutoFollow(
-    bot: MineflayerWithAgents,
-    followPlayer: string | null,
-    followDistance: number,
-    mode: ReflexModeId,
-    targetVisible: boolean,
-    reflexEngaged: boolean,
-  ): void {
-    const { goals, Movements } = pathfinderModel
-    const snapshot = this.context.getSnapshot()
-
-    // While the defend reflex is fighting a mob, it owns the pathfinder (pvp chase). Suppress
-    // auto-follow so its GoalFollow does not override the combat movement (same conflict class as the
-    // mining stutter). Follow re-engages automatically once combat ends and reflexEngaged flips back.
-    if (reflexEngaged) {
-      this.stopAutoFollow(bot)
-      if (snapshot.autonomy.followActive)
-        this.context.updateAutonomy({ followActive: false })
-      return
     }
 
-    if (!followPlayer) {
-      this.stopAutoFollow(bot)
-      if (snapshot.autonomy.followActive || snapshot.autonomy.followLastError) {
-        this.context.updateAutonomy({
-          followActive: false,
-          followLastError: null,
-        })
-      }
-      return
-    }
-
-    // Explicit task modes (work/wander) take priority over idle follow and suppress it.
-    //
-    // NOTICE: 'alert' was previously here too, which meant any nearby threat (e.g. mobs in a cave)
-    // flipped the bot to 'alert' and SILENTLY cancelled auto-follow — so "follow me down the mine"
-    // left the bot standing still near hostiles. There is currently no alert/defend behavior that
-    // sets a competing pathfinder goal (the only reflex behavior is idle-gaze), so suppressing follow
-    // during alert gave the bot nothing useful to do. A companion should stay with its owner INTO
-    // danger, so alert no longer cancels follow.
-    if (mode === 'work' || mode === 'wander') {
-      if (snapshot.autonomy.followActive)
-        this.context.updateAutonomy({ followActive: false })
-      this.stopAutoFollow(bot)
-      return
-    }
-
-    if (!targetVisible) {
-      this.stopAutoFollow(bot)
-      if (snapshot.autonomy.followActive || snapshot.autonomy.followLastError == null) {
-        // Log only on transition into the not-visible state to avoid per-tick spam.
-        this.deps.logger.withFields({ followPlayer, mode }).log('ReflexRuntime: auto-follow idle — target not visible (player out of entity range)')
-      }
-      this.context.updateAutonomy({
-        followActive: false,
-        followLastError: `Player [${followPlayer}] is not currently visible`,
-      })
-      return
-    }
-
-    const target = bot.bot.players[followPlayer]?.entity
-    if (!target) {
-      this.stopAutoFollow(bot)
-      this.context.updateAutonomy({
-        followActive: false,
-        followLastError: `Player [${followPlayer}] is not currently visible`,
-      })
-      return
-    }
-
-    if (this.activeAutoFollowPlayer === followPlayer && snapshot.autonomy.followActive)
-      return
-
-    try {
-      const movements = this.followMovementsByBot.get(bot.bot)
-        ?? new Movements(bot.bot)
-      if (!this.followMovementsByBot.has(bot.bot))
-        this.followMovementsByBot.set(bot.bot, movements)
-
-      bot.bot.pathfinder.setMovements(movements)
-      bot.bot.pathfinder.setGoal(new goals.GoalFollow(target, followDistance), true)
-      this.activeAutoFollowPlayer = followPlayer
-      this.deps.logger.withFields({ followPlayer, followDistance, mode }).log('ReflexRuntime: auto-follow engaged (GoalFollow set)')
-      this.context.updateAutonomy({
-        followActive: true,
-        followLastError: null,
-      })
-    }
-    catch (error) {
-      this.stopAutoFollow(bot)
-      this.context.updateAutonomy({
-        followActive: false,
-        followLastError: errorMessageFrom(error) ?? '',
-      })
-    }
-  }
-
-  private stopAutoFollow(bot: MineflayerWithAgents | null): void {
-    if (!this.activeAutoFollowPlayer)
-      return
-
-    this.activeAutoFollowPlayer = null
-    try {
-      bot?.bot.pathfinder.stop()
-    }
-    catch {
-      // Ignore cleanup errors from transient pathfinder state.
-    }
-  }
-
-  private updateFollowTargetVisibility(bot: MineflayerWithAgents): void {
-    const followPlayer = this.followPlayer()
-    const isVisible = Boolean(followPlayer && bot.bot.players[followPlayer]?.entity)
-    if (isVisible === this.followTargetVisible())
-      return
-    this.followTargetVisible(isVisible)
+    return alerted
   }
 }

@@ -85,7 +85,7 @@ describe('dispatchSparkNotifyPerformance', () => {
 
   /**
    * @example
-   * const resultPromise = store.dispatchSparkNotifyPerformance({ headline: 'x', fallbackResponseText: '', calls: [{ manifest: { name: 'plugin.action', prompt: 'Run it.' }, handler }] })
+   * const resultPromise = store.dispatchSparkNotifyPerformance({ headline: 'x', calls: [{ manifest: { name: 'plugin.action', prompt: 'Run it.' }, handler }] })
    * await streamingControl.dispatchWith('<|CALL ["plugin.action"]|>', { turnId })
    * await expect(resultPromise).resolves.toMatchObject({ type: 'called', name: 'plugin.action' })
    */
@@ -97,7 +97,6 @@ describe('dispatchSparkNotifyPerformance', () => {
 
     const resultPromise = store.dispatchSparkNotifyPerformance({
       headline: 'Plugin performance',
-      fallbackResponseText: '',
       calls: [
         {
           manifest: {
@@ -146,7 +145,6 @@ describe('dispatchSparkNotifyPerformance', () => {
 
     const resultPromise = store.dispatchSparkNotifyPerformance({
       headline: 'Plugin performance',
-      fallbackResponseText: '',
       calls: [
         {
           manifest: {
@@ -173,14 +171,13 @@ describe('dispatchSparkNotifyPerformance', () => {
     expect(handler).toHaveBeenCalledWith({ move: 'Nf3' })
   })
 
-  it('falls back when a client-side performance bridge request is not answered', async () => {
+  it('returns no reaction when a client-side performance bridge request is not answered', async () => {
     vi.useFakeTimers()
     const store = useContextBridgeStore()
     store.setSparkNotifyHostRole('client')
 
     const resultPromise = store.dispatchSparkNotifyPerformance({
       headline: 'Plugin performance',
-      fallbackResponseText: 'fallback text',
       calls: [
         {
           manifest: {
@@ -197,7 +194,7 @@ describe('dispatchSparkNotifyPerformance', () => {
 
     await expect(resultPromise).resolves.toEqual({
       type: 'timeout',
-      reaction: 'fallback text',
+      reaction: '',
     })
     vi.useRealTimers()
   })
@@ -216,7 +213,6 @@ describe('dispatchSparkNotifyPerformance', () => {
 
     const resultPromise = store.dispatchSparkNotifyPerformance({
       headline: 'Plugin performance',
-      fallbackResponseText: '',
       calls: [
         {
           manifest: {

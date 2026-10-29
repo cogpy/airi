@@ -19,6 +19,7 @@ import { useVisionStore } from '@proj-airi/stage-ui/stores/modules/vision'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { Button, FieldInput, FieldValues, GhostButton, IconButton } from '@proj-airi/ui'
 import { ComboboxSelect } from '@proj-airi/ui/components/form'
+import { useFileDialog } from '@vueuse/core'
 import { isEqual } from 'es-toolkit'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, toRaw, useTemplateRef, watch } from 'vue'
@@ -127,6 +128,15 @@ const selectedArtistrySpawnMode = ref<'bg' | 'widget' | 'inline' | 'bg_widget'>(
 const selectedArtistryAutonomousEnabled = ref<boolean>(false)
 const selectedArtistryAutonomousThreshold = ref<number>(70)
 const selectedArtistryConfigStr = ref<string>('{\n  \n}')
+/** The card's emotion sample. Empty uses the built-in sample. */
+const selectedEmotionExample = ref<string>('')
+
+const emotionExampleDialog = useFileDialog({ accept: '.txt,.md,text/plain,text/markdown', multiple: false, reset: true })
+emotionExampleDialog.onChange(async (files) => {
+  const file = files?.[0]
+  if (file)
+    selectedEmotionExample.value = await file.text()
+})
 let isInitializingModuleSelections = false
 let hasLoadedModuleOptions = false
 
@@ -477,6 +487,8 @@ function initializeCard(): Card {
     selectedArtistryConfigStr.value = ''
   }
 
+  selectedEmotionExample.value = airiExt?.modules?.prompt?.emotionExample ?? ''
+
   // Return existing card data or defaults
   if (existingCard) {
     return { ...toRaw(existingCard) }
@@ -514,6 +526,7 @@ interface EditorSnapshot {
     autonomousThreshold: number
     config: string
   }
+  emotionExample: string
 }
 
 function createEditorSnapshot(): EditorSnapshot {
@@ -544,6 +557,7 @@ function createEditorSnapshot(): EditorSnapshot {
       autonomousThreshold: selectedArtistryAutonomousThreshold.value,
       config: selectedArtistryConfigStr.value,
     },
+    emotionExample: selectedEmotionExample.value,
   })
 }
 
@@ -682,6 +696,7 @@ async function handleSave(activate: boolean) {
         autonomousEnabled: selectedArtistryAutonomousEnabled.value,
         autonomousThreshold: selectedArtistryAutonomousThreshold.value,
       },
+      prompt: { emotionExample: selectedEmotionExample.value },
     })
 
     let savedCardId: string
@@ -1056,6 +1071,31 @@ function handleBack() {
               <div :class="['grid grid-cols-1 gap-5', 'xl:grid-cols-2']">
                 <FieldInput v-model="cardSystemPrompt" :label="t('settings.pages.card.systemprompt')" :single-line="false" :description="t('settings.pages.card.creation.fields_info.systemprompt')" :input-class="editorLongTextareaClass" />
                 <FieldInput v-model="cardPostHistoryInstructions" :label="t('settings.pages.card.posthistoryinstructions')" :single-line="false" :description="t('settings.pages.card.creation.fields_info.posthistoryinstructions')" :input-class="editorLongTextareaClass" />
+              </div>
+              <div :class="['flex flex-col gap-2']">
+                <FieldInput
+                  v-model="selectedEmotionExample"
+                  :label="t('settings.pages.card.emotionexample')"
+                  :single-line="false"
+                  :description="t('settings.pages.card.creation.fields_info.emotionexample')"
+                  :placeholder="t('base.prompt.emotionExample')"
+                  :input-class="editorTextareaClass"
+                />
+                <div :class="['flex flex-wrap gap-2']">
+                  <Button
+                    icon="i-solar:upload-minimalistic-bold-duotone"
+                    :label="t('settings.pages.card.emotionexample_load')"
+                    variant="secondary"
+                    @click="emotionExampleDialog.open()"
+                  />
+                  <Button
+                    icon="i-solar:restart-bold-duotone"
+                    :label="t('settings.pages.card.emotionexample_reset')"
+                    variant="secondary"
+                    :disabled="!selectedEmotionExample"
+                    @click="selectedEmotionExample = ''"
+                  />
+                </div>
               </div>
             </div>
             <!-- Artistry -->

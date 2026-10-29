@@ -25,10 +25,6 @@ const widgetSparkNotifyEventSchema = looseObject({
     // the host only echoes it so the iframe can resolve the matching pending
     // request when multiple commentary requests are in flight.
     requestId: optional(string()),
-    // Deterministic response text used when the spark reaction path fails,
-    // times out, or returns an empty reaction. The iframe chooses this value
-    // because it owns the user-facing fallback for its current UI state.
-    fallbackResponseText: string(),
     responseRoute: optional(record(string(), unknown())),
     calls: optional(array(looseObject({
       name: pipe(string(), trim(), nonEmpty()),
@@ -56,10 +52,7 @@ function createSparkNotifyReactionOptions(event: Record<string, unknown>) {
   if (!responseRoute) {
     return undefined
   }
-  const reactionOptionsResult = safeParse(sparkNotifyReactionOptionsSchema, {
-    ...payload.sparkNotify,
-    fallbackResponseText: payload.fallbackResponseText,
-  })
+  const reactionOptionsResult = safeParse(sparkNotifyReactionOptionsSchema, payload.sparkNotify)
   if (!reactionOptionsResult.success) {
     return undefined
   }
@@ -82,7 +75,6 @@ function createSparkNotifyReactionOptions(event: Record<string, unknown>) {
  *
  * Expects:
  * - `event.payload.sparkNotify.headline` is a non-empty string
- * - `event.payload.fallbackResponseText` is a string; empty fallback is allowed for silent phases
  * - `dispatchSparkNotifyReaction` is backed by the stage context bridge store
  *
  * Returns:

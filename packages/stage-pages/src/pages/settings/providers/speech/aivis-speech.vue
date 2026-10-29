@@ -9,7 +9,6 @@ const providerId = 'aivis-speech'
     :provider-id="providerId"
     intonation-label-key="settings.pages.providers.provider.aivis-speech.fields.field.intonation.label"
     intonation-description-key="settings.pages.providers.provider.aivis-speech.fields.field.intonation.description"
-    default-text="こんにちは、はじめまして。"
   />
 </template>
 

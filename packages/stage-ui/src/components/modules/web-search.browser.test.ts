@@ -93,7 +93,7 @@ describe('web search settings', () => {
       site_icon: null,
     }] }))
     vi.stubGlobal('fetch', request)
-    const [tool] = await resolveLlmTools({ builtInTools: [], debugTools: [], sparkCommandTools: [], activeTools: [] })
+    const [tool] = await resolveLlmTools({ builtInTools: [], sparkCommandTools: [], activeTools: [] })
     const output = await tool!.execute({ query: 'AIRI news', max_results: null }, { messages: [], toolCallId: 'search' })
     const result = parseWebSearchResults(String(output))
     expect(result).toBeDefined()
@@ -104,7 +104,7 @@ describe('web search settings', () => {
     expect(request.mock.calls[0]![0]).toBe('https://api.deepseek.com/v1/tools/search')
     store.enabled = false
     await nextTick()
-    expect(await resolveLlmTools({ builtInTools: [], debugTools: [], sparkCommandTools: [], activeTools: [] })).toEqual([])
+    expect(await resolveLlmTools({ builtInTools: [], sparkCommandTools: [], activeTools: [] })).toEqual([])
     await page.viewport(1280, 720)
   })
 })

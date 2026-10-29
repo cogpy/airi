@@ -1,26 +1,8 @@
+import type { ReflexBehavior } from './types/behavior'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReflexRuntime } from './runtime'
-
-const mocks = vi.hoisted(() => ({
-  goalFollow: vi.fn(function MockGoalFollow(this: Record<string, unknown>, entity: unknown, distance: number) {
-    this.kind = 'follow'
-    this.entity = entity
-    this.distance = distance
-  }),
-  movements: vi.fn(function MockMovements(this: { bot: unknown }, bot: unknown) {
-    this.bot = bot
-  }),
-}))
-
-vi.mock('mineflayer-pathfinder', () => ({
-  default: {
-    goals: {
-      GoalFollow: mocks.goalFollow,
-    },
-    Movements: mocks.movements,
-  },
-}))
 
 function createLogger() {
   const logger = {
@@ -33,7 +15,6 @@ function createLogger() {
     debug: vi.fn(),
   } as any
   logger.withError.mockReturnValue(logger)
-  // reconcileAutoFollow chains `logger.withFields({...}).log(...)`; return a chainable stub.
   logger.withFields.mockReturnValue(logger)
   return logger
 }
@@ -64,88 +45,47 @@ function createMockBot() {
     },
   } as any
 
+  return { bot, setGoal, setMovements, stop }
+}
+
+function alertBehavior(id: string, score: number, overrides: Partial<ReflexBehavior> = {}): ReflexBehavior {
   return {
-    bot,
-    setGoal,
-    stop,
+    id,
+    modes: ['idle', 'social', 'work', 'wander', 'alert'],
+    when: () => true,
+    score: () => score,
+    observe: () => ({ kind: id, urgency: 'urgent', description: `${id} happened`, metadata: {} }),
+    ...overrides,
   }
 }
 
-describe('reflexRuntime auto-follow visibility reconciliation', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
+describe('reflexRuntime follow target', () => {
+  // Reflexes never act on the body. Following a player only records the target: the
+  // follow-distance reflex raises alerts, and the model decides whether to move.
+  it('records the follow target without driving the pathfinder', () => {
+    const runtime = new ReflexRuntime({ logger: createLogger() })
+    const { bot, setGoal, setMovements, stop } = createMockBot()
+    bot.bot.players.Alex = { entity: { id: 42, position: { x: 8, y: 64, z: 5 }, heldItem: null } }
 
-  it('starts follow when target appears after being initially invisible', () => {
-    const runtime = new ReflexRuntime({
-      logger: createLogger(),
-    })
-    const { bot, setGoal } = createMockBot()
-
-    runtime.setActiveBot(bot)
     runtime.setAutoFollowTarget('Alex', 3)
-    runtime.tick(bot, 0)
+    runtime.tick(bot)
 
+    expect(runtime.getContext().getSnapshot().autonomy).toEqual({ followPlayer: 'Alex', followDistance: 3 })
     expect(setGoal).not.toHaveBeenCalled()
-    expect(runtime.getContext().getSnapshot().autonomy).toMatchObject({
-      followActive: false,
-      followLastError: 'Player [Alex] is not currently visible',
-    })
-
-    const targetEntity = {
-      id: 42,
-      position: { x: 8, y: 64, z: 5 },
-      heldItem: null,
-    }
-    bot.bot.players.Alex = { entity: targetEntity }
-
-    runtime.tick(bot, 0)
-
-    expect(mocks.goalFollow).toHaveBeenCalledWith(targetEntity, 3)
-    expect(setGoal).toHaveBeenCalledTimes(1)
-    expect(runtime.getContext().getSnapshot().autonomy).toMatchObject({
-      followActive: true,
-      followLastError: null,
-    })
+    expect(setMovements).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
   })
 
-  it('stops follow when target becomes invisible after follow is active', () => {
-    const runtime = new ReflexRuntime({
-      logger: createLogger(),
-    })
-    const { bot, stop } = createMockBot()
-
-    bot.bot.players.Alex = {
-      entity: {
-        id: 99,
-        position: { x: 3, y: 64, z: 2 },
-        heldItem: null,
-      },
-    }
-
-    runtime.setActiveBot(bot)
-    runtime.setAutoFollowTarget('Alex', 2)
-    runtime.tick(bot, 0)
-
-    expect(runtime.getContext().getSnapshot().autonomy).toMatchObject({
-      followActive: true,
-      followLastError: null,
-    })
-
-    delete bot.bot.players.Alex
-    runtime.tick(bot, 0)
-
-    expect(stop).toHaveBeenCalled()
-    expect(runtime.getContext().getSnapshot().autonomy).toMatchObject({
-      followActive: false,
-      followLastError: 'Player [Alex] is not currently visible',
-    })
+  it('clears the follow target', () => {
+    const runtime = new ReflexRuntime({ logger: createLogger() })
+    runtime.setAutoFollowTarget('Alex', 3)
+    runtime.clearAutoFollowTarget()
+    expect(runtime.getContext().getSnapshot().autonomy).toEqual({ followPlayer: null, followDistance: 2 })
   })
 })
 
-describe('reflexRuntime async behavior slot locking', () => {
+describe('reflexRuntime alerts', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
     vi.useFakeTimers()
   })
 
@@ -153,66 +93,77 @@ describe('reflexRuntime async behavior slot locking', () => {
     vi.useRealTimers()
   })
 
-  // Regression: https://github.com/moeru-ai/airi/pull/1915#discussion_r3340685371
-  //
-  // ROOT CAUSE:
-  //
-  // An async behavior only locked its slot for `Math.max(deltaMs, 50)` ms. A long survival
-  // action (e.g. the ~1.5s auto-eat equip+consume) outlived that window, so the next tick
-  // re-selected and a lower-priority reflex could start while the first promise was still
-  // running — and re-equipping for that reflex cancels `bot.consume()`, dropping the bite.
-  //
-  // We fixed this by locking the slot until the promise settles (released via `.finally`,
-  // bounded only by a deadlock cap), so nothing can preempt a running async reflex.
-  it('does not let another behavior preempt a still-running async behavior (Issue #1915)', async () => {
-    const runtime = new ReflexRuntime({ logger: createLogger() })
+  it('raises the alert of every triggered behavior, highest score first', () => {
+    const onAlert = vi.fn()
+    const runtime = new ReflexRuntime({ logger: createLogger(), onAlert })
     const { bot } = createMockBot()
 
-    let resolveSlow: () => void = () => {}
-    const slowRun = vi.fn(() => new Promise<void>((resolve) => {
-      resolveSlow = resolve
+    runtime.registerBehavior(alertBehavior('hunger', 500))
+    runtime.registerBehavior(alertBehavior('hazard', 2000))
+    runtime.registerBehavior(alertBehavior('quiet', 900, { when: () => false }))
+
+    expect(runtime.tick(bot)).toEqual(['hazard', 'hunger'])
+    expect(onAlert.mock.calls.map(call => call[0])).toEqual([
+      { behaviorId: 'hazard', kind: 'hazard', urgency: 'urgent', description: 'hazard happened', metadata: {} },
+      { behaviorId: 'hunger', kind: 'hunger', urgency: 'urgent', description: 'hunger happened', metadata: {} },
+    ])
+    expect(runtime.getActiveBehaviorId()).toBe('hunger')
+  })
+
+  it('repeats an alert only after its cooldown', () => {
+    const onAlert = vi.fn()
+    const runtime = new ReflexRuntime({ logger: createLogger(), onAlert })
+    const { bot } = createMockBot()
+    runtime.registerBehavior(alertBehavior('hazard', 2000, { cooldownMs: 2000 }))
+
+    expect(runtime.tick(bot)).toEqual(['hazard'])
+    vi.advanceTimersByTime(1000)
+    expect(runtime.tick(bot)).toEqual([])
+    vi.advanceTimersByTime(1500)
+    expect(runtime.tick(bot)).toEqual(['hazard'])
+    expect(onAlert).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not start the cooldown when the situation ended before the alert', () => {
+    const onAlert = vi.fn()
+    const runtime = new ReflexRuntime({ logger: createLogger(), onAlert })
+    const { bot } = createMockBot()
+    let present = false
+    runtime.registerBehavior(alertBehavior('hazard', 2000, {
+      cooldownMs: 2000,
+      observe: () => present ? { kind: 'in_lava', urgency: 'urgent', description: 'lava', metadata: {} } : null,
     }))
-    const preemptorRun = vi.fn()
 
-    runtime.registerBehavior({
-      id: 'slow-survival',
-      modes: ['idle', 'social', 'work', 'wander', 'alert'],
-      cooldownMs: 3000,
-      when: () => true,
-      score: () => 1000,
-      run: slowRun,
-    })
-    runtime.registerBehavior({
-      id: 'preemptor',
-      modes: ['idle', 'social', 'work', 'wander', 'alert'],
-      when: () => true,
-      score: () => 500,
-      run: preemptorRun,
-    })
+    expect(runtime.tick(bot)).toEqual([])
+    present = true
+    expect(runtime.tick(bot)).toEqual(['hazard'])
+    expect(onAlert).toHaveBeenCalledTimes(1)
+  })
 
-    runtime.setActiveBot(bot)
+  it('skips behaviors that do not run in the current mode', () => {
+    const onAlert = vi.fn()
+    const runtime = new ReflexRuntime({ logger: createLogger(), onAlert })
+    const { bot } = createMockBot()
+    runtime.registerBehavior(alertBehavior('idle-only', 100, { modes: ['idle'] }))
 
-    // Tick 1: the high-priority async behavior starts and holds the slot.
-    expect(runtime.tick(bot, 0)).toBe('slow-survival')
-    expect(slowRun).toHaveBeenCalledTimes(1)
-    expect(preemptorRun).not.toHaveBeenCalled()
+    runtime.transitionMode('work')
+    expect(runtime.tick(bot)).toEqual([])
+    expect(onAlert).not.toHaveBeenCalled()
+  })
 
-    // Advance past the old 50ms window while the promise is still pending.
-    vi.advanceTimersByTime(100)
+  it('keeps raising other alerts when one observation throws', () => {
+    const onAlert = vi.fn()
+    const logger = createLogger()
+    const runtime = new ReflexRuntime({ logger, onAlert })
+    const { bot } = createMockBot()
+    runtime.registerBehavior(alertBehavior('broken', 2000, {
+      observe: () => {
+        throw new Error('boom')
+      },
+    }))
+    runtime.registerBehavior(alertBehavior('hunger', 500))
 
-    // Tick 2: slot must stay locked — the lower-priority behavior must NOT preempt.
-    expect(runtime.tick(bot, 0)).toBeNull()
-    expect(preemptorRun).not.toHaveBeenCalled()
-    expect(runtime.getActiveBehaviorId()).toBe('slow-survival')
-
-    // The async behavior finishes; its `.finally` releases the slot.
-    resolveSlow()
-    await Promise.resolve()
-    await Promise.resolve()
-
-    // Tick 3: with the survival action done, the next behavior may run.
-    vi.advanceTimersByTime(100)
-    runtime.tick(bot, 0)
-    expect(preemptorRun).toHaveBeenCalledTimes(1)
+    expect(runtime.tick(bot)).toEqual(['hunger'])
+    expect(logger.error).toHaveBeenCalledWith('ReflexRuntime: behavior observation failed')
   })
 })

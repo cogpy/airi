@@ -178,7 +178,6 @@ async function handleGenerateSpeech(input: string, voiceId: string, useSSML: boo
         :available-voices="availableVoices"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
-        default-text="Hello! This is a test of the Microsoft Speech synthesis."
       />
     </template>
   </SpeechProviderSettings>

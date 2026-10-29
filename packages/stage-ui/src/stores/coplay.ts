@@ -11,6 +11,7 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { characterTurnPrompt, createGameMoveTool, findCoplayGame, gameContextMessage, rejectionText } from '../libs/coplay'
 import { useChatStore } from './chat'
 import { useChatContextStore } from './chat/context-store'
+import { useChatSessionStore } from './chat/session-store'
 import { useModsServerChannelStore } from './mods/api/channel-server'
 import { useAiriCardStore } from './modules/airi-card'
 import { useConsciousnessStore } from './modules/consciousness'
@@ -40,11 +41,11 @@ export interface CoplayLogEntry {
   /**
    * - `started` / `joined`: a game began here, or this stage joined a peer's.
    * - `move`: someone's move was accepted.
-   * - `fallback`: she gave no legal move, so the fallback policy moved for her.
+   * - `waiting`: her model calls gave no legal move, so the game waits on her turn.
    * - `rejected`: a submitted move was refused; the game did not change.
    * - `ended`: the game reached a result or was stopped.
    */
-  kind: 'started' | 'joined' | 'move' | 'fallback' | 'rejected' | 'ended'
+  kind: 'started' | 'joined' | 'move' | 'waiting' | 'rejected' | 'ended'
   text: string
 }
 
@@ -63,6 +64,8 @@ const NO_MOVES: readonly string[] = Object.freeze([])
 
 /** Log lines kept for a UI. Older lines are dropped first. */
 const LOG_LIMIT = 200
+/** Most model calls for one of her turns before the game waits on her. */
+const MOVE_ATTEMPTS = 3
 
 /**
  * Seats the character at a turn-based game with a partner, and plays her side.
@@ -106,6 +109,7 @@ export const useCoplayStore = defineStore('coplay', () => {
   const participantsStore = useParticipantsStore()
   const { activeCard } = storeToRefs(useAiriCardStore())
   const chatStore = useChatStore()
+  const chatSession = useChatSessionStore()
   const chatContext = useChatContextStore()
   const consciousnessStore = useConsciousnessStore()
   const { activeProvider, activeModel, activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
@@ -123,6 +127,11 @@ export const useCoplayStore = defineStore('coplay', () => {
   const view = ref('')
   const outcome = ref<GameOutcome>()
   const characterThinking = ref(false)
+  /**
+   * True when her model calls for this turn gave no legal move. The game then
+   * waits on her until `retryCharacterMove` asks the model again.
+   */
+  const characterStuck = ref(false)
   const log = ref<CoplayLogEntry[]>([])
   /** Name of the game in play or last played, for a UI heading. */
   const gameName = ref('')
@@ -224,6 +233,7 @@ export const useCoplayStore = defineStore('coplay', () => {
     if (status.value !== 'playing')
       return
     status.value = 'over'
+    characterStuck.value = false
     // A stopped game keeps its last position on the board, but nobody moves.
     turn.value = undefined
     legalMoves.value = NO_MOVES
@@ -237,6 +247,7 @@ export const useCoplayStore = defineStore('coplay', () => {
     table.value = current
     partner.value = nextPartner
     status.value = 'playing'
+    characterStuck.value = false
     requestedPly = -1
     releaseOwnership = release
   }
@@ -246,9 +257,9 @@ export const useCoplayStore = defineStore('coplay', () => {
    * view, game context, her published move, the end of the game, and her
    * next turn.
    */
-  function afterAccepted(current: CoplayTable, result: Extract<TableMoveResult, { status: 'accepted' }>, kind: 'move' | 'fallback', note?: string) {
+  function afterAccepted(current: CoplayTable, result: Extract<TableMoveResult, { status: 'accepted' }>) {
     const mover = result.participantId === selfId() ? 'She' : partnerName()
-    record(kind, `${mover} played ${result.move}${note ? ` (${note})` : ''}.`)
+    record('move', `${mover} played ${result.move}.`)
     refresh(current)
 
     if (result.participantId === selfId() && partner.value?.origin === 'agent') {
@@ -279,72 +290,101 @@ export const useCoplayStore = defineStore('coplay', () => {
   }
 
   /**
-   * Her turn: one model call with the `game_move` tool, then the fallback
-   * policy if the call ended without a legal move.
+   * Her turn: model calls with the `game_move` tool, at most `MOVE_ATTEMPTS`.
    *
    * The tool submits whatever she names. A rejected move is answered to the
    * model with the reason and the legal moves, so she can try again in the
-   * same turn. When the call ends and it is still her turn at the same ply,
+   * same call. When a call ends and it is still her turn at the same ply,
    * because she skipped the tool, kept naming illegal moves, or the call
-   * failed, the fallback policy moves for her and the log says why. The game
-   * therefore never waits on the model.
+   * failed, the next call tells the model why. Every move she makes comes
+   * from the model: when no call gives a legal move, the game waits on her
+   * turn, the log says why, and `retryCharacterMove` asks again.
    */
   async function askCharacterToMove(current: CoplayTable) {
     const ply = current.ply()
     if (!isLive(current) || requestedPly === ply || current.currentPlayer()?.participantId !== selfId())
       return
     requestedPly = ply
+    characterStuck.value = false
 
-    let lastRejection: string | undefined
-    let failure: string | undefined
-    const tool = createGameMoveTool(current, (move) => {
-      if (!isLive(current))
-        return { status: 'rejected', reason: 'game-over' }
+    // Every try of this turn goes to the conversation and model that were set
+    // when the turn started, even if the user switches chats in between.
+    const sessionId = chatSession.activeSessionId
+    const providerId = activeProvider.value
+    const model = activeModel.value
+    const temperature = activeTemperature.value
+    const topP = activeTopP.value
 
-      const result = current.submitText(selfId(), move)
-      if (result.status === 'accepted') {
-        afterAccepted(current, result, 'move')
+    let why: string | undefined
+    for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+      let cancelled = false
+      let lastRejection: string | undefined
+      let failure: string | undefined
+      const tool = createGameMoveTool(current, (move) => {
+        if (!isLive(current))
+          return { status: 'rejected', reason: 'game-over' }
+
+        const result = current.submitText(selfId(), move)
+        if (result.status === 'accepted') {
+          afterAccepted(current, result)
+          return result
+        }
+        lastRejection = `"${move}": ${rejectionText(result.reason)}`
+        record('rejected', `She named ${lastRejection}.`)
         return result
-      }
-      lastRejection = `"${move}": ${rejectionText(result.reason)}`
-      record('rejected', `She named ${lastRejection}.`)
-      return result
-    })
+      })
 
-    characterThinking.value = true
-    try {
-      const providerId = activeProvider.value
-      const model = activeModel.value
-      if (!providerId || !model) {
-        failure = 'no chat model is configured'
+      const prompt = characterTurnPrompt(current, selfSeat(current), partnerName())
+      characterThinking.value = true
+      try {
+        if (!providerId || !model) {
+          failure = 'no chat model is configured'
+        }
+        else {
+          const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+          await chatStore.ingest(why ? `${prompt}\nYour last try gave no legal move: ${why}. Choose one of the legal moves now.` : prompt, {
+            model,
+            chatProvider,
+            temperature,
+            topP,
+            tools: [tool],
+          }, sessionId)
+          // A cancelled reply, for example when the user talks over her, settles without an error.
+          cancelled = chatSession.getSessionMessages(sessionId).findLast(message => message.role === 'assistant')?.interrupted === true
+        }
       }
-      else {
-        const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
-        await chatStore.ingest(characterTurnPrompt(current, selfSeat(current), partnerName()), {
-          model,
-          chatProvider,
-          temperature: activeTemperature.value,
-          topP: activeTopP.value,
-          tools: [tool],
-        })
+      catch (error) {
+        cancelled = error instanceof DOMException && error.name === 'AbortError'
+        failure = errorMessageFrom(error) ?? 'the model call failed'
       }
-    }
-    catch (error) {
-      failure = errorMessageFrom(error) ?? 'the model call failed'
-    }
-    finally {
-      characterThinking.value = false
+      finally {
+        characterThinking.value = false
+      }
+
+      if (!isLive(current) || current.ply() !== ply)
+        return
+      why = cancelled ? 'her reply was cancelled' : failure ?? (lastRejection ? `her last move was ${lastRejection}` : 'she named no move')
+      // Without a model, another call cannot do better. After a cancel, the
+      // user stopped her, so only "Ask again" starts a new call.
+      if (cancelled || failure === 'no chat model is configured')
+        break
     }
 
-    if (!isLive(current) || current.ply() !== ply)
+    console.info('[coplay] No move from the model:', { sessionId: current.sessionId, why })
+    record('waiting', `She did not move (${why}). The game waits for her.`)
+    characterStuck.value = true
+    requestedPly = -1
+  }
+
+  /**
+   * Asks the model for her move again after her turn ended without one.
+   * Does nothing unless a game is played and it waits on her.
+   */
+  function retryCharacterMove() {
+    const current = table.value
+    if (!current || !characterStuck.value || !isLive(current))
       return
-
-    const result = current.submitFallback(selfId())
-    if (result.status !== 'accepted')
-      return
-    const why = failure ?? (lastRejection ? `her last move was ${lastRejection}` : 'she named no move')
-    console.info('[coplay] Fallback move:', { sessionId: current.sessionId, move: result.move, why })
-    afterAccepted(current, result, 'fallback', `chosen for her: ${why}`)
+    void askCharacterToMove(current)
   }
 
   /**
@@ -451,7 +491,7 @@ export const useCoplayStore = defineStore('coplay', () => {
 
     const result = current.submitText(event.participantId, event.move)
     if (result.status === 'accepted') {
-      afterAccepted(current, result, 'move')
+      afterAccepted(current, result)
       return result
     }
 
@@ -482,7 +522,7 @@ export const useCoplayStore = defineStore('coplay', () => {
 
     const result = current.submitText(partner.value.participantId, text)
     if (result.status === 'accepted')
-      afterAccepted(current, result, 'move')
+      afterAccepted(current, result)
     else
       record('rejected', `${partnerName()} named "${text}": ${rejectionText(result.reason)}.`)
     return result
@@ -513,6 +553,7 @@ export const useCoplayStore = defineStore('coplay', () => {
     view,
     outcome,
     characterThinking,
+    characterStuck,
     log,
     gameName,
     board,
@@ -525,6 +566,7 @@ export const useCoplayStore = defineStore('coplay', () => {
     receivePartnerAction,
     receiveSessionEnd,
     submitPartnerMove,
+    retryCharacterMove,
     stopSession,
   }
 })

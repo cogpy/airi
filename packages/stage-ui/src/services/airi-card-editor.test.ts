@@ -121,6 +121,24 @@ describe('airi card editor validation', () => {
     expect(savedCard.extensions.airi.modules).not.toHaveProperty('displayModelId')
   })
 
+  it('writes the emotion sample, keeps it when the form omits it, and clears it when blank', () => {
+    const editedModules = {
+      consciousness: { provider: '', model: '' },
+      vision: { provider: '', model: '' },
+      speech: { provider: '', model: '', voice_id: '' },
+      artistry: { provider: '', model: '', promptPrefix: '', widgetInstruction: '', spawnMode: 'bg_widget' as const, options: undefined, autonomousEnabled: false, autonomousThreshold: 70 },
+    }
+    const sample = '<|ACT {"emotion":"happy"}|> Hehe.'
+
+    const written = applyAiriCardEditorModules(createCard(), { ...editedModules, prompt: { emotionExample: sample } })
+    const kept = applyAiriCardEditorModules(written, editedModules)
+    const cleared = applyAiriCardEditorModules(kept, { ...editedModules, prompt: { emotionExample: '  ' } })
+
+    expect(written.extensions.airi.modules.prompt).toEqual({ emotionExample: sample })
+    expect(kept.extensions.airi.modules.prompt).toEqual({ emotionExample: sample })
+    expect(cleared.extensions.airi.modules.prompt).toEqual({})
+  })
+
   it('preserves AIRI extension fields that are not editable in the form', () => {
     // ROOT CAUSE:
     //

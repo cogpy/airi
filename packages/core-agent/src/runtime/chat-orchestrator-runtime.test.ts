@@ -39,6 +39,7 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
   const assistantTurns: unknown[] = []
   const stateChanges: unknown[] = []
   const settled: unknown[] = []
+  const contextProviderSessions: string[] = []
   const telemetry = {
     chatActivationStarted: [] as unknown[],
     chatActivationSucceeded: [] as unknown[],
@@ -94,6 +95,10 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
     getActiveSessionId: () => 'session-1',
     getActiveProvider,
     getSystemPromptSupplement: () => systemPromptSupplement,
+    runtimeContextProviders: [(sessionId) => {
+      contextProviderSessions.push(sessionId)
+      return undefined
+    }],
     now: () => nowValue,
     monotonicNow: () => monotonicNowValues.shift() ?? 1000,
     createId: () => ids.shift() ?? `generated-${nextId++}`,
@@ -131,6 +136,7 @@ function createHarness(getActiveProvider = () => 'mock-provider') {
       },
     },
     assistantTurns,
+    contextProviderSessions,
     contextSnapshot,
     foregroundPatches,
     foregroundResets,
@@ -551,6 +557,82 @@ describe('createChatOrchestratorRuntime', () => {
     }
     expect(started).toEqual(['first', 'other', 'next'])
     expect(harness.runtime.getSending()).toBe(false)
+  })
+
+  // https://github.com/cogpy/airi/pull/31#discussion_r4404183312
+  //
+  // ROOT CAUSE:
+  //
+  // A send ingested its runtime contexts into the shared registry, then read
+  // the registry again after awaiting persistence. A send from another session
+  // in that wait replaced the same bucket, so the first session's prompt held
+  // the second session's runtime context.
+  //
+  // We fixed this by keeping the buckets that a send wrote for its own prompt.
+  it('keeps each session\'s own runtime context when two sessions send at once', async () => {
+    const buckets: Record<string, ContextMessage[]> = {}
+    const stored: Record<string, ChatHistoryItem[]> = {}
+    const firstCommit = Promise.withResolvers<void>()
+    const prompts: Record<string, string> = {}
+    const runtime = createChatOrchestratorRuntime({
+      session: {
+        commitUserMessage: async (sessionId, message) => {
+          if (sessionId === 'session-a')
+            await firstCommit.promise
+          ;(stored[sessionId] ??= []).push(message)
+          return { status: 'inserted', messageId: message.id }
+        },
+        commitAssistantMessage: async (sessionId, message) => {
+          ;(stored[sessionId] ??= []).push(message)
+        },
+        getSessionMessages: sessionId => stored[sessionId] ?? [],
+        getSessionGeneration: () => 1,
+      },
+      context: {
+        ingest: (message) => {
+          buckets[message.metadata?.source?.id ?? message.contextId] = [message]
+        },
+        snapshot: () => structuredClone(buckets),
+      },
+      foregroundStream: { patch: () => {}, reset: () => {} },
+      llm: {
+        stream: async (_model, _provider, conversation, options) => {
+          const text = JSON.stringify(conversation)
+          prompts[text.includes('hello from a') ? 'session-a' : 'session-b'] = text
+          await options?.onStreamEvent?.({ type: 'finish' })
+        },
+      },
+      getActiveSessionId: () => 'session-a',
+      getActiveProvider: () => 'mock-provider',
+      runtimeContextProviders: [sessionId => ({
+        id: `runtime-${sessionId}`,
+        contextId: 'runtime-prompt',
+        strategy: ContextUpdateStrategy.ReplaceSelf,
+        metadata: { source: { id: 'runtime-prompt' } },
+        text: `sample of ${sessionId}`,
+        createdAt: 0,
+      })],
+    })
+
+    const first = runtime.ingest('hello from a', { model: 'gpt-test', chatProvider: provider }, 'session-a')
+    await expect.poll(() => buckets['runtime-prompt']?.[0]?.text).toBe('sample of session-a')
+    const second = runtime.ingest('hello from b', { model: 'gpt-test', chatProvider: provider }, 'session-b')
+    await expect.poll(() => buckets['runtime-prompt']?.[0]?.text).toBe('sample of session-b')
+    firstCommit.resolve()
+    await Promise.all([first, second])
+
+    expect(prompts['session-a']).toContain('sample of session-a')
+    expect(prompts['session-a']).not.toContain('sample of session-b')
+    expect(prompts['session-b']).toContain('sample of session-b')
+  })
+
+  it('gives each runtime context provider the session that sends', async () => {
+    const harness = createHarness()
+
+    await harness.runtime.ingest('first', { model: 'gpt-test', chatProvider: provider }, 'session-1')
+    await harness.runtime.ingest('other', { model: 'gpt-test', chatProvider: provider }, 'session-2')
+
+    expect(harness.contextProviderSessions).toEqual(['session-1', 'session-2'])
   })
 
   // ROOT CAUSE:

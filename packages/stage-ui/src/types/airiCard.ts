@@ -140,6 +140,18 @@ export interface AiriExtension {
       agentTurnBudget?: number
     }
 
+    /** Prompt text that this card gives in place of the built-in text. */
+    prompt?: {
+      /**
+       * Sample reply that shows the model how to use emotion tokens.
+       *
+       * The model imitates a sample's content as well as its format. Write it
+       * in this character's voice, or a reply can repeat the built-in sample.
+       * Empty or missing uses the built-in sample.
+       */
+      emotionExample?: string
+    }
+
     /**
      * Whether the character plays turn-based games with a partner. Off by
      * default.

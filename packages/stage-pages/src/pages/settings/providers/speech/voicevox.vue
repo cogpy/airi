@@ -9,7 +9,6 @@ const providerId = 'voicevox'
     :provider-id="providerId"
     intonation-label-key="settings.pages.providers.provider.voicevox.fields.field.intonation.label"
     intonation-description-key="settings.pages.providers.provider.voicevox.fields.field.intonation.description"
-    default-text="こんにちは、はじめまして。"
   />
 </template>
 

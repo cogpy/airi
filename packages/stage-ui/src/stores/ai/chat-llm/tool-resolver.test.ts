@@ -53,7 +53,7 @@ describe('resolveLlmTools', () => {
   // The default source added MCP proxies without a transport.
   // We fixed this by keeping the default source empty and retaining runtime registrations.
   it('exposes MCP proxies only from a registered runtime (Issue #2779)', async () => {
-    const options = { debugTools: [], sparkCommandTools: [], webSearchTools: [], activeTools: [] }
+    const options = { sparkCommandTools: [], webSearchTools: [], activeTools: [] }
 
     expect(await resolveLlmTools(options)).toEqual([])
 
@@ -71,7 +71,6 @@ describe('resolveLlmTools', () => {
 
     const tools = await resolveLlmTools({
       builtInTools: [builtInTool],
-      debugTools: [],
       sparkCommandTools: [],
       webSearchTools: [],
       customTools: [customTool],
@@ -93,7 +92,6 @@ describe('resolveLlmTools', () => {
 
     const tools = await resolveLlmTools({
       builtInTools: [builtInTool],
-      debugTools: [],
       sparkCommandTools: [],
       webSearchTools: [],
       activeTools: [runtimeTool],
@@ -110,7 +108,6 @@ describe('resolveLlmTools', () => {
 
     const tools = await resolveLlmTools({
       builtInTools: [builtInTool],
-      debugTools: [],
       sparkCommandTools: [],
       webSearchTools: [],
       customTools: [customTool],
@@ -126,7 +123,6 @@ describe('resolveLlmTools', () => {
 
     const tools = await resolveLlmTools({
       builtInTools: [builtInTool],
-      debugTools: [],
       sparkCommandTools: [],
       webSearchTools: [webSearchTool],
       activeTools: [],
@@ -156,7 +152,6 @@ describe('resolveLlmTools', () => {
       const builtInTool = createTool('built_in_tool')
       const tools = await resolveLlmTools({
         builtInTools: [builtInTool],
-        debugTools: [],
         sparkCommandTools: [],
         activeTools: [],
       })
@@ -173,7 +168,6 @@ describe('resolveLlmTools', () => {
       vi.stubGlobal('fetch', request)
       const tools = await resolveLlmTools({
         builtInTools: [],
-        debugTools: [],
         sparkCommandTools: [],
         activeTools: [],
       })
@@ -197,7 +191,6 @@ describe('resolveLlmTools', () => {
       // falls through to the real sender instead of an injected source.
       const tools = await resolveLlmTools({
         builtInTools: [],
-        debugTools: [],
         webSearchTools: [],
         customTools: [],
         activeTools: [],

@@ -38,17 +38,13 @@ export interface ReflexAttentionState {
 }
 
 export interface ReflexAutonomyState {
+  /**
+   * The player that the model chose to follow with the `followPlayer` tool. Nothing moves the bot
+   * toward this player automatically. The follow-distance reflex raises an alert when the player is
+   * out of range, and the model decides what to do.
+   */
   followPlayer: string | null
   followDistance: number
-  followActive: boolean
-  followLastError: string | null
-  /**
-   * True while a survival reflex is actively driving the bot's body — fighting a mob (defend) or
-   * escaping a hazard (escape-hazard). Suppresses auto-follow so its GoalFollow does not fight the
-   * reflex's movement (the conflict that caused the mining stutter), and suppresses auto-eat. Set by
-   * those behaviors; honoured in {@link ReflexRuntime}'s follow reconciliation.
-   */
-  reflexEngaged: boolean
 }
 
 export interface ReflexContextState {
@@ -101,9 +97,6 @@ export class ReflexContext {
   private readonly autonomyState = signal<ReflexAutonomyState>({
     followPlayer: null,
     followDistance: 2,
-    followActive: false,
-    followLastError: null,
-    reflexEngaged: false,
   })
 
   public getSnapshot(): ReflexContextState {

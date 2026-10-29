@@ -81,6 +81,13 @@ Twitter Service is a web automation service based on BrowserBase, providing stru
 
 Provides integration with the AIRI LLM platform, handling event-driven communication.
 
+The adapter does not act on `input:text`. User text goes to the character, and the model decides each X action:
+
+1. After authentication, the adapter sends a `context:update` (lane `x`) that tells the character which actions she can request.
+2. The character calls `builtIn_emitSparkCommand`. The command has a context with lane `x` and metadata such as `action = "post"` and `text = <tweet>`.
+3. The adapter runs only that action (`post`, `like`, `retweet`, `search`, `user`, or `timeline`). The model writes all tweet text.
+4. The adapter reports the state with `spark:emit` and sends the result back to the character as a `context:update`.
+
 #### 5.1.2 MCP Adapter
 
 Implements the Model Context Protocol interface, providing communication based on HTTP. Currently using the official MCP SDK implementation, providing high-performance HTTP server and SSE communication through H3.js.

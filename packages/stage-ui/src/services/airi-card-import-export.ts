@@ -244,6 +244,7 @@ function sanitizeAiri(
   const speech = isRecord(modules.speech) ? modules.speech : {}
   const initiative = isRecord(modules.initiative) ? modules.initiative : undefined
   const coplay = isRecord(modules.coplay) ? modules.coplay : undefined
+  const prompt = isRecord(modules.prompt) ? modules.prompt : undefined
   const avatarModel = displayModel ? createAvatarModelReference(displayModel.id, displayModel.format) : undefined
   if (avatarModel?.type === 'live2d' && controls) {
     avatarModel.config.controls = {
@@ -279,6 +280,8 @@ function sanitizeAiri(
       // runtime then treats every behaviour as off.
       ...(initiative ? { initiative: sanitizeInitiative(initiative) } : {}),
       ...(coplay && typeof coplay.enabled === 'boolean' ? { coplay: { enabled: coplay.enabled } } : {}),
+      // The emotion sample is written in her voice, so a shared card keeps it.
+      ...(prompt && typeof prompt.emotionExample === 'string' ? { prompt: { emotionExample: prompt.emotionExample } } : {}),
     },
     agents: {},
   }

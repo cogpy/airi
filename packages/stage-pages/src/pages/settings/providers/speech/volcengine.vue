@@ -137,7 +137,6 @@ watchDebounced([
         :available-voices="availableVoices"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured"
-        default-text="Hello! This is a test of the ElevenLabs voice synthesis."
       />
     </template>
   </SpeechProviderSettings>

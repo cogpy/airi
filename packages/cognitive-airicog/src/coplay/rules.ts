@@ -59,8 +59,8 @@ export interface GameRules<State, Move> {
   currentSeat: (state: State) => string | undefined
   /**
    * Every move the current seat may make, in a fixed order. Empty once the
-   * game is over. The order is part of the contract: the fallback policy
-   * picks the first move it finds acceptable, so it must be deterministic.
+   * game is over. The order is part of the contract, so the legal moves that
+   * a model reads are the same for the same state.
    */
   legalMoves: (state: State) => Move[]
   /**

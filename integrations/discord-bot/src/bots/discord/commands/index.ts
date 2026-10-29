@@ -10,7 +10,7 @@ export async function registerCommands(token: string, clientId: string) {
   rest.put(
     Routes.applicationCommands(clientId),
     { body: [
-      new SlashCommandBuilder().setName('ping').setDescription('Replies with Pong!'),
+      new SlashCommandBuilder().setName('ping').setDescription('Checks if the bot is online'),
       new SlashCommandBuilder().setName('summon').setDescription('Summons the bot to your voice channel'),
     ] },
   )

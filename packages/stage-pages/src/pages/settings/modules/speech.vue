@@ -11,7 +11,7 @@ import {
   TestDummyMarker,
   VoiceCardManySelect,
 } from '@proj-airi/stage-ui/components'
-import { useAnalytics } from '@proj-airi/stage-ui/composables'
+import { useAnalytics, useSpeechPreviewLine } from '@proj-airi/stage-ui/composables'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/providers/official'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
@@ -68,7 +68,22 @@ const {
 
 const voiceSearchQuery = ref('')
 const useSSML = ref(false)
-const testText = ref('Hello, my name is AI Assistant')
+// The character writes the preview line with the chat model. Nothing fixed stands in for it.
+const { writeLine, writing: writingLine, error: writeLineError } = useSpeechPreviewLine()
+const testText = ref('')
+
+async function writeTestLine() {
+  const before = testText.value
+  const line = await writeLine()
+  // Text the user typed while the model wrote stays.
+  if (line && testText.value === before)
+    testText.value = line
+}
+
+onMounted(() => {
+  if (!testText.value)
+    void writeTestLine()
+})
 const ssmlText = ref('')
 const isGenerating = ref(false)
 const audioUrl = ref('')
@@ -977,6 +992,18 @@ async function handleDeleteProvider(providerId: string) {
               w-full
               :placeholder="t('settings.pages.providers.provider.elevenlabs.playground.fields.field.input.placeholder')"
             />
+            <div flex="~ row wrap" items-center gap-2 text-sm>
+              <button
+                type="button"
+                border="neutral-200 dark:neutral-700 solid 1" rounded-lg px-3 py-1
+                :disabled="writingLine"
+                :class="{ 'opacity-50 cursor-not-allowed': writingLine }"
+                @click="writeTestLine"
+              >
+                {{ writingLine ? t('settings.pages.modules.speech.sections.section.playground.buttons.write-line.writing') : t('settings.pages.modules.speech.sections.section.playground.buttons.write-line.label') }}
+              </button>
+              <span v-if="writeLineError" text="red-500">{{ writeLineError }}</span>
+            </div>
           </template>
           <template v-else>
             <textarea

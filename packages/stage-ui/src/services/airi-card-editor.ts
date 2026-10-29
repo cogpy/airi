@@ -34,6 +34,8 @@ interface AiriCardEditorModules {
     | 'autonomousEnabled'
     | 'autonomousThreshold'
   >
+  /** The card's emotion sample. Blank uses the built-in one. Omitted keeps the card's. */
+  prompt?: { emotionExample: string }
 }
 
 /**
@@ -178,11 +180,17 @@ export function applyAiriCardEditorModules(
             ...existing?.modules.artistry,
             ...edited.artistry,
           },
+          ...(edited.prompt ? { prompt: withEmotionExample(existing?.modules.prompt, edited.prompt.emotionExample) } : {}),
         },
         agents: existing?.agents ?? {},
       },
     },
   }
+}
+
+function withEmotionExample(prompt: AiriExtension['modules']['prompt'], emotionExample: string): NonNullable<AiriExtension['modules']['prompt']> {
+  const { emotionExample: _replaced, ...rest } = prompt ?? {}
+  return emotionExample.trim() ? { ...rest, emotionExample } : rest
 }
 
 function isAiriExtension(value: unknown): value is AiriExtension {

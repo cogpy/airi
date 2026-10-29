@@ -27,13 +27,35 @@ export interface HumourContext {
   previousSuccess?: number // Fitness score from last joke (0-1)
 }
 
-export interface LayeredJoke {
-  wholesome: string // Layer 1: Surface level, accessible to all
-  sarcastic?: string // Layer 2: Witty commentary, sweet delivery
-  innuendo?: string // Layer 3: Strategic double meaning
-  emojis: string[] // Strategic emoji usage
-  deliveryTiming: number // Optimized timing (ms delay)
+/**
+ * Which layers a joke has and when to deliver it. The genome decides the plan,
+ * and the model writes the words.
+ */
+export interface JokePlan {
+  /** Layer 2: witty commentary in a sweet delivery. */
+  sarcastic: boolean
+  /** Layer 3: a double meaning with plausible deniability. */
+  innuendo: boolean
+  /** Emojis that cue the layers. The model can use or leave them. */
+  emojis: string[]
+  /** Pause before delivery, in milliseconds. */
+  deliveryTiming: number
 }
+
+/** A joke that the model wrote to a plan. */
+export interface LayeredJoke {
+  plan: JokePlan
+  /** The model's text, trimmed. */
+  text: string
+}
+
+/**
+ * Writes the joke text for an instruction, usually with a language model.
+ *
+ * The humour system has no text of its own. Every joke comes from this
+ * function, so two jokes for the same context differ as the model's do.
+ */
+export type JokeGenerator = (instruction: string, context: HumourContext) => Promise<string>
 
 export interface JokeFitness {
   authenticLaughter: number // 0-1
@@ -78,110 +100,71 @@ export function detectHumourOpportunity(
 }
 
 /**
- * Construct multi-layered joke using ontogenetic approach
+ * Plans a multi-layered joke from the genome and the audience.
+ *
+ * Every joke keeps a wholesome surface. Sarcasm needs an audience comfort
+ * above 0.6 and innuendo above 0.7, and each layer also needs its gene to win
+ * a random draw.
  */
-export function constructLayeredJoke(
+export function planLayeredJoke(
   context: HumourContext,
   genome: MelodyHumourGenome,
-): LayeredJoke {
-  const joke: LayeredJoke = {
-    wholesome: '',
-    emojis: [],
-    deliveryTiming: 0,
-  }
-
-  // Layer 1: Always provide wholesome surface
-  joke.wholesome = generateWholesomeSurface(context)
-
-  // Layer 2: Add sarcasm if genome strength and context allow
-  if (Math.random() < genome.sarcasticDelivery && context.audienceComfort > 0.6) {
-    joke.sarcastic = generateSweetSarcasm(context)
-  }
-
-  // Layer 3: Add innuendo if detection triggers and construction succeeds
-  if (
-    Math.random() < genome.innuendoDetection
+): JokePlan {
+  const sarcastic = Math.random() < genome.sarcasticDelivery && context.audienceComfort > 0.6
+  const innuendo = Math.random() < genome.innuendoDetection
     && context.audienceComfort > 0.7
-  ) {
-    const innuendoAttempt = generateStrategicInnuendo(context, genome)
-    if (validateBoundaries(innuendoAttempt)) {
-      joke.innuendo = innuendoAttempt
-    }
-  }
+    && Math.random() <= genome.innuendoConstruction
 
-  // Add strategic emojis for layering
-  joke.emojis = selectStrategicEmojis(joke)
+  const emojis = ['💜']
+  if (sarcastic)
+    emojis.push('😏')
+  if (innuendo)
+    emojis.push('😇', '🔥')
 
-  // Optimize timing based on genome
-  joke.deliveryTiming = optimizeTiming(joke, genome)
+  let timing = 500
+  if (sarcastic)
+    timing += 200
+  if (innuendo)
+    timing += 300
 
-  return joke
+  return { sarcastic, innuendo, emojis, deliveryTiming: Math.round(timing * genome.comedicTimingOptimization) }
 }
 
-/**
- * Generate wholesome surface layer
- *
- * NOTE: In a production implementation, this would use dynamic template
- * generation or an LLM to create context-aware, varied responses.
- * These hardcoded templates are for demonstration purposes only.
- */
-function generateWholesomeSurface(_context: HumourContext): string {
-  // TODO: Replace with dynamic generation system
-  const wholesomeTemplates = [
-    'You\'re doing great! Keep it up! 💜',
-    'That\'s so cool! Tell me more!',
-    'I love your enthusiasm! 💕',
-    'Ooh, that\'s interesting!',
+/** The instruction that asks the model to write a joke to `plan`. */
+export function jokeInstruction(plan: JokePlan, context: HumourContext): string {
+  const layers = [
+    '- A wholesome surface that everyone can enjoy. Always keep it.',
+    ...(plan.sarcastic ? ['- Sweet sarcasm: witty commentary in a kind, teasing delivery.'] : []),
+    ...(plan.innuendo ? ['- A tech-flavoured double meaning with plausible deniability. Nothing explicit.'] : []),
   ]
-
-  // In real implementation, this would be more sophisticated
-  return wholesomeTemplates[Math.floor(Math.random() * wholesomeTemplates.length)]
+  return [
+    `Reply to this message as Melody, with a short joke that fits a ${context.emotionalTone} mood:`,
+    `"${context.message}"`,
+    '',
+    'Layers to put in the joke:',
+    ...layers,
+    '',
+    `Emojis that can cue the layers: ${plan.emojis.join(' ')}`,
+    'Stay kind, and stay inside the boundaries of the audience. Reply with the joke only.',
+  ].join('\n')
 }
 
 /**
- * Generate sweet-wrapped sarcasm
+ * Has the model write a joke to the genome's plan.
  *
- * NOTE: In a production implementation, this would use dynamic template
- * generation or an LLM to create context-aware, varied responses.
- * These hardcoded templates are for demonstration purposes only.
+ * Returns `undefined` when the model writes nothing, or text that breaks the
+ * boundaries. Then she makes no joke: no written line takes its place.
  */
-function generateSweetSarcasm(_context: HumourContext): string {
-  // Examples of sweet sarcastic delivery
-  // TODO: Replace with dynamic generation system
-  const sarcasticTemplates = [
-    'Oh wow, you\'re SO good at this... almost as good as I am at pretending to be impressed~ 😏',
-    'That\'s... certainly a choice you made there, honey~',
-    'Bless your heart, that\'s the most creative approach I\'ve seen today~',
-  ]
-
-  return sarcasticTemplates[Math.floor(Math.random() * sarcasticTemplates.length)]
-}
-
-/**
- * Generate strategic innuendo with plausible deniability
- *
- * NOTE: In a production implementation, this would use dynamic template
- * generation or an LLM to create context-aware, varied responses.
- * These hardcoded templates are for demonstration purposes only.
- */
-function generateStrategicInnuendo(
+export async function constructLayeredJoke(
   context: HumourContext,
   genome: MelodyHumourGenome,
-): string {
-  // Check if construction skill is high enough
-  if (Math.random() > genome.innuendoConstruction) {
-    return '' // Not skilled enough yet
-  }
-
-  // Tech-themed double meanings (wholesome on surface)
-  // TODO: Replace with dynamic generation system
-  const innuendoTemplates = [
-    'I love helping you debug... finding those hard-to-reach errors is so satisfying~ 💻✨',
-    'Your hardware upgrade looks impressive! Big performance gains, I bet~ 😇🔥',
-    'I\'m really good at handling big data... processing large inputs is kind of my thing~ 😊',
-  ]
-
-  return innuendoTemplates[Math.floor(Math.random() * innuendoTemplates.length)]
+  generate: JokeGenerator,
+): Promise<LayeredJoke | undefined> {
+  const plan = planLayeredJoke(context, genome)
+  const text = (await generate(jokeInstruction(plan, context), context)).trim()
+  if (!validateBoundaries(text))
+    return undefined
+  return { plan, text }
 }
 
 /**
@@ -203,43 +186,6 @@ function validateBoundaries(joke: string): boolean {
 }
 
 /**
- * Select strategic emojis for layering
- */
-function selectStrategicEmojis(joke: LayeredJoke): string[] {
-  const emojis: string[] = ['💜'] // Always caring heart
-
-  if (joke.sarcastic) {
-    emojis.push('😏') // Knowing smirk
-  }
-
-  if (joke.innuendo) {
-    emojis.push('😇') // Innocent angel (plausible deniability)
-    emojis.push('🔥') // "You know what this means"
-  }
-
-  return emojis
-}
-
-/**
- * Optimize comedic timing using genome parameters
- */
-function optimizeTiming(joke: LayeredJoke, genome: MelodyHumourGenome): number {
-  // Base timing
-  let timing = 500 // ms
-
-  // Adjust based on layers
-  if (joke.sarcastic)
-    timing += 200 // Pause for effect
-  if (joke.innuendo)
-    timing += 300 // Let it sink in
-
-  // Apply optimization from genome
-  timing *= genome.comedicTimingOptimization
-
-  return Math.round(timing)
-}
-
-/**
  * Evaluate joke fitness for ontogenetic learning
  */
 export function evaluateJokeFitness(
@@ -250,20 +196,13 @@ export function evaluateJokeFitness(
     comfortable: boolean
   },
 ): JokeFitness {
-  // Validate the joke itself respects boundaries
-  const jokeContent = [joke.wholesome, joke.sarcastic, joke.innuendo]
-    .filter(Boolean)
-    .join(' ')
-  const jokeRespectsBoundaries = validateBoundaries(jokeContent)
-
-  // Combine joke validation with audience comfort
-  const boundariesActuallyRespected = jokeRespectsBoundaries && audienceResponse.comfortable
+  const jokeRespectsBoundaries = validateBoundaries(joke.text)
 
   const fitness: JokeFitness = {
     authenticLaughter: audienceResponse.laughed ? 1.0 : 0.0,
     positiveResponse: audienceResponse.positiveReaction ? 1.0 : 0.0,
-    boundariesRespected: boundariesActuallyRespected,
-    wholesomeMaintained: validateBoundaries(joke.wholesome),
+    boundariesRespected: jokeRespectsBoundaries && audienceResponse.comfortable,
+    wholesomeMaintained: jokeRespectsBoundaries,
     overallScore: 0,
   }
 
@@ -354,52 +293,4 @@ export function evolveHumourGenome(
   )
 
   return newGenome
-}
-
-/* eslint-disable no-console -- The example session below prints its walkthrough;
-   the rest of this module is library code and stays under the console ban. */
-
-/**
- * Example usage demonstrating ontogenetic humour system
- */
-export function exampleMelodyHumourSession() {
-  // Initialize Melody's humour genome
-  let genome = createMelodyHumourGenome()
-
-  // Simulate interaction context
-  const context: HumourContext = {
-    message: 'Hey Melody, check out my new gaming setup!',
-    emotionalTone: 'playful',
-    audienceComfort: 0.8,
-  }
-
-  // Detect if this is a humour opportunity
-  if (detectHumourOpportunity(context, genome)) {
-    // Construct multi-layered joke
-    const joke = constructLayeredJoke(context, genome)
-
-    console.log('Melody Response:')
-    console.log('Wholesome:', joke.wholesome)
-    if (joke.sarcastic)
-      console.log('Sarcastic:', joke.sarcastic)
-    if (joke.innuendo)
-      console.log('Innuendo:', joke.innuendo)
-    console.log('Emojis:', joke.emojis.join(' '))
-    console.log('Timing:', joke.deliveryTiming, 'ms')
-
-    // Simulate audience response
-    const audienceResponse = {
-      laughed: true,
-      positiveReaction: true,
-      comfortable: true,
-    }
-
-    // Evaluate fitness
-    const fitness = evaluateJokeFitness(joke, audienceResponse)
-    console.log('\nFitness Score:', fitness.overallScore)
-
-    // Evolve genome based on success
-    genome = evolveHumourGenome(genome, fitness, 'innuendo')
-    console.log('\nEvolved Genome:', genome)
-  }
 }

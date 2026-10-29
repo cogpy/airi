@@ -25,7 +25,7 @@ function createReflexSnapshot() {
     attention: {},
     autonomy: {
       followPlayer: null,
-      followActive: false,
+      followDistance: 2,
     },
   }
 }
@@ -108,6 +108,22 @@ function createNonResumingPerceptionEvent() {
       metadata: { action: 'noise' },
     },
     source: { type: 'minecraft', id: 'world' },
+    timestamp: Date.now(),
+  } as any
+}
+
+function createReflexAlertEvent(urgency: 'urgent' | 'ambient' = 'urgent') {
+  return {
+    type: 'perception',
+    payload: {
+      type: 'reflex_alert',
+      description: urgency === 'urgent' ? 'You are standing in lava and burning.' : 'You are idle. Alex is moving nearby.',
+      sourceId: urgency === 'urgent' ? 'reflex:hazard-alert' : 'reflex:idle-observation',
+      confidence: 1,
+      timestamp: Date.now(),
+      metadata: { kind: urgency === 'urgent' ? 'in_lava' : 'player_moving', urgency },
+    },
+    source: { type: 'minecraft', id: 'reflex' },
     timestamp: Date.now(),
   } as any
 }
@@ -278,7 +294,8 @@ inv;
       source: { type: 'system', id: 'brain:no_action_budget' },
       payload: { reason: 'no_action_budget_exhausted' },
     })
-    expect(bot.bot.chat).toHaveBeenCalledTimes(1)
+    // The block is an operator diagnostic: it goes to the logger and never to game chat under her name.
+    expect(bot.bot.chat).not.toHaveBeenCalled()
   })
 
   it('resets no-action budget when player chat arrives', async () => {
@@ -324,6 +341,78 @@ inv;
       max: 8,
     })
     expect(deps.llmAgent.callLLM).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs a giveUp instead of sending a debug line to game chat', async () => {
+    const deps: any = createDeps('await skip()')
+    deps.minecraftContextService = { bindBot: vi.fn() }
+    const brain: any = new Brain(deps)
+    const bot = { bot: { chat: vi.fn() } }
+    brain.init(bot as any)
+
+    const onCompleted = deps.taskExecutor.on.mock.calls.find((call: any[]) => call[0] === 'action:completed')?.[1]
+    await onCompleted({ action: { tool: 'giveUp', params: { reason: 'stuck' } }, result: 'Gave up' })
+
+    expect(brain.givenUp).toBe(true)
+    expect(brain.giveUpReason).toBe('stuck')
+    expect(bot.bot.chat).not.toHaveBeenCalled()
+    expect(deps.logger.log).toHaveBeenCalledWith('INFO', 'Brain: Gave up: stuck. Waiting for player input.')
+  })
+
+  it('handles an urgent reflex alert while giveUp is active, without leaving giveUp', async () => {
+    const deps: any = createDeps('await skip()')
+    const brain: any = new Brain(deps)
+    brain.givenUp = true
+    brain.giveUpReason = 'stuck'
+
+    await brain.processEvent({} as any, createReflexAlertEvent('urgent'))
+
+    expect(deps.llmAgent.callLLM).toHaveBeenCalledTimes(1)
+    expect(brain.givenUp).toBe(true)
+  })
+
+  // https://github.com/cogpy/airi/pull/31#discussion_r4407408775
+  //
+  // ROOT CAUSE:
+  //
+  // The giveUp gate let through only urgent reflex alerts, chat and AIRI
+  // commands. Critical health arrives as `saliency_high` with action
+  // `low_health`, so it stayed muted while nothing else recovered her.
+  //
+  // We fixed this by letting critical health through the gate.
+  it('handles critical health while giveUp is active, without leaving giveUp', async () => {
+    const deps: any = createDeps('await skip()')
+    const brain: any = new Brain(deps)
+    brain.givenUp = true
+    brain.giveUpReason = 'stuck'
+    const event = createNonResumingPerceptionEvent()
+    event.payload.description = 'Health critical (6/20).'
+    event.payload.metadata = { action: 'low_health', health: '6' }
+
+    await brain.processEvent({} as any, event)
+
+    expect(deps.llmAgent.callLLM).toHaveBeenCalledTimes(1)
+    expect(brain.givenUp).toBe(true)
+  })
+
+  it('suppresses an ambient reflex observation while giveUp is active', async () => {
+    const deps: any = createDeps('await skip()')
+    const brain: any = new Brain(deps)
+    brain.givenUp = true
+    brain.giveUpReason = 'stuck'
+
+    await brain.processEvent({} as any, createReflexAlertEvent('ambient'))
+
+    expect(deps.llmAgent.callLLM).not.toHaveBeenCalled()
+  })
+
+  it('tells the model that nothing acts automatically on an urgent reflex alert', () => {
+    const brain: any = new Brain(createDeps('await skip()'))
+    const urgent = brain.buildUserMessage(createReflexAlertEvent('urgent'), '')
+    expect(urgent).toContain('[URGENT] You are standing in lava and burning. Nothing acts for you automatically. Decide what to do now.')
+
+    const ambient = brain.buildUserMessage(createReflexAlertEvent('ambient'), '')
+    expect(ambient).toContain('[EVENT] Observation: You are idle. Alex is moving nearby.')
   })
 
   it('keeps suppressing non-chat and non-AIRI perceptions while giveUp is active', async () => {
@@ -547,6 +636,24 @@ describe('brain queue coalescing', () => {
     expect((brain.queue[0].event.payload as any).type).toBe('airi_command')
     expect((brain.queue[1].event.payload as any).type).toBe('saliency_high')
     expect(brain.queue[2].event.type).toBe('feedback')
+  })
+
+  it('promotes urgent reflex alerts ahead of ordinary perceptions and feedback', () => {
+    const brain: any = new Brain(createDeps('await skip()'))
+
+    brain.queue = [
+      { event: createFeedbackEvent(), resolve: vi.fn(), reject: vi.fn() },
+      { event: createReflexAlertEvent('ambient'), resolve: vi.fn(), reject: vi.fn() },
+      { event: createNonResumingPerceptionEvent(), resolve: vi.fn(), reject: vi.fn() },
+      { event: createReflexAlertEvent('urgent'), resolve: vi.fn(), reject: vi.fn() },
+    ]
+
+    brain.coalesceQueue()
+
+    expect((brain.queue[0].event.payload as any).metadata.urgency).toBe('urgent')
+    expect((brain.queue[1].event.payload as any).metadata.urgency).toBe('ambient')
+    expect((brain.queue[2].event.payload as any).type).toBe('saliency_high')
+    expect(brain.queue[3].event.type).toBe('feedback')
   })
 
   it('drops no-action follow-ups when player chat is waiting', () => {

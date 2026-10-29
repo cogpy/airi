@@ -27,12 +27,14 @@ import {
   VoiceConnectionStatus,
 } from '@discordjs/voice'
 import { useLogg } from '@guiiai/logg'
+import { errorMessageFrom } from '@moeru/std'
 
 import { DECODE_SAMPLE_RATE } from '../../../constants/audio'
 import { openaiTranscribe } from '../../../pipelines/tts'
 import { convertOpusToWav } from '../../../utils/audio'
 import { AudioMonitor } from '../../../utils/audio-monitor'
 import { OpusDecoder } from '../../../utils/opus'
+import { deferCommandReply, replyWithModel } from './reply'
 
 function isValidTranscription(text: string): boolean {
   if (!text || text.includes('[BLANK_AUDIO]'))
@@ -162,7 +164,7 @@ export class VoiceManager extends EventEmitter {
     }
   }
 
-  async joinChannel(interaction: ChatInputCommandInteraction<CacheType>, channel: BaseGuildVoiceChannel) {
+  async joinChannel(channel: BaseGuildVoiceChannel) {
     const oldConnection = this.getVoiceConnection(
       channel.guildId as string,
     )
@@ -178,13 +180,17 @@ export class VoiceManager extends EventEmitter {
       }
     }
 
+    const selfId = this.client.user?.id
+    if (!selfId)
+      throw new Error('The Discord client is not logged in')
+
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
-      adapterCreator: channel.guild.voiceAdapterCreator as any,
+      adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: false,
       selfMute: false,
-      group: this.client.user.id,
+      group: selfId,
     })
 
     try {
@@ -196,7 +202,6 @@ export class VoiceManager extends EventEmitter {
 
       // Log connection success
       this.logger.withField('state', connection.state.status).log('Voice connection established in state')
-      await interaction.reply(`Joined: ${channel.name}.`)
 
       // Set up ongoing state change monitoring
       connection.on('stateChange', this.handleVoiceConnectionStateChange(channel, connection))
@@ -546,35 +551,62 @@ export class VoiceManager extends EventEmitter {
   }
 
   async handleJoinChannelCommand(interaction: ChatInputCommandInteraction<CacheType>) {
+    const userName = interaction.user.displayName
     try {
+      // Joining can take up to 20 seconds. Acknowledge the command first.
+      await deferCommandReply(interaction)
+
       const currVoiceChannel = (interaction.member as GuildMember).voice.channel
       if (!currVoiceChannel) {
-        return await interaction.reply('Please join a voice channel first.')
+        await replyWithModel(interaction, `The user ${userName} ran /summon to call you into their voice channel. `
+        + 'The user is not in a voice channel, so you cannot join. The user must join a voice channel first.')
+        return
       }
 
-      await this.joinChannel(interaction, currVoiceChannel)
+      try {
+        await this.joinChannel(currVoiceChannel)
+      }
+      catch (error) {
+        this.logger.withError(error).log('Error joining voice channel')
+        await replyWithModel(interaction, `The user ${userName} ran /summon. You tried to join the voice channel "${currVoiceChannel.name}", `
+        + `but it failed: ${errorMessageFrom(error) ?? 'no error message'}.`)
+        return
+      }
+
+      await replyWithModel(interaction, `The user ${userName} ran /summon. You joined the voice channel "${currVoiceChannel.name}". `
+      + 'You can now hear and talk to the people in it.')
     }
     catch (error) {
-      this.logger.withError(error).log('Error joining voice channel')
+      this.logger.withError(error).log('Error handling the summon command')
     }
   }
 
-  async handleLeaveChannelCommand(interaction: any) {
-    const connection = this.getVoiceConnection(interaction.guildId as any)
-
-    if (!connection) {
-      await interaction.reply('Not currently in a voice channel.')
-      return
-    }
-
+  async handleLeaveChannelCommand(interaction: ChatInputCommandInteraction<CacheType>) {
+    const userName = interaction.user.displayName
     try {
-      connection.destroy()
-      await interaction.reply('Left the voice channel.')
+      await deferCommandReply(interaction)
+
+      const connection = interaction.guildId ? this.getVoiceConnection(interaction.guildId) : undefined
+      if (!connection) {
+        await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. `
+        + 'You are not in a voice channel in this server, so there is nothing to leave.')
+        return
+      }
+
+      try {
+        connection.destroy()
+      }
+      catch (error) {
+        this.logger.withError(error).log('Error leaving voice channel')
+        await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. `
+        + `You tried to leave, but it failed: ${errorMessageFrom(error) ?? 'no error message'}.`)
+        return
+      }
+
+      await replyWithModel(interaction, `The user ${userName} asked you to leave the voice channel. You left it.`)
     }
     catch (error) {
-      this.logger.withError(error).log('Error leaving voice channel')
-
-      await interaction.reply('Failed to leave the voice channel.')
+      this.logger.withError(error).log('Error handling the leave command')
     }
   }
 }

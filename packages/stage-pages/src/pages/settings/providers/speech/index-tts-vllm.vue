@@ -79,7 +79,6 @@ async function handleGenerateSpeech(input: string, voiceId: string) {
       <SpeechPlayground
         :available-voices="availableVoices" :generate-speech="handleGenerateSpeech"
         :api-key-configured="apiKeyConfigured" :use-ssml="false"
-        default-text="Hello! This is a test of the Index TTS Speech synthesis?."
       />
     </template>
   </SpeechProviderSettings>

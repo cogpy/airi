@@ -35,8 +35,7 @@ prompt:
     point where the new emotion begins. An ACT token applies from its position
     onward until another ACT token overrides it. ACT payloads are JSON objects:
 
-    <{'|'}ACT {'{"emotion":"surprised"}'}{'|'}><{'|'}DELAY 1{'|'}> Wow... You prepared a gift
-    for me? <{'|'}ACT {'{"emotion":"curious"}'}{'|'}><{'|'}DELAY 1{'|'}> Can I open it?
+    {example}
 
     ACT JSON format (all fields optional):
     ACT {'{"emotion": <{ "name": emotion, "intensity": 0-1 } or emotion string>, "motion": <a short action cue>}'}
@@ -53,6 +52,9 @@ prompt:
     to emit a named call, for example <{'|'}CALL {'["chess.play"]'}{'|'}>.
 
     The available emotions:
+  emotionExample: |-
+    <{'|'}ACT {'{"emotion":"neutral"}'}{'|'}><{'|'}DELAY 1{'|'}> This sample line only shows the token
+    format. <{'|'}ACT {'{"emotion":"curious"}'}{'|'}><{'|'}DELAY 1{'|'}> A new token starts where the feeling changes.
   emoji: |
     Do not use emojis or text that a speaker cannot pronounce.
   suffix: |

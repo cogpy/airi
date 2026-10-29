@@ -268,7 +268,9 @@ export const useChatStore = defineStore('chat', () => {
   // the emotion list it may choose from.
   const moodTracker = createMoodTracker()
   const moodLine = shallowRef<string>()
-  const runtimePrompt = useAiriRuntimePrompt({ moodLine: () => moodLine.value })
+  // The emotion sample follows the character that answers, so it is set for each request.
+  const emotionExample = shallowRef<string>()
+  const runtimePrompt = useAiriRuntimePrompt({ moodLine: () => moodLine.value, emotionExample: () => emotionExample.value })
   const { t } = useI18n()
   const authStore = useAuthStore()
   const llmStore = useLLM()
@@ -1013,9 +1015,10 @@ export const useChatStore = defineStore('chat', () => {
     // Identity follows the session's persona at request time, so a card switch never rewrites another session.
     getSystemPrompt: sessionSystemPrompt,
     runtimeContextProviders: [
-      () => {
+      (sessionId) => {
         // The tracker is not reactive; refresh its decayed mood for each request.
         moodLine.value = moodTracker.promptLine()
+        emotionExample.value = cardStore.getCard(personaOf(sessionId))?.extensions?.airi?.modules?.prompt?.emotionExample
         return createRuntimePromptContext(runtimePrompt.value)
       },
       createMinecraftContext,

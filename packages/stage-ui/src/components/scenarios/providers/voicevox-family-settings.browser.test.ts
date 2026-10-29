@@ -60,7 +60,6 @@ async function mountSettings(pinia: Pinia, providerId = 'voicevox') {
       providerId,
       intonationLabelKey: 'intonation.label',
       intonationDescriptionKey: 'intonation.description',
-      defaultText: 'こんにちは',
     },
     global: {
       plugins: [pinia, PiniaColada, i18n, router],
@@ -118,6 +117,8 @@ describe('voicevox family settings', () => {
 
     await expect.poll(() => providerConfig.providers.voicevox?.status).toBe('configured')
     await expect.poll(() => speech.availableVoices.voicevox?.map(voice => voice.name)).toEqual(['ずんだもん / ノーマル'])
+    // No chat model is set here, so the preview line stays empty until the user types one.
+    await screen.getByRole('textbox').first().fill('こんにちは')
     await expect.element(screen.getByRole('button', { name: /Test/i })).toBeEnabled()
   })
 

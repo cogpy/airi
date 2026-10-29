@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { errorMessageFrom } from '@moeru/std'
 import { FieldCheckbox, FieldInput } from '@proj-airi/ui'
-import { computed, onUnmounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useSpeechPreviewLine } from '../../../composables/use-speech-preview-line'
+import { useConsciousnessStore } from '../../../stores/modules/consciousness'
 import { TestDummyMarker } from '../../gadgets'
 
 const props = defineProps<{
   // Input fields
-  defaultText?: string
   modelValue: string
   voice: string
 
@@ -34,7 +36,24 @@ const voice = computed({
 })
 
 // Playground state
-const testText = ref(props.defaultText || 'Hello! This is a test of the voice synthesis.')
+// The character writes the preview line with the chat model. Nothing fixed stands in for it.
+const { activeProvider, activeModel } = storeToRefs(useConsciousnessStore())
+const { writeLine, writing: writingLine, error: writeLineError } = useSpeechPreviewLine()
+const testText = ref('')
+const chatModelSet = computed(() => Boolean(activeProvider.value && activeModel.value))
+
+async function writeTestLine() {
+  const before = testText.value
+  const line = await writeLine()
+  // Text the user typed while the model wrote stays.
+  if (line && testText.value === before)
+    testText.value = line
+}
+
+onMounted(() => {
+  if (!testText.value)
+    void writeTestLine()
+})
 const isGenerating = ref(false)
 const audioUrl = ref('')
 const errorMessage = ref('')
@@ -146,6 +165,19 @@ defineExpose({
           bg="neutral-100 dark:neutral-800 focus:neutral-50 dark:focus:neutral-900"
           h-24 w-full rounded-lg px-3 py-2 text-sm outline-none
         />
+        <div flex="~ row wrap" items-center gap-2 text-sm>
+          <button
+            type="button"
+            border="neutral-200 dark:neutral-700 solid 1" rounded-lg px-3 py-1
+            :disabled="writingLine || !chatModelSet"
+            :class="{ 'opacity-50 cursor-not-allowed': writingLine || !chatModelSet }"
+            @click="writeTestLine"
+          >
+            {{ writingLine ? t('settings.pages.modules.speech.sections.section.playground.buttons.write-line.writing') : t('settings.pages.modules.speech.sections.section.playground.buttons.write-line.label') }}
+          </button>
+          <span v-if="!chatModelSet" text="neutral-500">{{ t('settings.pages.modules.speech.sections.section.playground.no-chat-model') }}</span>
+          <span v-else-if="writeLineError" text="red-500">{{ writeLineError }}</span>
+        </div>
       </template>
       <template v-else>
         <textarea

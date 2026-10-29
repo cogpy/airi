@@ -366,8 +366,8 @@ export interface ChatOrchestratorRuntimeDeps {
    * With it, history carries no identity. Stored system messages are skipped, so a persona edit or switch reaches the next send of its own sessions only.
    */
   getSystemPrompt?: (sessionId: string) => string | undefined
-  /** Runtime context providers ingested immediately before prompt composition. */
-  runtimeContextProviders?: Array<() => ContextMessage | null | undefined>
+  /** Runtime context providers ingested immediately before prompt composition, given the sending session. */
+  runtimeContextProviders?: Array<(sessionId: string) => ContextMessage | null | undefined>
   /**
    * Tools whose calls show as content of the reply, by tool name. A reply keeps no slice for their calls, and the model
    * still sees the calls in the provider transcript.
@@ -634,12 +634,26 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       deps.foregroundStream.reset()
   }
 
-  function ingestRuntimeContexts() {
+  /**
+   * Ingests the runtime contexts for one send and returns the buckets it wrote.
+   *
+   * The registry is shared, and another session's send can replace a bucket
+   * while this send waits on hooks and persistence. The returned buckets keep
+   * this send's own contexts for its prompt.
+   */
+  function ingestRuntimeContexts(sessionId: string): Record<string, ContextMessage[]> {
+    const ingestedIds = new Set<string>()
     for (const provider of deps.runtimeContextProviders ?? []) {
-      const contextMessage = provider()
-      if (contextMessage)
+      const contextMessage = provider(sessionId)
+      if (contextMessage) {
         deps.context.ingest(contextMessage)
+        ingestedIds.add(contextMessage.id)
+      }
     }
+    if (ingestedIds.size === 0)
+      return {}
+    const snapshot = deps.context.snapshot()
+    return Object.fromEntries(Object.entries(snapshot).filter(([, messages]) => messages.some(message => ingestedIds.has(message.id))))
   }
 
   function getStablePromptTimestamp(message: ChatHistoryItem, fallbackCreatedAt: number) {
@@ -702,7 +716,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     // It is applied at message-assembly time (see below) as a system-prompt
     // date anchor + per-message [HH:MM] prefixes, which is more KV-cache
     // friendly and less prone to weak models echoing timestamps verbatim.
-    ingestRuntimeContexts()
+    const ownRuntimeContexts = ingestRuntimeContexts(sessionId)
 
     const sendingCreatedAt = now()
 
@@ -1037,7 +1051,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
           context.turns.unshift({ id: 'system-supplement', type: 'system', authority: 'system', content: [{ type: 'text', text: systemPromptSupplement }] })
       }
 
-      const contextsSnapshot = deps.context.snapshot()
+      const contextsSnapshot = { ...deps.context.snapshot(), ...ownRuntimeContexts }
       const entries = Object.entries(contextsSnapshot).flatMap(([source, messages]) => messages.map(message => ({ source, text: message.text })))
       if (entries.length) {
         const lastMessage = context.turns.at(-1)

@@ -5,6 +5,7 @@ import { sleep } from '@moeru/std'
 import { useLogger } from '../../utils/logger'
 import { breakBlockAt } from '../blocks'
 import { goToPosition, moveAway } from '../movement'
+import { reportSkillProgress } from '../progress'
 import { getNearestBlocks } from '../world'
 import { pickupNearbyItems } from './world-interactions'
 
@@ -23,8 +24,7 @@ export async function gatherWood(
   num: number,
   maxDistance = 64,
 ): Promise<boolean> {
-  logger.log(`Gathering wood... I need to collect ${num} logs.`)
-  mineflayer.bot.chat(`Gathering wood... I need to collect ${num} logs.`)
+  reportSkillProgress(`Started to gather wood: ${num} log(s) needed.`)
 
   try {
     let logsCount = getLogsCount(mineflayer)
@@ -81,7 +81,7 @@ export async function gatherWood(
       }
     }
 
-    logger.log(`Wood gathering complete! Total logs collected: ${logsCount}.`)
+    reportSkillProgress(`Finished gathering wood: ${logsCount} log(s) in inventory.`)
     return true
   }
   catch (error) {

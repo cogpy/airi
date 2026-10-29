@@ -1,6 +1,6 @@
 import type { GameMoveRejection, GameOutcome, GamePlayer, GameRules, TicTacToeState } from '@proj-airi/cognitive-airicog/coplay'
 
-import { chooseFallbackMove, createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
+import { createGameSession, ticTacToe } from '@proj-airi/cognitive-airicog/coplay'
 
 /**
  * The answer to one move at a table, with the move as text.
@@ -73,12 +73,6 @@ export interface CoplayTable {
   /** The position as a grid, or `undefined` for a game with no board view. */
   board: () => CoplayBoardView | undefined
   submitText: (participantId: string, text: string) => TableMoveResult
-  /**
-   * Plays the fallback move from `chooseFallbackMove` for the participant.
-   * Rejected for the same reasons as any other move, such as when it is not
-   * that participant's turn.
-   */
-  submitFallback: (participantId: string) => TableMoveResult
 }
 
 /**
@@ -117,14 +111,6 @@ function openTypedTable<State, Move>(
       return toBoard(state, new Set(rules.legalMoves(state).map(rules.formatMove)))
     },
     submitText: (participantId, text) => toTableResult(session.submitText(participantId, text)),
-    submitFallback(participantId) {
-      const move = chooseFallbackMove(rules, session.state())
-      // No legal move means the game is over; `submitText` reports that the
-      // same way it reports it for any other move.
-      return move === undefined
-        ? toTableResult(session.submitText(participantId, ''))
-        : toTableResult(session.submit(participantId, move))
-    },
   }
 }
 

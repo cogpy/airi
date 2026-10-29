@@ -201,7 +201,6 @@ watch(model, async (newValue) => {
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="true"
         :voices-loading="voicesLoading"
-        :default-text="t('settings.pages.providers.provider.kokoro-local.playground.default-text')"
       />
     </template>
   </SpeechProviderSettings>

@@ -6,7 +6,7 @@ import type { Action, BotContext, ChatContext, ExtendedContext } from '../../typ
 import { env } from 'node:process'
 
 import { useLogg } from '@guiiai/logg'
-import { sleep } from '@moeru/std'
+import { errorMessageFrom, sleep } from '@moeru/std'
 import { message } from '@xsai/utils-chat'
 import { Bot } from 'grammy'
 
@@ -18,6 +18,7 @@ import { listJoinedChats, recordJoinedChat } from '../../models/chats'
 import { listStickerPacks, recordStickerPack } from '../../models/sticker-packs'
 import { readMessage } from './agent/actions/read-message'
 import { sendMessage } from './agent/actions/send-message'
+import { replyWithModel } from './commands/reply-with-model'
 // import { shouldInterruptProcessing } from './agent/interruption'
 
 async function dispatchAction(ctx: BotContext, action: Action, abortController: AbortController, chatCtx?: ChatContext) {
@@ -462,30 +463,49 @@ export async function startTelegramBot() {
   const botCtx = createBotContext(telegramBot, log)
 
   telegramBot.command('add_sticker_pack', async (ctx) => {
-    if (!(await isChatIdBotAdmin(ctx.message.from.id))) {
-      log.withField('from_id', ctx.message.from.id).log('not an admin - skipping')
+    const commandMessage = ctx.message
+    if (commandMessage?.from == null) {
+      log.log('command without a sender - skipping')
       return
     }
-    if (ctx.message.reply_to_message == null) {
-      await ctx.reply('Please reply to a sticker pack to add it.')
+    if (!(await isChatIdBotAdmin(commandMessage.from.id))) {
+      log.withField('from_id', commandMessage.from.id).log('not an admin - skipping')
+      return
+    }
+    const adminName = commandMessage.from.first_name
+    const repliedMessage = commandMessage.reply_to_message
+    const repliedSticker = repliedMessage?.sticker
+    if (repliedMessage == null || repliedSticker?.set_name == null) {
+      await replyWithModel(ctx, `The admin ${adminName} sent /add_sticker_pack, but the command was not a reply to a sticker from a sticker pack. `
+      + 'To add a sticker pack, the admin must send the command as a reply to a sticker from that pack.')
       return
     }
 
     const logger = useLogg('addStickerPack').useGlobalConfig()
 
-    const repliedSticker = ctx.message.reply_to_message.sticker
-    const stickerSet = await telegramBot.api.getStickerSet(repliedSticker.set_name)
+    let outcome: string
+    try {
+      const stickerSet = await telegramBot.api.getStickerSet(repliedSticker.set_name)
 
-    logger.withField('sticker_set', repliedSticker.set_name).log('now will register the sticker set as known sticker set')
+      logger.withField('sticker_set', repliedSticker.set_name).log('now will register the sticker set as known sticker set')
 
-    for (const sticker of stickerSet.stickers) {
-      logger.withField('sticker', sticker).log('interpreting sticker')
-      await interpretSticker(botCtx.bot, ctx.message.reply_to_message, sticker)
-      logger.withField('sticker', sticker).log('interpreted sticker')
+      for (const sticker of stickerSet.stickers) {
+        logger.withField('sticker', sticker).log('interpreting sticker')
+        await interpretSticker(botCtx.bot, repliedMessage, sticker)
+        logger.withField('sticker', sticker).log('interpreted sticker')
+      }
+
+      await recordStickerPack(repliedSticker.set_name, stickerSet.name)
+      outcome = `The admin ${adminName} asked you to learn a sticker pack. You added the sticker pack "${stickerSet.title}" `
+        + `with ${stickerSet.stickers.length} stickers. You can now send these stickers in chats.`
+    }
+    catch (err) {
+      logger.withError(err).log('failed to add sticker pack')
+      outcome = `The admin ${adminName} asked you to learn the sticker pack "${repliedSticker.set_name}". `
+        + `Adding it failed: ${errorMessageFrom(err) ?? 'no error message'}.`
     }
 
-    await recordStickerPack(repliedSticker.set_name, stickerSet.name)
-    await ctx.reply('Sticker pack added.')
+    await replyWithModel(ctx, outcome)
   })
 
   telegramBot.on('message:sticker', async (ctx) => {

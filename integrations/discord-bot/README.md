@@ -6,6 +6,12 @@ Allow アイリ to talk to you and many other users in Discord voice channels.
 
 Text messages and voice transcriptions both bind to `discord:channel:<id>`. Without a binding, a reply would join the owner's private session.
 
+## Slash commands
+
+The bot has `/ping` and `/summon`. The bot posts no fixed text. It acknowledges each command at once, then tells the model what happened (for example, the gateway latency or the voice channel that it joined). The bot posts the reply that the model writes.
+
+The model is the OpenAI-compatible provider in `OPENAI_API_BASE_URL`, `OPENAI_API_KEY`, and `OPENAI_MODEL`. A locally served model works. If the model fails, the bot deletes the pending reply and posts nothing.
+
 ## Getting started
 
 ```shell

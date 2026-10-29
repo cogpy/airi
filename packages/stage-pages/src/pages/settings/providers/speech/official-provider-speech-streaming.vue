@@ -237,7 +237,6 @@ function handleLogin() {
           :generate-speech="handleGenerateSpeech"
           :api-key-configured="true"
           :voices-loading="voicesLoading"
-          default-text="你好，这是流式语音合成的试听样例。"
         />
       </div>
     </ProviderSettingsContainer>

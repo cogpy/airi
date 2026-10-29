@@ -48,8 +48,6 @@ export interface SparkNotifyReactionOptions
   >>, SparkNotifyResponseControl {
   /** Short title for the event that should be visible to the reaction runtime. */
   headline: SparkNotifyProtocolData['headline']
-  /** Response text returned when the reaction runtime cannot produce a usable response. */
-  fallbackResponseText: string
   /**
    * Notification category.
    *
@@ -86,7 +84,6 @@ export interface SparkNotifyReactionOptions
 
 export const sparkNotifyReactionOptionsSchema = looseObject({
   headline: pipe(string(), trim(), nonEmpty()),
-  fallbackResponseText: string(),
   kind: optional(picklist(['alarm', 'ping', 'reminder'])),
   urgency: optional(picklist(['immediate', 'soon', 'later'])),
   note: optional(string()),

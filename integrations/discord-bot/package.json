@@ -22,6 +22,7 @@
     "@discordjs/voice": "catalog:",
     "@guiiai/logg": "catalog:",
     "@huggingface/transformers": "catalog:",
+    "@moeru/std": "catalog:",
     "@proj-airi/audio": "workspace:^",
     "@proj-airi/server-sdk": "workspace:^",
     "@proj-airi/server-shared": "workspace:^",

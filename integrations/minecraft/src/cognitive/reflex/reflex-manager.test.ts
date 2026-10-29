@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { shouldForwardSignalToConscious } from './reflex-manager'
+import { reflexAlertToSignal, shouldForwardSignalToConscious } from './reflex-manager'
 
 // The bot died against a kiting pillager because every incoming arrow woke the brain, which then
 // `stop`ped its own in-flight attack (combat thrashing). While attacking, routine `damage` signals
@@ -11,7 +11,7 @@ function sig(type: string, action?: string): any {
 }
 
 describe('shouldForwardSignalToConscious', () => {
-  it('never forwards entity_attention (handled by reflex behaviors)', () => {
+  it('never forwards entity_attention (the idle-observation reflex raises its own alert)', () => {
     expect(shouldForwardSignalToConscious(sig('entity_attention'), false)).toBe(false)
     expect(shouldForwardSignalToConscious(sig('entity_attention'), true)).toBe(false)
   })
@@ -31,5 +31,30 @@ describe('shouldForwardSignalToConscious', () => {
   it('forwards chat and other signals regardless of combat', () => {
     expect(shouldForwardSignalToConscious(sig('chat_message'), true)).toBe(true)
     expect(shouldForwardSignalToConscious(sig('system_message'), true)).toBe(true)
+  })
+})
+
+describe('reflexAlertToSignal', () => {
+  it('turns a reflex alert into a reflex_alert perception signal for the brain', () => {
+    const signal = reflexAlertToSignal({
+      behaviorId: 'hazard-alert',
+      kind: 'in_lava',
+      urgency: 'urgent',
+      description: 'You are standing in lava and burning.',
+      metadata: { health: 8 },
+    }, 1234)
+
+    expect(signal).toEqual({
+      type: 'reflex_alert',
+      description: 'You are standing in lava and burning.',
+      sourceId: 'reflex:hazard-alert',
+      confidence: 1,
+      timestamp: 1234,
+      metadata: { health: 8, kind: 'in_lava', urgency: 'urgent', behaviorId: 'hazard-alert' },
+    })
+  })
+
+  it('reaches the conscious layer', () => {
+    expect(shouldForwardSignalToConscious({ type: 'reflex_alert', metadata: { urgency: 'urgent' } }, true)).toBe(true)
   })
 })

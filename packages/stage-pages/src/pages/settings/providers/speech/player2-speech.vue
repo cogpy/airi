@@ -101,7 +101,6 @@ watch(speedRatio, async () => {
         :available-voices="availableVoices"
         :generate-speech="handleGenerateSpeech"
         :api-key-configured="true"
-        default-text="Hello! This is a test of the Player 2 voice synthesis."
       />
     </template>
   </SpeechProviderSettings>

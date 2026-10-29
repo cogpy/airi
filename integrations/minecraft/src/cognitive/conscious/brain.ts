@@ -220,7 +220,7 @@ const NO_ACTION_BUDGET_ALERT_SOURCE_ID = 'brain:no_action_budget'
 
 /**
  * Priority tiers for event scheduling (lower = higher priority).
- * Player chat and AIRI commands always take precedence over stale system feedback.
+ * Player chat, AIRI commands, and urgent reflex alerts always take precedence over stale system feedback.
  */
 const EVENT_PRIORITY_URGENT_PERCEPTION = 0
 const EVENT_PRIORITY_PERCEPTION = 1
@@ -262,10 +262,25 @@ function augmentDecisionError(message: string): string {
   return message
 }
 
+/**
+ * Whether a perception signal is an urgent reflex alert, for example "you are standing in lava".
+ *
+ * Reflexes never act on the body. The model must handle these alerts promptly, so they get the
+ * highest event priority and pass through an active `giveUp`.
+ */
+function isUrgentReflexAlert(signal: PerceptionSignal): boolean {
+  return signal.type === 'reflex_alert' && signal.metadata?.urgency === 'urgent'
+}
+
+/** Critical health. No plugin recovers her, so her model must hear it even during giveUp. */
+function isCriticalHealth(signal: PerceptionSignal): boolean {
+  return signal.metadata?.action === 'low_health'
+}
+
 function getEventPriority(event: BotEvent): number {
   if (event.type === 'perception') {
     const signal = event.payload as PerceptionSignal
-    if (signal.type === 'chat_message' || signal.type === 'airi_command')
+    if (signal.type === 'chat_message' || signal.type === 'airi_command' || isUrgentReflexAlert(signal))
       return EVENT_PRIORITY_URGENT_PERCEPTION
     return EVENT_PRIORITY_PERCEPTION
   }
@@ -379,13 +394,11 @@ export class Brain {
         this.givenUp = true
         this.giveUpReason = typeof action.params?.reason === 'string' ? action.params.reason : undefined
 
-        try {
-          const reason = this.giveUpReason ? `: ${this.giveUpReason}` : ''
-          bot.bot.chat(`[debug] Gave up${reason}. Waiting for player input.`)
-        }
-        catch (err) {
-          this.deps.logger.withError(err as Error).warn('Brain: Failed to announce giveUp to chat')
-        }
+        // Operator diagnostics go to the logger, not to game chat under her name.
+        // The model already sees this state: the giveUp tool result, and the [STATE] line of later turns.
+        // If she wants to tell players, the model calls chat in the same turn.
+        const reason = this.giveUpReason ? `: ${this.giveUpReason}` : ''
+        this.deps.logger.log('INFO', `Brain: Gave up${reason}. Waiting for player input.`)
       }
 
       if (action.tool === 'chat' && action.params?.feedback === true) {
@@ -846,20 +859,17 @@ export class Brain {
     return `${returnPart}||${logsPart}`
   }
 
-  private emitNoActionBudgetDebugChat(
-    bot: MineflayerWithAgents,
-    reason: 'no_action_budget_exhausted' | 'no_action_stagnated',
-  ): void {
+  /**
+   * Logs why a no-action follow-up was blocked.
+   *
+   * This is an operator diagnostic, so it goes to the logger and never to game chat under her name.
+   * The model gets the same situation as the `system_alert` event that the caller enqueues.
+   */
+  private logNoActionBudgetBlocked(reason: 'no_action_budget_exhausted' | 'no_action_stagnated'): void {
     const message = reason === 'no_action_budget_exhausted'
-      ? `[debug] no-action follow-up budget exhausted (remaining=0).`
-      : `[debug] no-action follow-up blocked due to stagnant eval loop.`
-
-    try {
-      bot.bot.chat(message)
-    }
-    catch (err) {
-      this.deps.logger.withError(err as Error).warn('Brain: Failed to send no-action budget debug chat')
-    }
+      ? 'Brain: No-action follow-up budget exhausted (remaining=0).'
+      : 'Brain: No-action follow-up blocked due to stagnant eval loop.'
+    this.deps.logger.log('INFO', message)
   }
 
   private isErrorLlmLogEntry(entry: LlmLogEntry): boolean {
@@ -1505,7 +1515,7 @@ export class Brain {
       }
 
       this.debugService.log('DEBUG', `No-action follow-up blocked: ${reason}`)
-      this.emitNoActionBudgetDebugChat(bot, reason)
+      this.logNoActionBudgetBlocked(reason)
 
       const followupEvent: BotEvent = {
         type: 'system_alert',
@@ -2226,6 +2236,11 @@ export class Brain {
       if (signal.type === 'chat_message') {
         parts.push(`[EVENT] ${signal.description}`)
       }
+      else if (signal.type === 'reflex_alert') {
+        parts.push(isUrgentReflexAlert(signal)
+          ? `[URGENT] ${signal.description} Nothing acts for you automatically. Decide what to do now.`
+          : `[EVENT] Observation: ${signal.description}`)
+      }
       else {
         parts.push(`[EVENT] Perception Signal: ${signal.description}`)
       }
@@ -2305,6 +2320,9 @@ export class Brain {
       return true
 
     const signal = event.payload as PerceptionSignal
+    if (isUrgentReflexAlert(signal) || isCriticalHealth(signal))
+      return false
+
     return !this.canResumeFromGiveUp(signal)
   }
 

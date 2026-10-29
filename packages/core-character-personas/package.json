@@ -43,6 +43,7 @@
     "es-toolkit": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "vitest": "catalog:vitest"
   }
 }

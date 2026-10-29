@@ -18,6 +18,7 @@
     "@proj-airi/server-sdk": "workspace:*",
     "h3": "catalog:",
     "playwright": "catalog:",
+    "valibot": "catalog:",
     "zod": "catalog:"
   }
 }

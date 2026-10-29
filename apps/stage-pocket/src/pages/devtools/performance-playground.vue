@@ -6,7 +6,7 @@ import { createPlaybackManager, createSpeechPipeline } from '@proj-airi/pipeline
 import { ThreeScene } from '@proj-airi/stage-ui-three'
 import { animations } from '@proj-airi/stage-ui-three/assets/vrm'
 import { useEmotionsMessageQueue } from '@proj-airi/stage-ui/composables/queues'
-import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '@proj-airi/stage-ui/constants/emotions'
+import { EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value } from '@proj-airi/stage-ui/constants/emotions'
 import { useAudioContext, useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useChatStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatMaintenanceStore } from '@proj-airi/stage-ui/stores/chat/maintenance'
@@ -51,7 +51,8 @@ const { activeSpeechProvider, activeSpeechVoice, activeSpeechModel, ssmlEnabled,
 const consciousnessStore = useConsciousnessStore()
 const { activeProvider: activeChatProvider, activeModel: activeChatModel } = storeToRefs(consciousnessStore)
 
-const currentMotion = ref<{ group: string }>({ group: EmotionThinkMotionName })
+// Only her emotion tokens set a motion. No fixed motion plays before she replies.
+const currentMotion = ref<{ group: string }>()
 const emotionsQueue = createQueue<EmotionPayload>({
   handlers: [
     async (ctx) => {
@@ -226,7 +227,7 @@ function resetChat() {
   playbackManager.stopAll('reset')
 }
 
-const { onBeforeMessageComposed, onBeforeSend, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = chatOrchestrator
+const { onBeforeMessageComposed, onTokenLiteral, onTokenSpecial, onStreamEnd, onAssistantResponseEnd } = chatOrchestrator
 const chatHookCleanups: Array<() => void> = []
 let currentIntent: ReturnType<typeof speechPipeline.openIntent> | null = null
 
@@ -236,10 +237,6 @@ chatHookCleanups.push(onBeforeMessageComposed(async () => {
   logLines.value = []
   currentIntent?.cancel('new-message')
   currentIntent = speechPipeline.openIntent({ priority: 'normal', behavior: 'queue' })
-}))
-
-chatHookCleanups.push(onBeforeSend(async () => {
-  currentMotion.value = { group: EmotionThinkMotionName }
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal) => {

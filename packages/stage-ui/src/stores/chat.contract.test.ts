@@ -299,6 +299,7 @@ const initiativeMocks = vi.hoisted(() => {
   const mocks = {
     noteInteraction: vi.fn(),
     noteUserTurn: vi.fn(),
+    useMoodSource: vi.fn(),
     recordEpisode: vi.fn(),
     remember: vi.fn(),
     episodes: [] as { id: string, atomId?: string, at: number, salience: number, kind?: 'experience' | 'reflection' }[],
@@ -1310,6 +1311,17 @@ describe('chat store contract', () => {
     expect(initiativeMocks.noteInteraction).toHaveBeenCalledOnce()
     // Only the user's turn can answer her after she speaks up.
     expect(initiativeMocks.noteUserTurn).toHaveBeenCalledOnce()
+  })
+
+  it('gives initiative her current arousal as its mood source', () => {
+    initiativeMocks.useMoodSource.mockClear()
+
+    useChatStore()
+
+    expect(initiativeMocks.useMoodSource).toHaveBeenCalledOnce()
+    const source = initiativeMocks.useMoodSource.mock.calls[0]?.[0] as () => number
+    expect(source()).toBeGreaterThanOrEqual(0)
+    expect(source()).toBeLessThanOrEqual(1)
   })
 
   it('names the subject of a remark for a card that opts into nameTopics', async () => {

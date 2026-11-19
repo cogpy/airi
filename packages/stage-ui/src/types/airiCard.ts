@@ -138,6 +138,26 @@ export interface AiriExtension {
        * budget of 6.
        */
       agentTurnBudget?: number
+      /**
+       * When on, her current arousal sets her tempo. Excited, she speaks up
+       * sooner and follows up faster. Calm, she waits longer.
+       */
+      moodTempo?: boolean
+      /**
+       * When on, a long lull with nothing in focus makes her restless. She
+       * then brings up a subject of her own choice.
+       */
+      muse?: boolean
+      /**
+       * When on, she speaks up at a random moment once her urge is high
+       * enough, not exactly at the threshold. Her timing becomes less
+       * predictable.
+       */
+      spontaneous?: boolean
+      /**
+       * When on, she follows up once if nobody answers something she raised.
+       */
+      followUp?: boolean
     }
 
     /** Prompt text that this card gives in place of the built-in text. */

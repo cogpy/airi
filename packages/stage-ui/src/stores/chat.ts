@@ -286,6 +286,8 @@ export const useChatStore = defineStore('chat', () => {
   const chatVision = useChatVision()
   const artistryAutonomousStore = useAutonomousArtistryStore()
   const initiativeStore = useInitiativeStore()
+  // Her arousal sets her tempo when the card turns on `moodTempo`.
+  initiativeStore.useMoodSource(() => moodTracker.current().arousal)
   const { activeProvider, activeModel } = storeToRefs(consciousnessStore)
   const chatSession = useChatSessionStore()
   const chatStream = useChatStreamStore()

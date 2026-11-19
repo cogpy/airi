@@ -306,6 +306,10 @@ function sanitizeInitiative(source: Record<string, unknown>): NonNullable<AiriEx
     ...flag('yieldWhenInterrupted'),
     ...flag('converseWithAgents'),
     ...finite('agentTurnBudget'),
+    ...flag('moodTempo'),
+    ...flag('muse'),
+    ...flag('spontaneous'),
+    ...flag('followUp'),
   }
 }
 

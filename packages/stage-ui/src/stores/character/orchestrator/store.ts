@@ -44,15 +44,11 @@ function quoteRemark(remark: string): string {
   return remark.length > MAX_QUOTED_REMARK ? `${remark.slice(0, MAX_QUOTED_REMARK)}…` : remark
 }
 
-/**
- * `related` are topics associated with the raised one, strongest first. The
- * note names them, so the model can connect the subject to what came up with it.
- */
-function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, now: number, related: readonly string[] = []): WebSocketEventOf<'spark:notify'> {
-  const id = `initiative-${now}`
-  const remark = quoteRemark(decision.topicAtomId)
-  const relatedRemarks = related.map(quoteRemark)
+type ActedInitiative = Extract<InitiativeDecision, { act: true }>
 
+/** The notification for one unprompted turn. The model composes the line from it. */
+function lullNotify(now: number, headline: string, note: string, payload: Record<string, unknown>): WebSocketEventOf<'spark:notify'> {
+  const id = `initiative-${now}`
   return {
     type: 'spark:notify',
     source: 'character:initiative',
@@ -61,23 +57,16 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
       eventId: id,
       kind: 'ping',
       urgency: 'immediate',
-      headline: 'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
-      note: relatedRemarks.length > 0
-        ? `From earlier in the conversation: ${remark}\nIt came up together with: ${relatedRemarks.join('; ')}`
-        : `From earlier in the conversation: ${remark}`,
+      headline,
+      note,
       destinations: ['character'],
-      payload: {
-        topic: remark,
-        related: relatedRemarks,
-        urge: decision.urge,
-        silencePressure: decision.silencePressure,
-      },
+      payload,
     },
   }
 }
 
 /**
- * How the lull turn is answered: as speech only, with the task in plain words.
+ * How an unprompted turn is answered: as speech only, with the task in plain words.
  *
  * The reply-format instructions come after the notify payload and end with a
  * sample dialogue. Llama 3.2 3B answered that sample instead of the subject.
@@ -85,30 +74,111 @@ function initiativeNotify(decision: Extract<InitiativeDecision, { act: true }>, 
  * In a live run, a request that did not say who said the remark made her
  * repeat the user's words as her own.
  */
-function initiativeControl(topic: string, related: readonly string[], origin: 'user' | 'reflection'): SparkNotifyResponseControl {
+function lullControl(request: readonly string[], instructions: readonly string[]): SparkNotifyResponseControl {
+  const requestText = request.join('\n')
+  return {
+    forceTextResponse: true,
+    messageOverride: {
+      replaceUserMessage: requestText,
+      appendFinalUserSections: [requestText],
+      appendSystemInstructions: [[
+        ...instructions,
+        'The examples in the reply-format instructions are not part of this conversation. Do not answer them.',
+      ].join('\n')],
+    },
+  }
+}
+
+function connectLine(related: readonly string[]): string[] {
+  return related.length > 0 ? [`It came up together with: ${related.map(remark => `"${quoteRemark(remark)}"`).join('; ')}`] : []
+}
+
+/**
+ * `related` are topics associated with the raised one, strongest first. The
+ * note names them, so the model can connect the subject to what came up with it.
+ */
+function initiativeNotify(decision: Extract<ActedInitiative, { kind: 'topic' }>, now: number, related: readonly string[] = []): WebSocketEventOf<'spark:notify'> {
+  const remark = quoteRemark(decision.topicAtomId)
   const relatedRemarks = related.map(quoteRemark)
-  const connect = relatedRemarks.length > 0 ? [`It came up together with: ${relatedRemarks.map(remark => `"${remark}"`).join('; ')}`] : []
-  const request = [
+
+  return lullNotify(
+    now,
+    'The conversation has gone quiet. You may break the silence by picking up something said earlier.',
+    relatedRemarks.length > 0
+      ? `From earlier in the conversation: ${remark}\nIt came up together with: ${relatedRemarks.join('; ')}`
+      : `From earlier in the conversation: ${remark}`,
+    {
+      topic: remark,
+      related: relatedRemarks,
+      urge: decision.urge,
+      silencePressure: decision.silencePressure,
+    },
+  )
+}
+
+function initiativeControl(topic: string, related: readonly string[], origin: 'user' | 'reflection'): SparkNotifyResponseControl {
+  const connect = connectLine(related)
+  return lullControl([
     '(No new message. The conversation has been quiet for a while.)',
     origin === 'reflection'
       ? `Speak first, to the user. Share this thought of yours from earlier: "${quoteRemark(topic)}"`
       : `Speak first, to the user. Ask about what the user said earlier: "${quoteRemark(topic)}"`,
     ...connect,
-  ].join('\n')
+  ], [
+    'The conversation has gone quiet, and you decided to speak first.',
+    origin === 'reflection'
+      ? `Share this thought of yours, in one or two short sentences: "${quoteRemark(topic)}"`
+      : `Ask about what the user said earlier, in one or two short sentences. These are the user's words, not yours: "${quoteRemark(topic)}"`,
+    ...connect,
+  ])
+}
+
+/**
+ * The notification and the request for a musing: a long lull with nothing in
+ * focus, so she brings up a subject of her own. The model chooses the subject.
+ */
+function musingTurn(decision: Extract<ActedInitiative, { kind: 'musing' }>, now: number): { notify: WebSocketEventOf<'spark:notify'>, control: SparkNotifyResponseControl } {
   return {
-    forceTextResponse: true,
-    messageOverride: {
-      replaceUserMessage: request,
-      appendFinalUserSections: [request],
-      appendSystemInstructions: [[
-        'The conversation has gone quiet, and you decided to speak first.',
-        origin === 'reflection'
-          ? `Share this thought of yours, in one or two short sentences: "${quoteRemark(topic)}"`
-          : `Ask about what the user said earlier, in one or two short sentences. These are the user's words, not yours: "${quoteRemark(topic)}"`,
-        ...connect,
-        'The examples in the reply-format instructions are not part of this conversation. Do not answer them.',
-      ].join('\n')],
-    },
+    notify: lullNotify(
+      now,
+      'The conversation has been quiet for a long while, and nothing from it is on your mind. You are restless.',
+      'Bring up something of your own choice.',
+      { urge: decision.urge, boredom: decision.boredom, tempo: decision.tempo },
+    ),
+    control: lullControl([
+      '(No new message. The conversation has been quiet for a long while.)',
+      'Speak first, to the user. Bring up a new subject of your own choice: a thought, a question, or something you noticed.',
+    ], [
+      'The conversation has been quiet for a long while, and you are restless.',
+      'Bring up a new subject of your own choice, in your own voice, in one or two short sentences.',
+      'Do not say that you are bored or that it is quiet. Just start the subject.',
+    ]),
+  }
+}
+
+/**
+ * The notification and the request for a follow-up: she spoke up and nobody
+ * answered. She follows up once, in her own way.
+ */
+function followUpTurn(decision: Extract<ActedInitiative, { kind: 'follow-up' }>, now: number): { notify: WebSocketEventOf<'spark:notify'>, control: SparkNotifyResponseControl } {
+  const subject = decision.topicAtomId === undefined ? [] : [`You had brought up: "${quoteRemark(decision.topicAtomId)}"`]
+  return {
+    notify: lullNotify(
+      now,
+      'You spoke up a while ago, and nobody answered.',
+      subject.length > 0 ? subject[0] : 'Your last remark got no answer.',
+      { urge: decision.urge, waitedMs: decision.waitedMs, tempo: decision.tempo },
+    ),
+    control: lullControl([
+      '(No new message. Nobody answered what you said last.)',
+      'Follow up once, to the user, in your own way.',
+      ...subject,
+    ], [
+      'You spoke up a while ago, and nobody answered.',
+      'Follow up once, in one short sentence and in your own way. You can tease, ask again in other words, or let it go with good grace.',
+      ...subject,
+      'Do not repeat your earlier words.',
+    ]),
   }
 }
 
@@ -403,8 +473,14 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
     // have resumed, so a failed attempt is dropped rather than retried.
     eventUnsubscribes.push(
       initiativeStore.onInitiative((decision) => {
+        const now = Date.now()
+        if (decision.kind !== 'topic') {
+          const turn = decision.kind === 'musing' ? musingTurn(decision, now) : followUpTurn(decision, now)
+          enqueueSparkNotify(turn.notify, { reason: 'initiative', maxAttempts: 1, control: turn.control })
+          return
+        }
         const related = initiativeStore.associationsOf(decision.topicAtomId).slice(0, MAX_RELATED_TOPICS).map(association => association.topic)
-        enqueueSparkNotify(initiativeNotify(decision, Date.now(), related), {
+        enqueueSparkNotify(initiativeNotify(decision, now, related), {
           reason: 'initiative',
           maxAttempts: 1,
           control: initiativeControl(

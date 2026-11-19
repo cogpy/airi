@@ -37,6 +37,10 @@ const nameTopics = cardSetting('nameTopics', false)
 const reflect = cardSetting('reflect', false)
 const yieldWhenInterrupted = cardSetting('yieldWhenInterrupted', false)
 const converseWithAgents = cardSetting('converseWithAgents', false)
+const moodTempo = cardSetting('moodTempo', false)
+const muse = cardSetting('muse', false)
+const spontaneous = cardSetting('spontaneous', false)
+const followUp = cardSetting('followUp', false)
 
 const learned = computed(() => initiativeStore.learnedTemperamentOf(activeCardId.value))
 const percent = new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 0 })
@@ -95,6 +99,26 @@ const percent = new Intl.NumberFormat(undefined, { style: 'percent', maximumFrac
           v-model="converseWithAgents"
           :label="t('settings.pages.modules.initiative.agents.label')"
           :description="t('settings.pages.modules.initiative.agents.description')"
+        />
+        <FieldCheckbox
+          v-model="moodTempo"
+          :label="t('settings.pages.modules.initiative.mood-tempo.label')"
+          :description="t('settings.pages.modules.initiative.mood-tempo.description')"
+        />
+        <FieldCheckbox
+          v-model="muse"
+          :label="t('settings.pages.modules.initiative.muse.label')"
+          :description="t('settings.pages.modules.initiative.muse.description')"
+        />
+        <FieldCheckbox
+          v-model="spontaneous"
+          :label="t('settings.pages.modules.initiative.spontaneous.label')"
+          :description="t('settings.pages.modules.initiative.spontaneous.description')"
+        />
+        <FieldCheckbox
+          v-model="followUp"
+          :label="t('settings.pages.modules.initiative.follow-up.label')"
+          :description="t('settings.pages.modules.initiative.follow-up.description')"
         />
       </div>
     </template>

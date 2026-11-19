@@ -884,6 +884,25 @@ pages:
         description: >-
           The character answers other AI characters on the server channel and
           publishes what it says. A turn budget stops the conversation.
+      mood-tempo:
+        label: Mood sets her pace
+        description: >-
+          When the character is excited, she speaks up sooner and follows up
+          faster. When she is calm, she waits longer.
+      muse:
+        label: Bring up her own subjects
+        description: >-
+          After a long lull with nothing on her mind, the character brings up a
+          subject that she chooses.
+      spontaneous:
+        label: Unpredictable timing
+        description: >-
+          The character speaks up at a random moment after her urge is high
+          enough, not always at the same point.
+      follow-up:
+        label: Follow up when ignored
+        description: >-
+          If nobody answers what the character raised, she follows up one time.
     gaming-coplay:
       title: Co-play
       description: Play turn-based games with your character

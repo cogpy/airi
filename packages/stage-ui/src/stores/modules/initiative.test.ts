@@ -386,6 +386,109 @@ describe('initiative store', () => {
     })
   })
 
+  describe('a card with mood, musing, chance, and follow-ups', () => {
+    it('brings up a subject of her own after a long lull with nothing on her mind', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, muse: true })
+      initiative.noteInteraction(now)
+
+      expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: true, kind: 'musing' })
+    })
+
+    it('does not muse when the card leaves musing off', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true })
+      initiative.noteInteraction(now)
+
+      expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: false, reason: 'no-candidates' })
+    })
+
+    it('does not muse again straight after a musing', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, muse: true })
+      initiative.noteInteraction(now)
+      initiative.poll(now + 10 * MINUTE)
+
+      expect(initiative.poll(now + 11 * MINUTE).act).toBe(false)
+    })
+
+    it('follows up once when nobody answers what she raised', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, followUp: true })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+      const raisedAt = now + 10 * MINUTE
+      initiative.poll(raisedAt)
+
+      expect(initiative.poll(raisedAt + 90_000)).toMatchObject({ act: true, kind: 'follow-up', topicAtomId: 'atom_minecraft' })
+      expect(initiative.poll(raisedAt + 3 * MINUTE).act).toBe(false)
+    })
+
+    it('does not follow up after the user answers', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, followUp: true })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+      const raisedAt = now + 10 * MINUTE
+      initiative.poll(raisedAt)
+      initiative.noteUserTurn(raisedAt + 10_000)
+
+      expect(initiative.poll(raisedAt + 90_000).act).toBe(false)
+    })
+
+    it('does not follow up when the card leaves follow-ups off', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+      const raisedAt = now + 10 * MINUTE
+      initiative.poll(raisedAt)
+
+      expect(initiative.poll(raisedAt + 90_000).act).toBe(false)
+    })
+
+    it('reads her arousal as tempo only when the card asks for it', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.useMoodSource(() => 1)
+      initiative.configure({ enabled: true })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+      expect(initiative.poll(now + 10 * MINUTE)).toMatchObject({ act: true, tempo: 1 })
+
+      initiative.configure({ enabled: true, moodTempo: true })
+      initiative.remember({ topic: 'atom_redstone', salience: 0.9 }, now + 10 * MINUTE)
+      const decision = initiative.poll(now + 20 * MINUTE)
+
+      expect(decision.act).toBe(true)
+      if (decision.act)
+        expect(decision.tempo).toBeCloseTo(2)
+    })
+
+    it('leaves the moment to chance when the card is spontaneous', () => {
+      const initiative = useInitiativeStore()
+      const now = Date.now()
+
+      initiative.configure({ enabled: true, spontaneous: true })
+      initiative.remember({ topic: 'atom_minecraft', salience: 0.9 }, now)
+
+      // The first poll covers no time yet, so no draw can fire.
+      expect(initiative.poll(now + 10 * MINUTE, 0)).toMatchObject({ act: false, reason: 'not-yet' })
+      // A draw at the top of the range does not fire either.
+      expect(initiative.poll(now + 10 * MINUTE + 5000, 0.999999)).toMatchObject({ act: false, reason: 'not-yet' })
+      expect(initiative.poll(now + 10 * MINUTE + 10_000, 0)).toMatchObject({ act: true, kind: 'topic' })
+    })
+  })
+
   describe('bindToChat', () => {
     it('treats every message as the conversation being live', () => {
       const initiative = useInitiativeStore()

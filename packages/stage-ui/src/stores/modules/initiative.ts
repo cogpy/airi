@@ -1,5 +1,5 @@
 import type { TopicAttention } from '@proj-airi/cognitive-airicog/attention'
-import type { InitiativeDecision, RaisedTopic } from '@proj-airi/cognitive-airicog/initiative'
+import type { InitiativeDecision, RaisedTopic, UnansweredInitiative } from '@proj-airi/cognitive-airicog/initiative'
 import type { Episode } from '@proj-airi/cognitive-airicog/memory'
 import type { Temperament, TemperamentSnapshot } from '@proj-airi/cognitive-airicog/ontogenesis'
 
@@ -133,6 +133,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
     lastReflectionAt: number | undefined
     recentlyRaised: RaisedTopic[]
     lastInitiativeAt: number | undefined
+    lastMusingAt?: number
   }>()
 
   /**
@@ -143,6 +144,14 @@ export const useInitiativeStore = defineStore('initiative', () => {
   const temperaments = new Map<string, Temperament>()
   /** When she last spoke up, while no answer or silence has settled it. */
   let awaitingAnswerSince: number | undefined
+  /** What she said that nobody answered yet, for a follow-up. The user speaking clears it. */
+  let unanswered: UnansweredInitiative | undefined
+  /** When she last brought up a subject of her own choice. */
+  let lastMusingAt: number | undefined
+  /** When `poll` last ran, so a spontaneous chance covers only the time since. */
+  let lastPollAt: number | undefined
+  /** Where her current arousal comes from, when a host supplies one. */
+  let moodSource: (() => number | undefined) | undefined
 
   /**
    * How the active character card configures speaking up, with the module's own
@@ -172,6 +181,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
       lastReflectionAt: lastReflectionAt.value,
       recentlyRaised: recentlyRaised.value,
       lastInitiativeAt: lastInitiativeAt.value,
+      lastMusingAt,
     })
     const next = parked.get(characterId)
     parked.delete(characterId)
@@ -179,7 +189,9 @@ export const useInitiativeStore = defineStore('initiative', () => {
     lastReflectionAt.value = next?.lastReflectionAt
     recentlyRaised.value = next?.recentlyRaised ?? []
     lastInitiativeAt.value = next?.lastInitiativeAt
+    lastMusingAt = next?.lastMusingAt
     awaitingAnswerSince = undefined
+    unanswered = undefined
     activeCharacterId.value = characterId
     mind = mindOf(characterId)
   }
@@ -213,6 +225,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
     // A turn in another character's session does not answer this one.
     if (characterId !== undefined && characterId !== activeCharacterId.value)
       return
+    unanswered = undefined
     if (awaitingAnswerSince !== undefined && at >= awaitingAnswerSince)
       settleAnswer(at - awaitingAnswerSince <= ANSWER_WINDOW_MS)
   }
@@ -349,11 +362,13 @@ export const useInitiativeStore = defineStore('initiative', () => {
    * single subject. Reinforcement comes from the conversation instead: if this
    * lands, the reply is remembered as a new episode.
    */
-  function poll(now: number = Date.now()): InitiativeDecision {
+  function poll(now: number = Date.now(), random: number = Math.random()): InitiativeDecision {
     if (awaitingAnswerSince !== undefined && now - awaitingAnswerSince > ANSWER_WINDOW_MS)
       settleAnswer(false)
 
-    const { refractorySeconds } = cardSettings.value
+    const { refractorySeconds, moodTempo, muse, spontaneous, followUp } = cardSettings.value
+    const elapsedMs = lastPollAt === undefined ? 0 : now - lastPollAt
+    lastPollAt = now
     const factor = activeTemperament()?.thresholdFactor() ?? 1
     const threshold = cardSettings.value.threshold === undefined && factor === 1
       ? undefined
@@ -365,6 +380,10 @@ export const useInitiativeStore = defineStore('initiative', () => {
       lastInitiativeAt: lastInitiativeAt.value,
       candidates: mergeCandidates(asInitiativeCandidates(episodes.value, now), mind.candidates()),
       recentlyRaised: recentlyRaised.value,
+      ...(moodTempo ? { arousal: moodSource?.() } : {}),
+      ...(muse ? { musing: true, lastMusingAt } : {}),
+      ...(followUp ? { unanswered } : {}),
+      ...(spontaneous ? { chance: { random, elapsedMs } } : {}),
     }, {
       ...(threshold !== undefined ? { threshold } : {}),
       ...(refractorySeconds !== undefined ? { refractoryMs: refractorySeconds * 1000 } : {}),
@@ -374,8 +393,23 @@ export const useInitiativeStore = defineStore('initiative', () => {
       return decision
 
     lastInitiativeAt.value = now
-    awaitingAnswerSince = now
-    recentlyRaised.value.push({ atomId: decision.topicAtomId, at: now })
+    if (decision.kind === 'follow-up') {
+      // A follow-up continues the remark it follows. The answer window and
+      // the remark it waits on stay as they were.
+      if (unanswered)
+        unanswered = { ...unanswered, followedUp: true }
+    }
+    else {
+      awaitingAnswerSince = now
+      if (decision.kind === 'topic') {
+        recentlyRaised.value.push({ atomId: decision.topicAtomId, at: now })
+        unanswered = { at: now, atomId: decision.topicAtomId, followedUp: false }
+      }
+      else {
+        lastMusingAt = now
+        unanswered = { at: now, followedUp: false }
+      }
+    }
 
     for (const handler of handlers)
       handler(decision)
@@ -390,6 +424,14 @@ export const useInitiativeStore = defineStore('initiative', () => {
   function forget(now: number = Date.now()): void {
     episodes.value = episodes.value.filter(episode => shouldRetain(episode, now))
     mind.prune(new Set(episodes.value.flatMap(episode => episode.atomId === undefined ? [] : [episode.atomId])))
+  }
+
+  /**
+   * Gives the store a reader for her current arousal, `0` to `1`. A card with
+   * `moodTempo` reads it on each poll to set her tempo.
+   */
+  function useMoodSource(source: () => number | undefined): void {
+    moodSource = source
   }
 
   /** Topics associated with `topic` on her mind, strongest first. */
@@ -507,6 +549,7 @@ export const useInitiativeStore = defineStore('initiative', () => {
     poll,
     forget,
     associationsOf,
+    useMoodSource,
     onInitiative,
     start,
     stop,

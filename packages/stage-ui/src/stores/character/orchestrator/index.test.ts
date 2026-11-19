@@ -475,6 +475,45 @@ describe('store character-orchestrator', () => {
       store.dispose()
     })
 
+    it('asks the model for a subject of her own after a long, empty lull', () => {
+      useCardInitiative({ enabled: true, muse: true })
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize(leaderRuntime())
+      const initiative = useInitiativeStore(pinia)
+
+      const at = Date.now()
+      initiative.noteInteraction(at)
+      const decision = initiative.poll(at + 10 * 60_000)
+
+      expect(decision).toMatchObject({ act: true, kind: 'musing' })
+      const notify = store.pendingNotifies.find(event => event.source === 'character:initiative')
+      const control = store.scheduledNotifies.find(item => item.event === notify)?.control
+      expect(control?.forceTextResponse).toBe(true)
+      expect(control?.messageOverride?.replaceUserMessage).toContain('Bring up a new subject of your own choice')
+      expect(control?.messageOverride?.appendFinalUserSections).toEqual([control?.messageOverride?.replaceUserMessage])
+      store.dispose()
+    })
+
+    it('asks the model to follow up once on what nobody answered', () => {
+      useCardInitiative({ enabled: true, threshold: 0.01, followUp: true })
+      const store = useCharacterOrchestratorStore(pinia)
+      store.initialize(leaderRuntime())
+      const initiative = useInitiativeStore(pinia)
+
+      const saidAt = Date.now()
+      initiative.remember({ topic: 'my cat learned to open doors' }, saidAt)
+      const raisedAt = saidAt + 10 * 60_000
+      initiative.poll(raisedAt)
+      const decision = initiative.poll(raisedAt + 90_000)
+
+      expect(decision).toMatchObject({ act: true, kind: 'follow-up' })
+      // The test clock is frozen, so both turns share an id. The last scheduled turn is the follow-up.
+      const control = store.scheduledNotifies.at(-1)?.control
+      expect(control?.messageOverride?.replaceUserMessage).toContain('Follow up once, to the user, in your own way.')
+      expect(control?.messageOverride?.replaceUserMessage).toContain('You had brought up: "my cat learned to open doors"')
+      store.dispose()
+    })
+
     it('follows the card when it is switched', async () => {
       const store = useCharacterOrchestratorStore(pinia)
       store.initialize(leaderRuntime())

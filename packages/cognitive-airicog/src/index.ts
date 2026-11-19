@@ -121,12 +121,15 @@ export {
   createDefaultInitiativeConfig,
   decideInitiative,
   type InitiativeCandidate,
+  type InitiativeChance,
   type InitiativeConfig,
   type InitiativeDecision,
   type InitiativeHold,
   type InitiativeState,
+  initiativeTempo,
   mergeCandidates,
   type RaisedTopic,
+  type UnansweredInitiative,
 } from './initiative/initiative'
 
 export {

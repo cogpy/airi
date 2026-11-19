@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createAtomSpace } from '../atomspace/atomspace'
 import { createECAN } from '../attention/ecan'
-import { candidatesFromFocus, createDefaultInitiativeConfig, decideInitiative, mergeCandidates } from './initiative'
+import { candidatesFromFocus, createDefaultInitiativeConfig, decideInitiative, initiativeTempo, mergeCandidates } from './initiative'
 
 const NOW = 1_000_000
 
@@ -112,8 +112,8 @@ describe('decideInitiative', () => {
   it('reports the terms behind a decision to speak', () => {
     const decision = decideInitiative(stateWith())
 
-    expect(decision.act).toBe(true)
-    if (!decision.act)
+    expect(decision).toMatchObject({ act: true, kind: 'topic' })
+    if (!decision.act || decision.kind !== 'topic')
       return
 
     // The urge is the product of its three terms; a caller can show the reason.
@@ -200,5 +200,131 @@ describe('mergeCandidates', () => {
 
   it('dedupes a subject repeated within one source', () => {
     expect(mergeCandidates([{ atomId: 'cats', salience: 0.2 }, { atomId: 'cats', salience: 0.4 }])).toEqual([{ atomId: 'cats', salience: 0.4 }])
+  })
+})
+
+describe('initiativeTempo', () => {
+  it('leaves timing unchanged at resting arousal and without a mood', () => {
+    expect(initiativeTempo(undefined)).toBe(1)
+    expect(initiativeTempo(createDefaultInitiativeConfig().restingArousal)).toBeCloseTo(1)
+  })
+
+  it('doubles the tempo at full arousal and slows it when calm', () => {
+    expect(initiativeTempo(1)).toBeCloseTo(2)
+    expect(initiativeTempo(0)).toBeCloseTo(2 ** (-0.3 / 0.7))
+  })
+})
+
+describe('decideInitiative with mood', () => {
+  it('speaks sooner when excited', () => {
+    // 8 s of silence on a strong subject: below the threshold at rest, above it at full arousal.
+    const state = stateWith({ lastInteractionAt: NOW - 8_000 })
+
+    expect(decideInitiative({ ...state, arousal: 0.3 })).toMatchObject({ act: false, reason: 'below-threshold' })
+    expect(decideInitiative({ ...state, arousal: 1 })).toMatchObject({ act: true, kind: 'topic', tempo: expect.closeTo(2) })
+  })
+
+  it('waits longer when calm', () => {
+    // 14 s of silence on a full subject: enough at rest, not enough fully calm.
+    const state = stateWith({ lastInteractionAt: NOW - 14_000, candidates: [{ atomId: 'atom_topic', salience: 1 }] })
+
+    expect(decideInitiative({ ...state, arousal: 0.3 })).toMatchObject({ act: true, kind: 'topic' })
+    expect(decideInitiative({ ...state, arousal: 0 })).toMatchObject({ act: false, reason: 'below-threshold' })
+  })
+})
+
+describe('decideInitiative musing', () => {
+  it('muses on a subject of her own choosing when a long lull leaves nothing to pick up', () => {
+    const decision = decideInitiative(stateWith({ candidates: [], musing: true }))
+
+    expect(decision).toMatchObject({ act: true, kind: 'musing' })
+    if (!decision.act)
+      return
+    expect(decision.topicAtomId).toBeUndefined()
+  })
+
+  it('stays silent with nothing to pick up when musing is off', () => {
+    expect(decideInitiative(stateWith({ candidates: [] }))).toMatchObject({ act: false, reason: 'no-candidates' })
+  })
+
+  it('prefers a pressing subject from earlier over musing', () => {
+    expect(decideInitiative(stateWith({ musing: true }))).toMatchObject({ act: true, kind: 'topic', topicAtomId: 'atom_topic' })
+  })
+
+  it('does not muse while the lull is still short', () => {
+    expect(decideInitiative(stateWith({ candidates: [], musing: true, lastInteractionAt: NOW - 30_000 })))
+      .toMatchObject({ act: false, reason: 'below-threshold' })
+  })
+
+  it('does not muse again soon after a musing', () => {
+    expect(decideInitiative(stateWith({ candidates: [], musing: true, lastMusingAt: NOW - 60_000 })))
+      .toMatchObject({ act: false, reason: 'below-threshold' })
+  })
+})
+
+describe('decideInitiative follow-up', () => {
+  const remarkAt = NOW - 90_000
+
+  it('follows up her unanswered remark once the wait has run', () => {
+    const decision = decideInitiative(stateWith({
+      candidates: [],
+      unanswered: { at: remarkAt, atomId: 'atom_remark', followedUp: false },
+    }))
+
+    expect(decision).toMatchObject({ act: true, kind: 'follow-up', topicAtomId: 'atom_remark', waitedMs: 90_000 })
+  })
+
+  it('follows up only once', () => {
+    expect(decideInitiative(stateWith({ candidates: [], unanswered: { at: remarkAt, followedUp: true } })))
+      .toMatchObject({ act: false, reason: 'no-candidates' })
+  })
+
+  it('measures the follow-up wait from her remark, not from the last interaction', () => {
+    // Her own reply finishing counts as interaction, so the silence is short. The remark still waited 90 s.
+    expect(decideInitiative(stateWith({ candidates: [], lastInteractionAt: NOW - 5_000, unanswered: { at: remarkAt, followedUp: false } })))
+      .toMatchObject({ act: true, kind: 'follow-up', waitedMs: 90_000 })
+  })
+
+  it('waits for the delay before following up', () => {
+    expect(decideInitiative(stateWith({ candidates: [], unanswered: { at: NOW - 20_000, followedUp: false } })))
+      .toMatchObject({ act: false, reason: 'below-threshold', urge: 0 })
+  })
+
+  it('follows up a musing without a subject', () => {
+    const decision = decideInitiative(stateWith({ candidates: [], unanswered: { at: remarkAt, followedUp: false } }))
+
+    expect(decision).toMatchObject({ act: true, kind: 'follow-up' })
+    if (!decision.act)
+      return
+    expect(decision.topicAtomId).toBeUndefined()
+  })
+})
+
+describe('decideInitiative chance mode', () => {
+  // A long silence makes silence pressure almost 1, so the urge is about the salience.
+  const atThreshold = stateWith({ candidates: [{ atomId: 'atom_topic', salience: 0.25 }], lastInteractionAt: NOW - 3_600_000 })
+
+  it('fires more readily the longer the poll covers', () => {
+    // At the threshold the mean wait is 20 s: a 1 s poll fires with chance ~0.05, a 60 s poll with ~0.95.
+    expect(decideInitiative({ ...atThreshold, chance: { random: 0.5, elapsedMs: 1_000 } })).toMatchObject({ act: false, reason: 'not-yet' })
+    expect(decideInitiative({ ...atThreshold, chance: { random: 0.5, elapsedMs: 60_000 } })).toMatchObject({ act: true, kind: 'topic' })
+  })
+
+  it('can fire a little below the threshold, where the threshold mode cannot', () => {
+    const below = stateWith({ candidates: [{ atomId: 'atom_topic', salience: 0.2 }], lastInteractionAt: NOW - 3_600_000 })
+
+    expect(decideInitiative(below)).toMatchObject({ act: false, reason: 'below-threshold' })
+    expect(decideInitiative({ ...below, chance: { random: 0, elapsedMs: 5_000 } })).toMatchObject({ act: true, kind: 'topic' })
+  })
+
+  it('never fires below the floor, whatever the draw', () => {
+    const faint = stateWith({ candidates: [{ atomId: 'atom_topic', salience: 0.1 }], lastInteractionAt: NOW - 3_600_000 })
+
+    expect(decideInitiative({ ...faint, chance: { random: 0, elapsedMs: 600_000 } })).toMatchObject({ act: false, reason: 'below-threshold' })
+  })
+
+  it('keeps the refractory gap', () => {
+    expect(decideInitiative({ ...atThreshold, lastInitiativeAt: NOW - 1_000, chance: { random: 0, elapsedMs: 60_000 } }))
+      .toMatchObject({ act: false, reason: 'refractory' })
   })
 })

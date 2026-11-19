@@ -259,6 +259,40 @@ The decision is pure: it reads the clock and the attention economy through its
 arguments, never directly, so the same state always yields the same decision.
 `candidatesFromFocus` is the only part that touches a live `ECAN`.
 
+#### Mood, musing, follow-ups, and chance
+
+Four optional inputs make the character less like a timer:
+
+| Input | Effect |
+| --- | --- |
+| `arousal` | Sets her tempo, `2 ^ (arousalGain * (arousal - restingArousal))`. Excited, a silence presses on her sooner. Calm, later. |
+| `musing: true` | A long lull builds boredom. With nothing else pressing, she brings up a subject of her own choosing (`kind: 'musing'`). |
+| `unanswered` | Her last unprompted remark that nobody answered. After `followUpDelayMs`, she follows it up once (`kind: 'follow-up'`). |
+| `chance` | A uniform draw and the time since the last poll. The urge sets a rate, and she speaks at unplanned moments. |
+
+```ts
+import { decideInitiative } from '@proj-airi/cognitive-airicog/initiative'
+
+const now = Date.now()
+const decision = decideInitiative({
+  now,
+  lastInteractionAt: now - 240_000,
+  candidates: [],
+  arousal: 0.8,
+  musing: true,
+  chance: { random: Math.random(), elapsedMs: 5_000 },
+})
+
+if (decision.act)
+  console.info(decision.kind, decision.urge)
+```
+
+In chance mode, speaking is a Poisson process. At the threshold, the mean wait
+is `meanWaitAtThresholdMs`, and the rate scales with
+`(urge / threshold) ^ hazardExponent`. Below `hazardFloor` of the threshold she
+never speaks, so a silence that has barely begun cannot fire by luck. The
+draw comes from the caller, so a test stays deterministic.
+
 ### Yielding (giving the floor back)
 
 Turn-taking has two halves. `decideInitiative` takes the floor; `decideYield`

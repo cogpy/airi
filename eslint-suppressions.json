@@ -156,7 +156,7 @@
   },
   "integrations/discord-bot/src/bots/discord/commands/summon.ts": {
     "ts/no-explicit-any": {
-      "count": 6
+      "count": 3
     }
   },
   "integrations/discord-bot/src/utils/opus.ts": {
@@ -165,11 +165,6 @@
     }
   },
   "integrations/minecraft/src/cognitive/action/action-registry.ts": {
-    "ts/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "integrations/minecraft/src/cognitive/action/llm-actions.ts": {
     "ts/no-explicit-any": {
       "count": 2
     }
@@ -244,19 +239,9 @@
       "count": 1
     }
   },
-  "integrations/minecraft/src/cognitive/reflex/behaviors/escape-hazard.ts": {
-    "ts/no-explicit-any": {
-      "count": 3
-    }
-  },
   "integrations/minecraft/src/cognitive/reflex/reflex-manager.ts": {
     "ts/no-explicit-any": {
       "count": 12
-    }
-  },
-  "integrations/minecraft/src/cognitive/reflex/runtime.ts": {
-    "ts/no-explicit-any": {
-      "count": 1
     }
   },
   "integrations/minecraft/src/cognitive/types/index.ts": {
@@ -292,11 +277,6 @@
   "integrations/minecraft/src/minecraft-bot-runtime.ts": {
     "ts/no-explicit-any": {
       "count": 2
-    }
-  },
-  "integrations/minecraft/src/plugins/pathfinder.ts": {
-    "ts/no-explicit-any": {
-      "count": 1
     }
   },
   "integrations/minecraft/src/skills/blocks.ts": {

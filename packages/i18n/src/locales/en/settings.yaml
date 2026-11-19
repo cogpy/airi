@@ -2481,7 +2481,6 @@ pages:
               description: Select the MiniMax TTS model to use for speech generation.
               label: Model
               placeholder: Select a MiniMax model...
-        playground:
         title: MiniMax Speech
       mimo:
         model-behavior:

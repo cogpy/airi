@@ -16,10 +16,13 @@ import {
   unknown,
 } from 'valibot'
 
+import { normalizeContextWindow } from '../types/airiCard'
+
 export type AiriCardDraftValidationError = 'name' | 'version' | 'invalid_artistry_json'
 
 /** Module settings owned by the AIRI Card editor form. */
 interface AiriCardEditorModules {
+  contextWindow: number
   consciousness: AiriExtension['modules']['consciousness']
   vision: AiriExtension['modules']['vision']
   speech: Pick<AiriExtension['modules']['speech'], 'provider' | 'model' | 'voice_id'>
@@ -45,11 +48,12 @@ interface AiriCardEditorModules {
  */
 export function getAiriCardEditorModuleSettings(
   card: Card | undefined,
-): Pick<AiriCardEditorModules, 'consciousness' | 'vision' | 'speech'> & { displayModelId: string } {
+): Pick<AiriCardEditorModules, 'contextWindow' | 'consciousness' | 'vision' | 'speech'> & { displayModelId: string } {
   const extension = isAiriExtension(card?.extensions?.airi) ? card.extensions.airi : undefined
   const modules = getAiriCardModules(extension)
 
   return {
+    contextWindow: normalizeContextWindow(extension?.contextWindow),
     consciousness: {
       provider: getModuleString(modules?.consciousness, 'provider'),
       model: getModuleString(modules?.consciousness, 'model'),
@@ -167,6 +171,7 @@ export function applyAiriCardEditorModules(
       ...card.extensions,
       airi: {
         ...existing,
+        contextWindow: edited.contextWindow,
         avatarModels: existing?.avatarModels ?? [],
         modules: {
           ...existingModules,

@@ -2,9 +2,10 @@ import en from '@proj-airi/i18n/locales/en'
 
 import { PiniaColada } from '@pinia/colada'
 import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { createPinia, disposePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render } from 'vitest-browser-vue'
+import { cleanup, render } from 'vitest-browser-vue'
 import { page } from 'vitest/browser'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -43,7 +44,26 @@ describe('speech provider configuration persistence', () => {
     })
   }
 
+  // The page saves an edit, then checks the saved config 500 ms later. A test
+  // must wait for that check, or the check runs on the next test's Pinia.
+  function checkOfSavedKey(id: string, apiKey: string) {
+    return new Promise<void>((resolve) => {
+      const stop = useProviderStore(pinia).$onAction(({ name, after }) => {
+        if (name !== 'recordUnfinishedConfig' && name !== 'validateProviderSettings')
+          return
+        // A check that started before the save reads the old config.
+        if (useProviderConfigStore(pinia).configs[id]?.apiKey !== apiKey)
+          return
+        after(() => {
+          stop()
+          resolve()
+        })
+      })
+    })
+  }
+
   afterEach(() => {
+    cleanup()
     disposePinia(pinia)
     vi.unstubAllGlobals()
     localStorage.clear()
@@ -62,17 +82,20 @@ describe('speech provider configuration persistence', () => {
 
     const testVoice = screen.getByRole('button', { name: 'Test Voice', exact: true })
     await expect.element(testVoice).toBeDisabled()
+    const checked = checkOfSavedKey(providerId, 'issue-2449-test-key')
     await page.getByPlaceholder('sk-...').fill('issue-2449-test-key')
     // No chat model is set here, so the preview line stays empty until the user types one.
     await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(testVoice, { timeout: 1500 }).toBeEnabled()
     await expect.element(screen.getByText('Please enter an API key to test the voice.')).not.toBeInTheDocument()
     expect(useProviderConfigStore(pinia).getProviderConfig(providerId)?.apiKey).toBe('issue-2449-test-key')
+    await checked
   })
 
   // https://github.com/moeru-ai/airi/issues/2449
   it('persists a key entered on a fresh settings page (Issue #2449)', async () => {
     await renderPage()
+    const checked = checkOfSavedKey(providerId, 'issue-2449-test-key')
     await page.getByPlaceholder('sk-...').fill('issue-2449-test-key')
 
     await expect.poll(() => {
@@ -81,6 +104,7 @@ describe('speech provider configuration persistence', () => {
         return undefined
       return JSON.parse(stored)[providerId]?.config?.apiKey
     }, { timeout: 2000 }).toBe('issue-2449-test-key')
+    await checked
   })
 
   // https://github.com/moeru-ai/airi/issues/2449#issuecomment-5586964144
@@ -99,6 +123,8 @@ describe('speech provider configuration persistence', () => {
     await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(screen.getByRole('button', { name: 'Test Voice', exact: true })).toBeEnabled()
     expect(useProviderConfigStore(pinia).getProviderConfig(providerId)?.apiKey).toBe('issue-2449-test-key')
+    // The mount check of the saved config ends when it marks the provider added.
+    await expect.poll(() => useProviderConfigStore(pinia).addedProviders[providerId]).toBe(true)
   })
 
   // https://github.com/moeru-ai/airi/issues/2449
@@ -107,15 +133,18 @@ describe('speech provider configuration persistence', () => {
 
     const testVoice = screen.getByRole('button', { name: 'Test Voice', exact: true })
     await expect.element(testVoice).toBeDisabled()
+    const checked = checkOfSavedKey('comet-api-speech', 'issue-2449-comet-key')
     await page.getByPlaceholder('API Key').fill('issue-2449-comet-key')
     // No chat model is set here, so the preview line stays empty until the user types one.
     await page.getByPlaceholder('Enter text to test the voice...').fill('Hello there.')
     await expect.element(testVoice, { timeout: 1500 }).toBeEnabled()
+    await checked
   })
 
   // https://github.com/moeru-ai/airi/issues/2449
   it('persists a Comet API key entered on a fresh settings page (Issue #2449)', async () => {
     await renderPage(CometApiSpeechPage)
+    const checked = checkOfSavedKey('comet-api-speech', 'issue-2449-comet-key')
     await page.getByPlaceholder('API Key').fill('issue-2449-comet-key')
 
     await expect.poll(() => {
@@ -124,5 +153,6 @@ describe('speech provider configuration persistence', () => {
         return undefined
       return JSON.parse(stored)['comet-api-speech']?.config?.apiKey
     }, { timeout: 2000 }).toBe('issue-2449-comet-key')
+    await checked
   })
 })

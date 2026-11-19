@@ -1,13 +1,13 @@
 import type { App } from 'vue'
 
 import en from '@proj-airi/i18n/locales/en'
-import localforage from 'localforage'
 
 import { createPinia, disposePinia } from 'pinia'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp } from 'vue'
 import { createI18n } from 'vue-i18n'
 
+import { storage } from '../database/storage'
 import { useBackgroundStore } from './background'
 import { useAiriCardStore } from './modules/airi-card'
 
@@ -35,7 +35,7 @@ afterEach(async () => {
   app?.unmount()
   if (pinia)
     disposePinia(pinia)
-  await localforage.clear()
+  await storage.clear()
 })
 
 function imageBlob() {

@@ -341,7 +341,7 @@ export const useCoplayStore = defineStore('coplay', () => {
           failure = 'no chat model is configured'
         }
         else {
-          const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+          const chatProvider = await consciousnessStore.getChatProviderInstance(providerId, model)
           await chatStore.ingest(why ? `${prompt}\nYour last try gave no legal move: ${why}. Choose one of the legal moves now.` : prompt, {
             model,
             chatProvider,

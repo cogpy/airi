@@ -298,7 +298,7 @@ export const useCharacterOrchestratorStore = defineStore('character-orchestrator
       return undefined
     }
 
-    const provider = await consciousnessStore.getChatProviderInstance(providerId)
+    const provider = await consciousnessStore.getChatProviderInstance(providerId, model)
     processing.value = true
 
     try {

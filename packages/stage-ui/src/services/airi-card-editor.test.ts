@@ -123,6 +123,7 @@ describe('airi card editor validation', () => {
 
   it('writes the emotion sample, keeps it when the form omits it, and clears it when blank', () => {
     const editedModules = {
+      contextWindow: -1,
       consciousness: { provider: '', model: '' },
       vision: { provider: '', model: '' },
       speech: { provider: '', model: '', voice_id: '' },

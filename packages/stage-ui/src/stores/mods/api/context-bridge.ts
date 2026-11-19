@@ -64,7 +64,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
   const contextObservability = useContextObservabilityStore()
   const characterOrchestratorStore = useCharacterOrchestratorStore()
   const consciousnessStore = useConsciousnessStore()
-  const { activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
+  const { activeProvider, activeModel, activeTemperature, activeTopP } = storeToRefs(consciousnessStore)
   const streamingControl = useLlmStreamingControlStore()
   const participantsStore = useParticipantsStore()
   const coplayStore = useCoplayStore()
@@ -651,7 +651,7 @@ export const useContextBridgeStore = defineStore('mods:api:context-bridge', () =
     // utterance id lets the first window answer and makes the others skip.
     await withContextBridgeExclusiveLock(`context-bridge:agent-turn:${turn.participantId}:${turn.id}`, async () => {
       try {
-        const chatProvider = await consciousnessStore.getChatProviderInstance(activeProvider.value)
+        const chatProvider = await consciousnessStore.getChatProviderInstance(activeProvider.value, activeModel.value)
         await chatOrchestrator.ingest(turn.text, {
           model: activeModel.value,
           chatProvider,

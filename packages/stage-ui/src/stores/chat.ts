@@ -1203,7 +1203,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!providerId || !modelId)
       return undefined
 
-    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId)
+    const chatProvider = await consciousnessStore.getChatProviderInstance(providerId, modelId)
     if (!chatProvider)
       return undefined
 

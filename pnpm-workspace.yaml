@@ -531,7 +531,12 @@ allowBuilds:
   less: true
   msw: true
   node-pty: true
-  onnxruntime-node: true
+  # NOTICE:
+  # onnxruntime-node 1.21.0 downloads its CUDA binaries from the GitHub release on every Linux x64 install.
+  # That release download now returns 404, so the install script fails and stops the whole install.
+  # Source: node_modules/onnxruntime-node/script/install.js and the v1.21.0 release of microsoft/onnxruntime.
+  # The CPU binaries ship in the npm package. Remove this when the release download returns or onnxruntime-node is upgraded.
+  onnxruntime-node: false
   protobufjs: true
   sharp: true
   simple-git-hooks: false # [workaround] With `shellEmulator: true`, simple-git-hooks install may fail when no .git dir exists.
